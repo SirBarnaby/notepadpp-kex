@@ -1,10 +1,11 @@
 // HotkeyDrop.cpp - quick note: a global hotkey (RegisterHotKey, default Ctrl+Alt+M) fades a small
 // Notepad++-styled note window in at the centre of the screen (or where it was left), over whatever
 // program is in front and whether or not Notepad++ is minimised. Pressing it again fades the note out
-// and gives the focus back. The text is saved as you type, to kex-quicknote.txt in Notepad++'s settings
-// folder or to a file of the user's choosing (kept in its own encoding and line endings). The note has
-// no title bar: its top edge moves it, the other edges and corners resize it. Its editor gets the
-// smooth caret, the falling letters and the copy/cut/delete flashes, as the views do.
+// and gives the focus back; if you had clicked away from it, the window you clicked keeps the focus.
+// The text is saved as you type, to kex-quicknote.txt in Notepad++'s settings folder or to a file of
+// the user's choosing (kept in its own encoding and line endings). The note has no title bar: its top
+// edge moves it, the other edges and corners resize it. Its editor gets the smooth caret, the falling
+// letters and the copy/cut/delete flashes, as the views do.
 #include "KexSuite.h"
 #include "KexScintilla.h"
 #include <dwmapi.h>
@@ -165,7 +166,9 @@ public:
         if (_closing) { fadeTo(maxAlpha()); _closing = false; front(); return; }
         HWND fg = ::GetForegroundWindow();
         if (fg && (fg == _note || ::GetAncestor(fg, GA_ROOT) == _note)) close();
-        else front();
+        // clicked away but still on screen: one press hides it, and the window you clicked keeps the focus
+        else if (onScreen()) close(false);
+        else front();   // only when other windows cover it all ("Always on top" off)
     }
 
     HWND noteWindow() const { return _closing ? nullptr : _note; }
@@ -270,6 +273,24 @@ private:
         ::SetWindowPos(_note, _onTop ? HWND_TOPMOST : HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         ::SetForegroundWindow(_note);
         ::SetFocus(_sci);
+    }
+
+    // can any of the note be seen? Samples a grid over it and asks which window is on top at each point
+    bool onScreen() const
+    {
+        if (!_note || !::IsWindowVisible(_note)) return false;
+        RECT r{}; ::GetWindowRect(_note, &r);
+        const int N = 6;
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+            {
+                POINT pt{ r.left + 2 + static_cast<int>((r.right - r.left - 5) * i / (N - 1)),
+                          r.top + 2 + static_cast<int>((r.bottom - r.top - 5) * j / (N - 1)) };
+                if (!::MonitorFromPoint(pt, MONITOR_DEFAULTTONULL)) continue;
+                HWND at = ::WindowFromPoint(pt);
+                if (at && (at == _note || ::GetAncestor(at, GA_ROOT) == _note)) return true;
+            }
+        return false;
     }
 
     void close(bool giveFocusBack = true)

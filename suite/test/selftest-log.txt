@@ -77,13 +77,13 @@ PASS F2 overlay alive with 50 letters, bounding box (98,267)-(457,336) (Notepad+
 PASS F3 overlay is layered, click-through, non-activating, topmost (exstyle 0x80800a8)
 PASS F4 focus stays in the editor while letters fall
 SHOT 7 falling-letters-selection
-PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 152)
+PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 160)
 PASS F6 Backspace x3: 3 letters spawned
 SHOT 8 falling-letters-backspace
 PASS F7 Edit > Cut of "Particle": 8 letters spawned
 PASS F8 undo of typed text does not rain letters (skipped undo deletes: 1)
 PASS F9 deleting off-screen lines spawns nothing
-PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 202 ms
+PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 203 ms
 SHOT 9 falling-letters-huge-delete
 PASS F11 Replace All (text replaced) spawned 0 letters; NPPN_GLOBALMODIFIED seen 1 time(s)
 PASS F12 Windows animation effects off: no letters (respected by default)
@@ -91,7 +91,7 @@ PASS F13a c.txt cloned into the second view
 PASS F13 second view: 10 letters spawned from "second line"
 SHOT 10 falling-letters-second-view
 PASS C1 smooth caret on in Scintilla in both views, Notepad++'s caret style untouched (view1 on=1 style=0x1; view2 on=1 style=0x1; )
-INFO caret glide from (68.0,30.0) to (143.0,120.0): 14ms:(68.0,30.0) 33ms:(109.8,80.9) 47ms:(109.8,80.9) 60ms:(132.7,108.7) 75ms:(140.3,118.0) 90ms:(142.0,120.0) 110ms:(142.0,120.0) 124ms:(142.0,120.0) 138ms:(142.0,120.0) 153ms:(142.0,120.0) 167ms:(142.0,120.0) 
+INFO caret glide from (68.0,30.0) to (143.0,120.0): 13ms:(68.0,30.0) 33ms:(109.0,79.9) 46ms:(109.0,79.9) 60ms:(132.7,108.7) 75ms:(140.7,118.4) 92ms:(142.0,120.0) 113ms:(142.0,120.0) 128ms:(142.0,120.0) 141ms:(142.0,120.0) 156ms:(142.0,120.0) 171ms:(142.0,120.0) 
 PASS C2 caret glides through 4 intermediate positions and lands on the target (142.0,120.0)
 SHOT 11 caret-glide-frozen-midway
 PASS C3 smooth caret visible at (83,150), 15 px high
@@ -148,7 +148,7 @@ SHOT 17 quick-note
 PASS Q3 typing goes into the note: "note"
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus back to 00000000000409E2
-PASS Q4 hotkey again: note gone, focus back to the other program, text saved to Z:\root\kexbuild\ci6\test\npp\kex-quicknote.txt ("note"; WM_HOTKEY: yes)
+PASS Q4 hotkey again: note gone, focus back to the other program, text saved to Z:\root\kexout\test2\npp\kex-quicknote.txt ("note"; WM_HOTKEY: yes)
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 00000000000409E2
 PASS Q5 reopened with the text kept, caret at the end: "note"
@@ -157,10 +157,14 @@ PASS Q6 Esc hides the note and gives the focus back
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 00000000000409E2
   [kex] WM_HOTKEY received
-PASS Q7 hotkey while the note is open but not in front: brought to front, not hidden
+  [kex] quick note: closed, focus back to 0000000000000000
+PASS Q7 clicked away, note still on screen: one press hides it and the other program keeps the focus
+  [kex] WM_HOTKEY received
+  [kex] quick note: opened at 320,190 640x420, previous window 00000000000409E2
+  [kex] WM_HOTKEY received
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus back to 00000000000409E2
-PASS Q8 and the next press hides it
+PASS Q8 covered by another window: a press brings it to front, the next hides it
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000010140
 PASS Q9 no title bar; line numbers 25 px wide, no wrapping, current line shown
@@ -197,7 +201,7 @@ PASS T6 outside post-it mode the hot zone does nothing
   [kex] Copy, cut and delete flashes: enabled
   [kex] Paint splash: enabled
 PASS W0 tab slide, flashes and paint splash on
-PASS W1 switching tabs slides the new document in from the left (started 1, 20 frames, held at 0.50; active 1, pictures 3, stopped early 0, technology 0)
+PASS W1 switching tabs slides the new document in from the left (started 1, 19 frames, held at 0.50; active 1, pictures 3, stopped early 0, technology 0)
 SHOT 20 tab-slide-half-way
 PASS W2 the slide ends with the new document in place (last frame at 1.00)
 PASS W3 switching back slides the other way (from the right)
@@ -216,7 +220,7 @@ PASS P3 Style One Token: one splash, on that occurrence only (1)
   [kex] Paint splash: disabled
 PASS P4 paint splash off: colouring splashes nothing
   [kex] Paint splash: enabled
-PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (1050 frames so far, 13.05 ms of drawing per frame lately, the last one 7.04 ms); Windows' compositor puts them on screen with the graphics card."
+PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (1106 frames so far, 13.00 ms of drawing per frame lately, the last one 7.15 ms); Windows' compositor puts them on screen with the graphics card."
   [kex] Falling letters: disabled
 PASS E1 Falling letters off from Preferences: unticked and remembered, no letters left (the flashes and splashes keep the overlay)
   [kex] Falling letters: enabled
@@ -413,43 +417,43 @@ PASS L28 Clear all Styles takes the single bold/italic ranges away too
   [kex] Copy, cut and delete flashes: disabled
   [kex] Tab slide: disabled
   [kex] Paint splash: disabled
-INFO PERF all KEX features on: 46.107 ms per key, 2.50% CPU idle; all off: 41.505 ms per key, 2.00% CPU idle
-INFO PERF smooth caret: drawn in 1.19 paints per key while typing, 0.0 a second while idle (glide and blink fades)
-INFO PERF text repaints per key: 1.19 with the features on, 1.00 with them off
-INFO PERF smooth caret's own code in Scintilla per key: 0.296 ms
+INFO PERF all KEX features on: 39.150 ms per key, 2.00% CPU idle; all off: 36.960 ms per key, 2.50% CPU idle
+INFO PERF smooth caret: drawn in 1.17 paints per key while typing, 0.0 a second while idle (glide and blink fades)
+INFO PERF text repaints per key: 1.17 with the features on, 1.00 with them off
+INFO PERF smooth caret's own code in Scintilla per key: 0.218 ms
   [kex] Falling letters: enabled
-INFO PERF only Falling letters                    39.545 ms per key (-1.959), 2.00% CPU idle (-0.00)
+INFO PERF only Falling letters                    34.968 ms per key (-1.992), 1.50% CPU idle (-1.00)
   [kex] Falling letters: disabled
   [kex] Smooth caret: enabled
-INFO PERF only Smooth caret                       35.779 ms per key (-5.726), 2.00% CPU idle (+0.00)
+INFO PERF only Smooth caret                       32.618 ms per key (-4.342), 2.00% CPU idle (-0.50)
   [kex] Smooth caret: disabled
   [kex] hotkey Ctrl+Alt+M: registered (error 0)
   [kex] Quick note (global hotkey): enabled
-INFO PERF only Quick note (global hotkey)         39.869 ms per key (-1.636), 2.00% CPU idle (+0.00)
+INFO PERF only Quick note (global hotkey)         36.191 ms per key (-0.769), 2.50% CPU idle (-0.00)
   [kex] Quick note (global hotkey): disabled
   [kex] F12 hover tabs: enabled
-INFO PERF only F12 hover tabs                     37.784 ms per key (-3.721), 2.50% CPU idle (+0.50)
+INFO PERF only F12 hover tabs                     33.709 ms per key (-3.250), 1.50% CPU idle (-1.00)
   [kex] F12 hover tabs: disabled
   [kex] A Notepad++ for each desktop: enabled
-INFO PERF only A Notepad++ for each desktop       37.812 ms per key (-3.693), 1.50% CPU idle (-0.50)
+INFO PERF only A Notepad++ for each desktop       33.521 ms per key (-3.438), 2.00% CPU idle (-0.50)
   [kex] A Notepad++ for each desktop: disabled
   [kex] Tab snapping: enabled
-INFO PERF only Tab snapping                       39.193 ms per key (-2.312), 2.50% CPU idle (+0.50)
+INFO PERF only Tab snapping                       35.554 ms per key (-1.406), 2.00% CPU idle (-0.50)
   [kex] Tab snapping: disabled
   [kex] JetBrains shortcuts: enabled
-INFO PERF only JetBrains shortcuts                37.513 ms per key (-3.991), 2.50% CPU idle (+0.50)
+INFO PERF only JetBrains shortcuts                38.538 ms per key (+1.578), 2.00% CPU idle (-0.50)
   [kex] JetBrains shortcuts: disabled
   [kex] Live token styles: enabled
-INFO PERF only Live token styles                  41.546 ms per key (+0.041), 2.50% CPU idle (+0.50)
+INFO PERF only Live token styles                  33.618 ms per key (-3.341), 1.50% CPU idle (-1.00)
   [kex] Live token styles: disabled
   [kex] Copy, cut and delete flashes: enabled
-INFO PERF only Copy, cut and delete flashes       38.987 ms per key (-2.518), 2.00% CPU idle (+0.00)
+INFO PERF only Copy, cut and delete flashes       35.688 ms per key (-1.272), 2.00% CPU idle (-0.50)
   [kex] Copy, cut and delete flashes: disabled
   [kex] Tab slide: enabled
-INFO PERF only Tab slide                          42.307 ms per key (+0.802), 2.00% CPU idle (+0.00)
+INFO PERF only Tab slide                          41.004 ms per key (+4.045), 2.00% CPU idle (-0.50)
   [kex] Tab slide: disabled
   [kex] Paint splash: enabled
-INFO PERF only Paint splash                       38.850 ms per key (-2.654), 1.50% CPU idle (-0.50)
+INFO PERF only Paint splash                       35.970 ms per key (-0.990), 2.00% CPU idle (-0.50)
   [kex] Paint splash: disabled
   [kex] Falling letters: enabled
   [kex] Smooth caret: enabled
@@ -463,6 +467,6 @@ INFO PERF only Paint splash                       38.850 ms per key (-2.654), 1.
   [kex] Copy, cut and delete flashes: enabled
   [kex] Tab slide: enabled
   [kex] Paint splash: enabled
-PASS PERF1 the features' own work adds 4.603 ms per key and 0.50% CPU while idle; caret redraws 1.19 per key, 0.0 a second idle (total 46.107 vs 41.505 ms per key, 2.50% vs 2.00% idle)
+PASS PERF1 the features' own work adds 2.191 ms per key and -0.50% CPU while idle; caret redraws 1.17 per key, 0.0 a second idle (total 39.150 vs 36.960 ms per key, 2.00% vs 2.50% idle)
 RESULT 222 passed, 0 failed
 DONE

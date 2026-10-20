@@ -1723,9 +1723,26 @@ void buildSteps()
         HWND q = quickNoteWindow();
         bool lostFocus = ::GetForegroundWindow() == g_otherWnd;
         pressHotkey();
-        check(q && lostFocus && quickNoteWindow() == q && ::GetForegroundWindow() == q, L"Q7", L"hotkey while the note is open but not in front: brought to front, not hidden");
+        pump(200);
+        check(q && lostFocus && !quickNoteWindow() && !::FindWindowW(L"KexQuickNote", nullptr) && ::GetForegroundWindow() == g_otherWnd, L"Q7",
+            L"clicked away, note still on screen: one press hides it and the other program keeps the focus");
+        // "Always on top" off and the note fully covered: the press brings it back instead
+        const wchar_t* k = modules[M_HOTKEY]->key();
+        settings.setInt(k, L"OnTop", 0); modules[M_HOTKEY]->loadOptions();
         pressHotkey();
-        check(!quickNoteWindow(), L"Q8", L"and the next press hides it");
+        q = quickNoteWindow();
+        RECT nr{}; if (q) ::GetWindowRect(q, &nr);
+        RECT orig{}; ::GetWindowRect(g_otherWnd, &orig);
+        ::SetWindowPos(g_otherWnd, HWND_TOP, nr.left - 30, nr.top - 30, nr.right - nr.left + 60, nr.bottom - nr.top + 60, 0);
+        ::SetForegroundWindow(g_otherWnd);
+        pump(250);
+        pressHotkey();
+        bool broughtBack = q && quickNoteWindow() == q && ::GetForegroundWindow() == q;
+        pressHotkey();
+        pump(200);
+        check(broughtBack && !quickNoteWindow(), L"Q8", L"covered by another window: a press brings it to front, the next hides it");
+        settings.setInt(k, L"OnTop", 1); modules[M_HOTKEY]->loadOptions();
+        ::MoveWindow(g_otherWnd, orig.left, orig.top, orig.right - orig.left, orig.bottom - orig.top, TRUE);
         ::ShowWindow(npp._nppHandle, SW_RESTORE);
         focusEditor();
         pump(200);
