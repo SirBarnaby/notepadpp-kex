@@ -29,8 +29,10 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Snap-out windows**: drag a tab out of Notepad++ and its view gets its own window.
 - **Smooth caret**: the caret glides instead of jumping. It can fade, blink, or stay on.
 - **Falling letters**: deleted text falls off the screen. Their opacity can be set.
-- **Copy, cut and delete flashes**: copied text flashes once, cut text flashes twice, deleted text flashes red.
+- **Copy, cut and delete**: copied text flashes, cut text lifts off the page, deleted text shrinks away.
 - **Tab slide**: switching tabs slides the next document in, like switching desktops in Windows 10.
+- **Tab fold**: a closed tab folds out of the bar while its document fades out. New tabs unfold.
+- **Save glint**: a glint runs across a tab when its file is saved.
 - **Touchpad tab swipe**: swipe two fingers left or right to move to the next tab. The tab follows your fingers, and you can stop half way.
 - **Paint splash**: giving a word a colour splashes paint off it.
 - **JetBrains keys**: <kbd>Alt</kbd>+<kbd>J</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>/</kbd>, <kbd>Ctrl</kbd>+<kbd>D</kbd>, <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> and more. Rebind any of them in *Shortcut Mapper*.
@@ -38,7 +40,7 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app. It can keep its text in a file you choose.
 - **Per-desktop windows**: each virtual desktop gets its own Notepad++ with the same tabs and token styles, its own session and crash backup.
 - **F12 hover tabs**: in F12 mode, the tab bar appears when you touch the top of a view.
-- **Glass**: Windows' live blur behind the text. Off by default.
+- **Glass**: Windows' live blur behind the text, with clean letter edges. Off by default.
 - **On/off switches**: one per feature, in the KEX submenus at the bottom of the *Settings* menu.
 - **Automatic updates**: a KEX build follows every Notepad++ release. Builds are signed, and the updater refuses unsigned ones.
 
@@ -101,7 +103,7 @@ Yes, in views 1 and 2. In views 3 and 4, a plugin's commands are blocked unless 
 *Settings* > *KEX Editing* > *Preferences...*, untick *Also the keys Notepad++ uses*. This restores <kbd>Ctrl</kbd>+<kbd>Y</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>R</kbd>, <kbd>F11</kbd> and the zoom keys. To change a single key instead, open *Settings* > *Shortcut Mapper* > *Plugin commands* and edit the KEX entry.
 
 **Glass doesn't show up.**  
-Turn it on under *Settings* > *KEX Windows*, and turn on Windows' *Transparency effects* (*Settings* > *Personalization* > *Colors*). On Windows 10, *Acrylic* can lag while you move the window; *Blur* is lighter.
+Turn it on under *Settings* > *KEX Windows*, and turn on Windows' *Transparency effects* (*Settings* > *Personalization* > *Colors*). *Acrylic* can lag behind a moving window on Windows 10, so while you drag the window KEX shows plain *Blur* and switches back when you let go.
 
 **Is this an official Notepad++ release?**  
 No. It isn't affiliated with the Notepad++ project.

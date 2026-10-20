@@ -147,8 +147,11 @@ Module* createEditFlash();
 Module* createTabSlide();
 Module* createPaintSplash();
 Module* createTabSwipe();
+Module* createTabFold();
+Module* createSaveGlint();
 
-enum ModuleId { M_LETTERS = 0, M_CARET, M_HOTKEY, M_TABS, M_DESKTOP, M_SNAP, M_KEYS, M_GLASS, M_TOKENS, M_FLASH, M_SLIDE, M_SPLASH, M_SWIPE, M_COUNT };
+enum ModuleId { M_LETTERS = 0, M_CARET, M_HOTKEY, M_TABS, M_DESKTOP, M_SNAP, M_KEYS, M_GLASS, M_TOKENS, M_FLASH, M_SLIDE, M_SPLASH, M_SWIPE,
+                M_TABFOLD, M_GLINT, M_COUNT };
 extern Module* modules[M_COUNT];
 
 // Core services used across modules.
@@ -201,7 +204,8 @@ LettersStats lettersStats();
 void lettersFreezeAfter(int ms);   // <0 = run normally
 void lettersFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);   // the quick note's deletes
 void flashFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);
-struct FlashStats { int copies = 0, cuts = 0, deletes = 0, lastRects = 0, live = 0, spawned = 0; };
+struct FlashStats { int copies = 0, cuts = 0, deletes = 0, lastRects = 0, live = 0, spawned = 0;
+                    int ghosts = 0, ghostsLive = 0, ghostChars = 0; };   // cut and delete: ghost pieces made, on screen, characters in the last
 FlashStats flashStats();
 struct SplashStats { int splashes = 0, lastTokens = 0, live = 0, spawned = 0; };
 SplashStats splashStats();
@@ -218,6 +222,13 @@ struct SwipeStats { int gestures = 0, slides = 0, commits = 0, cancels = 0, text
 SwipeStats swipeStats();
 void swipeTestFingers(int n);   // self-test: pretend this many fingers are on a precision touchpad (-1 = the real one)
 std::wstring effectsInfo();       // the line on the KEX Effects page
+// Tab close and open, save glint (TabMotion.cpp)
+struct TabMotionStats { int folds = 0, unfolds = 0, foldBulk = 0, foldSkipped = 0, foldFrames = 0, lastDx = 0; float lastFraction = 0;
+                        int docFades = 0, saves = 0, glints = 0, glintLines = 0, glintSkipped = 0, glintFrames = 0; bool overlayShown = false; };
+TabMotionStats tabMotionStats();
+void tabMotionTestFreeze(double fraction);   // <0 = run normally
+// a view is about to show another document; true when its own was just closed and now fades out (SCI_KEX_SLIDE 2)
+bool tabFoldSwitching(HWND view, void* oldBuffer, void* newBuffer);
 // what Scintilla's smooth caret drew in the focused view at its last paint (KexScintilla.h)
 struct CaretStats { int carets = 0; bool visible = false; HWND target = nullptr;
                     float mainX = 0, mainY = 0, mainH = 0; bool block = false;
@@ -253,6 +264,8 @@ void addJetBrainsCommands(HMENU parent, int position);   // Settings > KEX Editi
 int jetBrainsCommandId(int index);  // Notepad++'s command id of binding `index` (0 before they are added)
 struct GlassStats { bool active = false; COLORREF key = 0; int hosts = 0; int remaps = 0; int placements = 0; int clicks = 0; int wheels = 0;
                     int dragSolids = 0; bool dragSolidNow = false; int accent = 0; int accentFailures = 0; int rendererSwitches = 0;
+                    int layerViews = 0; int fallbackViews = 0; int layerStarts = 0; unsigned long layerError = 0;   // views on their see-through layer, views drawing as before
+                    int swaps = 0; int swapsBack = 0;   // smooth moving: the plain blur took over from the acrylic, and gave back
                     HWND lastTarget = nullptr; std::wstring state; };
 GlassStats glassStats();
 std::wstring glassInfo();          // the line under the glass settings

@@ -95,6 +95,7 @@ BEGIN
     COMBOBOX        IDC_G_STYLE, 58, 105, 92, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Tint (%):", -1, 164, 107, 32, 8
     EDITTEXT        IDC_G_TINT, 198, 105, 26, 12, ES_NUMBER
+    AUTOCHECKBOX    "Plain blur while the window moves (no acrylic lag)", IDC_G_SMOOTHMOVE, 238, 106, 210, 10
     LTEXT           "Text edges:", -1, 12, 125, 44, 8
     COMBOBOX        IDC_G_EDGES, 58, 123, 166, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     AUTOCHECKBOX    "Margins too (line numbers, bookmarks, folding)", IDC_G_MARGINS, 238, 124, 200, 10
@@ -146,7 +147,7 @@ BEGIN
     LTEXT           "In the note:", -1, 12, 132, 42, 8
     AUTOCHECKBOX    "Smooth caret", IDC_H_CARET, 56, 131, 62, 10
     AUTOCHECKBOX    "Falling letters", IDC_H_LETTERS, 122, 131, 64, 10
-    AUTOCHECKBOX    "Copy, cut and delete flashes", IDC_H_FLASH, 190, 131, 116, 10
+    AUTOCHECKBOX    "Copy, cut and delete effects", IDC_H_FLASH, 190, 131, 116, 10
     LTEXT           "Opacity (%):", -1, 314, 132, 44, 8
     EDITTEXT        IDC_H_OPACITY, 360, 130, 28, 12, ES_NUMBER
     LTEXT           "The note has no title bar: drag its top edge to move it, the other edges and corners to resize it. Esc or the hotkey hides it again and gives the focus back; Ctrl+mouse wheel zooms. Its size and zoom are remembered. Settings > KEX Quick Note > Open Note File in Notepad++ opens its text as a normal tab.", -1, 12, 150, 436, 28
@@ -158,30 +159,35 @@ IDD_KEX_PAGE_EFFECTS DIALOGEX 115, 10, 460, 205
 STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    GROUPBOX        "Copy, cut and delete", -1, 4, 2, 452, 58
-    AUTOCHECKBOX    "The selection flashes when it is copied, cut or deleted", IDC_E_EN, 12, 15, 214, 10
-    LTEXT           "", IDC_E_STATUS, 232, 16, 216, 9
-    AUTOCHECKBOX    "Copy: one flash", IDC_E_COPY, 12, 31, 76, 10
-    AUTOCHECKBOX    "Cut: two flashes", IDC_E_CUT, 92, 31, 78, 10
-    AUTOCHECKBOX    "Delete: a red flash", IDC_E_DEL, 174, 31, 84, 10
-    LTEXT           "Strength (%):", -1, 270, 32, 48, 8
-    EDITTEXT        IDC_E_STRENGTH, 320, 30, 28, 12, ES_NUMBER
-    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_E_RESPECT, 12, 45, 170, 10
+    GROUPBOX        "Copy, cut and delete", -1, 4, 2, 452, 44
+    AUTOCHECKBOX    "The selection reacts when it is copied, cut or deleted", IDC_E_EN, 12, 14, 214, 10
+    LTEXT           "", IDC_E_STATUS, 232, 15, 216, 9
+    AUTOCHECKBOX    "Copy: a flash", IDC_E_COPY, 12, 29, 62, 10
+    AUTOCHECKBOX    "Cut: the text lifts away", IDC_E_CUT, 78, 29, 100, 10
+    AUTOCHECKBOX    "Delete: the text shrinks away", IDC_E_DEL, 182, 29, 118, 10
+    LTEXT           "Flash strength (%):", -1, 306, 30, 68, 8
+    EDITTEXT        IDC_E_STRENGTH, 376, 28, 28, 12, ES_NUMBER
 
-    GROUPBOX        "Tab slide", -1, 4, 64, 452, 44
-    AUTOCHECKBOX    "Switching tabs slides the new document in, like switching desktops", IDC_W_EN, 12, 77, 246, 10
-    LTEXT           "", IDC_W_STATUS, 264, 78, 184, 9
-    LTEXT           "Slide (ms):", -1, 12, 93, 38, 8
-    EDITTEXT        IDC_W_MS, 52, 91, 30, 12, ES_NUMBER
-    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_W_RESPECT, 96, 92, 170, 10
+    GROUPBOX        "Tabs", -1, 4, 50, 452, 72
+    AUTOCHECKBOX    "Switching tabs slides the new document in, like switching desktops", IDC_W_EN, 12, 62, 246, 10
+    LTEXT           "", IDC_W_STATUS, 264, 63, 184, 9
+    AUTOCHECKBOX    "Closing a tab folds it out of the bar; a new tab unfolds", IDC_F_EN, 12, 75, 246, 10
+    LTEXT           "", IDC_F_STATUS, 264, 76, 184, 9
+    AUTOCHECKBOX    "Saving a file sends a glint across its tab", IDC_GL_EN, 12, 88, 246, 10
+    LTEXT           "", IDC_GL_STATUS, 264, 89, 184, 9
+    LTEXT           "Slide (ms):", -1, 12, 105, 38, 8
+    EDITTEXT        IDC_W_MS, 52, 103, 30, 12, ES_NUMBER
+    LTEXT           "Fold (ms):", -1, 96, 105, 36, 8
+    EDITTEXT        IDC_F_MS, 134, 103, 30, 12, ES_NUMBER
+    AUTOCHECKBOX    "Closing a tab fades its document out", IDC_F_FADE, 178, 104, 200, 10
 
-    GROUPBOX        "Paint splash", -1, 4, 112, 452, 44
-    AUTOCHECKBOX    "Giving a token a colour (Style Token, the KEX token menu) splashes paint", IDC_P_EN, 12, 125, 260, 10
-    LTEXT           "", IDC_P_STATUS, 278, 126, 170, 9
-    LTEXT           "Drops per token:", -1, 12, 141, 58, 8
-    EDITTEXT        IDC_P_DROPS, 72, 139, 26, 12, ES_NUMBER
-    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_P_RESPECT, 110, 140, 170, 10
+    GROUPBOX        "Paint splash", -1, 4, 126, 452, 30
+    AUTOCHECKBOX    "Giving a token a colour splashes paint", IDC_P_EN, 12, 139, 160, 10
+    LTEXT           "Drops:", -1, 178, 140, 24, 8
+    EDITTEXT        IDC_P_DROPS, 204, 138, 26, 12, ES_NUMBER
+    LTEXT           "", IDC_P_STATUS, 240, 140, 208, 9
 
-    LTEXT           "", IDC_E_INFO, 4, 162, 452, 26
+    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_FX_RESPECT, 8, 160, 200, 10
+    LTEXT           "", IDC_E_INFO, 4, 173, 452, 18
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END

@@ -14,8 +14,9 @@ namespace {
 struct Live {
     Item it;
     float age = 0;
-    float x = 0, y = 0, a = 0, alpha = 1;
+    float x = 0, y = 0, a = 0, alpha = 1, sx = 1, sy = 1;
     float radius = 0;   // half the diagonal: the piece stays inside x +- radius at any angle
+    float w = 0;        // the picture's width (for the anchor of a piece that changes size)
 };
 
 class Renderer {
@@ -64,7 +65,7 @@ public:
     {
         if (!_thread || b.items.empty()) return;
         ::EnterCriticalSection(&_lock);
-        _spawned[K_LETTER] += static_cast<int>(b.items.size());
+        _spawned[std::max(0, std::min(K_COUNT - 1, b.kind))] += static_cast<int>(b.items.size());
         _letters.push_back(std::move(b));
         ::LeaveCriticalSection(&_lock);
         ::SetEvent(_event);
@@ -135,11 +136,36 @@ private:
                 runs.push_back(t);
             }
             auto sp = std::make_shared<Sprite>();
-            if (!renderRuns(*sp, runs, std::max(1, ci.w), std::max(1, ci.h), baseline, 3)) continue;
+            if (!renderRuns(*sp, runs, std::max(1, ci.w), std::max(1, ci.h), baseline, 3, b.back, b.backAlpha)) continue;
             Item it;
             it.sprite = sp;
             it.x0 = ci.x + ci.w * 0.5f;
             it.y0 = ci.y + ci.h * 0.5f;
+            if (b.motion != MOTION_FALL)
+            {
+                // a ghost of the text where it was: cut text lifts away (easing out), deleted text shrinks into its left edge
+                const float T = std::max(0.05f, b.duration);
+                it.life = T;
+                it.opacity = b.opacity;
+                it.monitor = b.monitor;
+                it.kind = b.kind;
+                if (b.motion == MOTION_LIFT)
+                {
+                    it.vy = -2.0f * b.lift / T;
+                    it.g = 2.0f * b.lift / (T * T);
+                    it.sx1 = it.sy1 = 1.04f;
+                    it.keys = { { 0, 1 }, { T * 0.2f, 1 }, { T, 0 } };
+                }
+                else
+                {
+                    it.sx1 = 0.86f;
+                    it.sy1 = 0.86f;
+                    it.anchorX = static_cast<float>(3) / static_cast<float>(sp->w);   // the text's left edge, inside the padding
+                    it.keys = { { 0, 1 }, { T * 0.15f, 1 }, { T, 0 } };
+                }
+                add(std::move(it));
+                continue;
+            }
             const float r1 = rnd(), r2 = rnd(), r3 = rnd();
             it.vx = (r1 * 2 - 1) * b.drift;
             it.vy = -(0.25f + 0.75f * r2) * b.pop;
@@ -164,6 +190,7 @@ private:
         const float w = l.it.rect ? l.it.rw : (l.it.sprite ? static_cast<float>(l.it.sprite->w) : 0.0f);
         const float h = l.it.rect ? l.it.rh : (l.it.sprite ? static_cast<float>(l.it.sprite->h) : 0.0f);
         l.radius = l.it.rect ? 0.0f : 0.5f * std::sqrt(w * w + h * h) + 1;
+        l.w = w;
         l.x = l.it.x0; l.y = l.it.y0;
         _parts.push_back(std::move(l));
     }
@@ -245,7 +272,16 @@ private:
                 p.y = p.it.y0 + p.it.vy * t + 0.5f * p.it.g * t * t;
                 p.a = p.it.angle + p.it.spin * t;
                 p.alpha = keyAlpha(p.it.keys, t) * p.it.opacity;
-                const float rx = p.it.rect ? p.it.rw * 0.5f : p.radius, ry = p.it.rect ? p.it.rh * 0.5f : p.radius;
+                p.sx = p.sy = 1;
+                if (p.it.life > 0 && (p.it.sx0 != 1 || p.it.sx1 != 1 || p.it.sy0 != 1 || p.it.sy1 != 1))
+                {
+                    const float u = std::min(1.0f, t / p.it.life), e = 1.0f - (1.0f - u) * (1.0f - u) * (1.0f - u);
+                    p.sx = p.it.sx0 + (p.it.sx1 - p.it.sx0) * e;
+                    p.sy = p.it.sy0 + (p.it.sy1 - p.it.sy0) * e;
+                    p.x += (p.it.anchorX - 0.5f) * p.w * (1.0f - p.sx);
+                }
+                const float grow = std::max(p.sx, p.sy);
+                const float rx = p.it.rect ? p.it.rw * 0.5f : p.radius * grow, ry = p.it.rect ? p.it.rh * 0.5f : p.radius * grow;
                 const RECT& mon = p.it.monitor;
                 const bool gone = (p.it.life > 0 && t >= p.it.life) || t > 8.0f ||
                                   (p.it.life <= 0 && ((p.y - ry > mon.bottom) || (p.x + rx < mon.left - 400) || (p.x - rx > mon.right + 400)));
@@ -283,7 +319,7 @@ private:
                         fillRectF(_surf, p.x - p.it.rw * 0.5f - clip.left, p.y - p.it.rh * 0.5f - clip.top,
                                   p.x + p.it.rw * 0.5f - clip.left, p.y + p.it.rh * 0.5f - clip.top, p.it.color, p.alpha);
                     else if (p.it.sprite)
-                        drawSprite(_surf, *p.it.sprite, p.x - clip.left, p.y - clip.top, p.a, p.alpha);
+                        drawSprite(_surf, *p.it.sprite, p.x - clip.left, p.y - clip.top, p.a, p.alpha, p.sx, p.sy);
                 }
                 POINT pos{ clip.left, clip.top }; SIZE sz{ w, h };
                 pushLayered(_wnd, _surf, pos, sz);

@@ -10,11 +10,13 @@ INFO self-check Tab snapping: OK
 INFO self-check JetBrains shortcuts: OK
 INFO self-check Glass text area: OK
 INFO self-check Live token styles: OK
-INFO self-check Copy, cut and delete flashes: OK
+INFO self-check Copy, cut and delete: OK
 INFO self-check Tab slide: OK
 INFO self-check Paint splash: OK
 INFO self-check Touchpad tab swipe: OK
-PASS S2 startup self-check: KEX Suite: 13/13 features OK (the desktop feature uses fake desktops in self-test mode)
+INFO self-check Tab close and open: OK
+INFO self-check Save glint: OK
+PASS S2 startup self-check: KEX Suite: 15/15 features OK (the desktop feature uses fake desktops in self-test mode)
 INFO real IVirtualDesktopManager here: Windows virtual desktop API unavailable (CoCreateInstance(CLSID_VirtualDesktopManager) = 0x80040154)
 PASS S3 real virtual-desktop provider degrades without crashing (available=0)
 PASS S4 Falling letters on at startup, its default
@@ -26,14 +28,16 @@ PASS S4 Tab snapping on at startup, its default
 PASS S4 JetBrains shortcuts on at startup, its default
 PASS S4 Glass text area off at startup, its default
 PASS S4 Live token styles on at startup, its default
-PASS S4 Copy, cut and delete flashes on at startup, its default
+PASS S4 Copy, cut and delete on at startup, its default
 PASS S4 Tab slide on at startup, its default
 PASS S4 Paint splash on at startup, its default
 PASS S4 Touchpad tab swipe on at startup, its default
+PASS S4 Tab close and open on at startup, its default
+PASS S4 Save glint on at startup, its default
   [kex] Tab slide: disabled
-  [kex] Copy, cut and delete flashes: disabled
+  [kex] Copy, cut and delete: disabled
   [kex] Paint splash: disabled
-PASS M1 the Settings menu ends with the KEX group: KEX Editing, KEX Tabs, KEX Windows, KEX Highlighting, KEX Quick Note, KEX Effects (feature switches + Preferences...: 3+1 / 3+1 / 2+1 / 1+1 / 1+1 / 3+1)
+PASS M1 the Settings menu ends with the KEX group: KEX Editing, KEX Tabs, KEX Windows, KEX Highlighting, KEX Quick Note, KEX Effects (feature switches + Preferences...: 3+1 / 3+1 / 2+1 / 1+1 / 1+1 / 5+1)
 PASS M1b Notepad++'s own Settings items keep their places (Import is item 5, as upstream) and the old KEX Features item is gone
 PASS M2 nothing KEX left in the Plugins menu (the suite is built in)
 SHOT 1 menu-settings-kex
@@ -49,7 +53,7 @@ PASS B4 the About box says "Notepad++ KEX v8.9.8.1", with the bitness after it (
 SHOT 2 about-kex
 PASS P1 Settings > KEX Editing > Preferences... opens Preferences on the "KEX Editing" page
 PASS P2 the on/off ticks on both pages match the running features
-INFO page summary: "13 of 13 KEX features passed their start-up self-check."
+INFO page summary: "15 of 15 KEX features passed their start-up self-check."
 SHOT 3 preferences-kex-editing
 PASS P3 "KEX Quick Note" page shows when picked in the list
 PASS P4 the page reports the quick note hotkey: "works from any program"
@@ -75,17 +79,17 @@ PASS P8 a number typed on the page is saved and the feature restarted with it
 PASS P9 Preferences closes
 INFO deleting the selection on line 11 (58 chars, 50 visible non-blank)
 PASS F1 Delete key on a selection: 50 letters spawned, expected 50
-PASS F2 overlay alive with 50 letters, bounding box (98,266)-(457,334) (Notepad++ window (20,16)-(980,676))
+PASS F2 overlay alive with 50 letters, bounding box (98,266)-(457,335) (Notepad++ window (20,16)-(980,676))
 PASS F3 overlay is layered, click-through, non-activating, topmost (exstyle 0x80800a8)
 PASS F4 focus stays in the editor while letters fall
 SHOT 7 falling-letters-selection
-PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 216)
+PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 160)
 PASS F6 Backspace x3: 3 letters spawned
 SHOT 8 falling-letters-backspace
 PASS F7 Edit > Cut of "Particle": 8 letters spawned
 PASS F8 undo of typed text does not rain letters (skipped undo deletes: 1)
 PASS F9 deleting off-screen lines spawns nothing
-PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 200 ms
+PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 202 ms
 SHOT 9 falling-letters-huge-delete
 PASS F11 Replace All (text replaced) spawned 0 letters; NPPN_GLOBALMODIFIED seen 1 time(s)
 PASS F12 Windows animation effects off: no letters (respected by default)
@@ -93,7 +97,7 @@ PASS F13a c.txt cloned into the second view
 PASS F13 second view: 10 letters spawned from "second line"
 SHOT 10 falling-letters-second-view
 PASS C1 smooth caret on in Scintilla in both views, Notepad++'s caret style untouched (view1 on=1 style=0x1; view2 on=1 style=0x1; )
-INFO caret glide from (68.0,30.0) to (143.0,120.0): 13ms:(68.0,30.0) 29ms:(108.4,79.1) 43ms:(108.4,79.1) 59ms:(131.4,107.1) 73ms:(140.4,118.1) 87ms:(142.0,120.0) 103ms:(142.0,120.0) 118ms:(142.0,120.0) 132ms:(142.0,120.0) 146ms:(142.0,120.0) 160ms:(142.0,120.0) 
+INFO caret glide from (68.0,30.0) to (143.0,120.0): 14ms:(68.0,30.0) 32ms:(109.1,80.0) 45ms:(109.1,80.0) 60ms:(132.4,108.3) 75ms:(140.7,118.4) 92ms:(142.0,120.0) 112ms:(142.0,120.0) 128ms:(142.0,120.0) 141ms:(142.0,120.0) 155ms:(142.0,120.0) 170ms:(142.0,120.0) 
 PASS C2 caret glides through 4 intermediate positions and lands on the target (142.0,120.0)
 SHOT 11 caret-glide-frozen-midway
 PASS C3 smooth caret visible at (83,150), 15 px high
@@ -114,58 +118,58 @@ SHOT 15 caret-disabled-scintilla-caret-back
 PASS C12 caret back on from Preferences
 PASS C13 Blink "Never": the caret stays fully on (1.00..1.00 over 1.6 s)
 PASS C14 Blink "On and off": hard on and off as Notepad++'s caret (0 frames in between)
-PASS C15 Blink "Fade" (the default): fades in and out (14 frames in between)
+PASS C15 Blink "Fade" (the default): fades in and out (13 frames in between)
 PASS C16 the choice is remembered (Blink=0)
 PASS D1 per-desktop windows on; this is the first window
 INFO desktop copy expected: view1[d.txt,c.txt,b.py,*a.cpp,new 1] view2[*c.txt] view3[] view4[] focus view1
-INFO started notepad++.exe d1.txt with KEX_SELFTEST_OTHER_DESKTOP=0 (pid 1184): 1
+INFO started notepad++.exe d1.txt with KEX_SELFTEST_OTHER_DESKTOP=0 (pid 1188): 1
 PASS D2 notepad++.exe d1.txt with this window on the same desktop: it exited (code 0) and this window opened d1.txt (d1.txt)
-INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1368): 1
+INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1372): 1
   [kex] Live token styles: the styles of 1 tab(s) go with the copy
-  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1368)
+  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1372)
 SHOT 16 desktop-new-window
-PASS D3 notepad++.exe on a desktop without Notepad++: a new Notepad++ window (pid 1368) opened there, this one stayed
+PASS D3 notepad++.exe on a desktop without Notepad++: a new Notepad++ window (pid 1372) opened there, this one stayed
 PASS D4 the new window has the same tabs in every view, the same active tabs and the same active view ( view1:5/5 active 4 view2:1/1 active 1 view3:0/0 active 0 view4:0/0 active 0, focus view 1)
 PASS D5 a.cpp's caret is where it was in the first window (109, expected 109)
 PASS D6b the untitled tab's styles came along: "note" coloured (1), "line" a bold token (19284, weight 700), "second" italic (1)
 PASS D6 untitled tab new 1 copied: text "desk note", caret 12, unmodified (0), title "new 1 - Notepad++ KEX [Administrator]"
-PASS D7 the copy's temporary folder was removed (C:\users\root\Temp\KEX-Notepad++\desktop-copy-1368) and this window kept a.cpp active
+PASS D7 the copy's temporary folder was removed (C:\users\root\Temp\KEX-Notepad++\desktop-copy-1372) and this window kept a.cpp active
 PASS D7b the new window backed up typed text into its own folder (1 file(s) in backup\desktop-00000000-0000-0000-0000-0000000000a1) and saved its own session
-INFO started notepad++.exe d2.txt with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1988): 1
+INFO started notepad++.exe d2.txt with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1992): 1
   [kex] Live token styles: the styles of 1 tab(s) go with the copy
-  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1988)
+  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1992)
 PASS D8 notepad++.exe d2.txt on a desktop without Notepad++: the copied tabs, then d2.txt last and active (6 of 6) ( view1:6/6 active 6 view2:1/1 active 1 view3:0/0 active 0 view4:0/0 active 0, focus view 1)
-INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 884): 1
+INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 892): 1
 PASS D9 Notepad++ started again on that desktop: its own session came back with the backed-up text ("typed on desktop A, then N")
-PASS D10 that window logs to its own kex-desktop-<id>.log (1658 bytes), so it doesn't overwrite kex.log
+PASS D10 that window logs to its own kex-desktop-<id>.log (1852 bytes), so it doesn't overwrite kex.log
 PASS H1 global hotkey Ctrl+Alt+M registered
 INFO started notepad.exe as 'another program': 1
 INFO Notepad++ minimized=1, foreground is the other program: 1
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 00000000000409F4
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A0C
 INFO SendInput Ctrl+Alt+M -> WM_HOTKEY delivered: yes
 PASS Q1 hotkey from another program while Notepad++ is minimized: quick note (320,190)-(960,610) centred on the screen (off by 0,0; WM_HOTKEY from real key events: yes)
 PASS Q2 the note is in front with the typing focus; Notepad++ stays minimized
 SHOT 17 quick-note
 PASS Q3 typing goes into the note: "note"
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus back to 00000000000409F4
-PASS Q4 hotkey again: note gone, focus back to the other program, text saved to Z:\root\kexci\test\npp\kex-quicknote.txt ("note"; WM_HOTKEY: yes)
+  [kex] quick note: closed, focus back to 0000000000040A0C
+PASS Q4 hotkey again: note gone, focus back to the other program, text saved to Z:\root\kexbuild\test\npp\kex-quicknote.txt ("note"; WM_HOTKEY: yes)
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 00000000000409F4
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A0C
 PASS Q5 reopened with the text kept, caret at the end: "note"
-  [kex] quick note: closed, focus back to 00000000000409F4
+  [kex] quick note: closed, focus back to 0000000000040A0C
 PASS Q6 Esc hides the note and gives the focus back
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 00000000000409F4
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A0C
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus back to 0000000000000000
 PASS Q7 clicked away, note still on screen: one press hides it and the other program keeps the focus
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 00000000000409F4
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A0C
   [kex] WM_HOTKEY received
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus back to 00000000000409F4
+  [kex] quick note: closed, focus back to 0000000000040A0C
 PASS Q8 covered by another window: a press brings it to front, the next hides it
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000010140
@@ -200,51 +204,73 @@ PASS T4 click on tab 0 switched the document to d.txt (real mouse click)
 PASS T5 the tab bar hides when the mouse leaves, under the view again (window there 000000000001014C, view 000000000001014C)
 PASS T6 outside post-it mode the hot zone does nothing
   [kex] Tab slide: enabled
-  [kex] Copy, cut and delete flashes: enabled
+  [kex] Copy, cut and delete: enabled
   [kex] Paint splash: enabled
 PASS W0 tab slide, flashes and paint splash on
-PASS W1 switching tabs slides the new document in from the left (started 1, 23 frames, held at 0.50; active 1, pictures 3, stopped early 0, technology 0)
+PASS W1 switching tabs slides the new document in from the left (started 1, 22 frames, held at 0.50; active 1, pictures 7, stopped early 0, technology 0)
 SHOT 20 tab-slide-half-way
 PASS W2 the slide ends with the new document in place (last frame at 1.00)
 PASS W3 switching back slides the other way (from the right)
 PASS W4 Windows animation effects off: tabs switch at once (respected by default)
+PASS TF0 tab fold and save glint on by default
+PASS TF1 opening f1.txt unfolds its tab: the tabs on its right make room (88 px, held at 0.50, skipped 0)
+SHOT 21 tab-unfold-half-way
+PASS TF2 the unfold ends and its window goes: the real tab bar shows again
+PASS TF3 closing f1.txt folds its tab shut and fades its document out over a.cpp (fade held at 0.50)
+SHOT 22 tab-close-fold
+PASS TF4 the fold and the fade end: the bar and the document as they are
+PASS TF5 two tabs opened in one go, then two closed: no folding, they just change (in one go 1 and 1, folds 0, skipped 0)
+PASS TF6 saving sv.txt sends a glint across its tab
+SHOT 23 save-glint-half-way
+PASS TF7 the glint passes and its window goes
+PASS TF8 with the tab bar hidden the glint runs along the top of the view
+  [kex] Save glint: disabled
+  [kex] Tab close and open: disabled
+PASS TF9 tab fold and save glint off: tabs and saves change at once
+  [kex] Save glint: enabled
+  [kex] Tab close and open: enabled
 PASS SW0 touchpad tab swipe on (touchpad reports registered)
 PASS SW1 half a swipe: the tab on the right is half way in (at 0.50, tab 0 -> 1)
-SHOT 21 tab-swipe-half-way
+SHOT 24 tab-swipe-half-way
 PASS SW2 fingers resting: the slide holds where they left it (0.50 after 450 ms)
 PASS SW3a the slide follows the fingers back (0.30)
-  [kex] Tab swipe: touchpad, 240 wheel units, let go at 0.30 (-8.9 swipes/s) -> slid back
+  [kex] Tab swipe: touchpad, 240 wheel units, let go at 0.30 (-5.7 swipes/s) -> slid back
 PASS SW3 let go before half way: it slides back to the first tab (tab 0)
 PASS SW3b the Ctrl+Tab order is as it was before the swipe (7 tabs)
-  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (9.5 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (6.1 swipes/s) -> switched
 PASS SW4 let go past half way: the switch finishes (tab 1, last frame at 1.00)
-  [kex] Tab swipe: touchpad, 160 wheel units, let go at 0.20 (6.4 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 160 wheel units, let go at 0.20 (5.4 swipes/s) -> switched
 PASS SW5 a short quick flick to the left switches to the tab on the left (tab 0)
 PASS SW6 swiping left on the first tab does nothing
   [kex] Tab swipe: wheel, 560 wheel units, let go at 0.70 (0.0 swipes/s) -> switched
 PASS SW7 without touchpad reports a pause in the swipe lets go (tab 1; begin(touch) start back begin(touch) start finish begin(touch) start finish begin(touch) let-go-early begin(wheel) start finish)
 PASS SW8 tilt wheel right: the next tab at once (tab 2)
 PASS SW9 where the line scrolls sideways the swipe scrolls it (x offset 48), no tab moves
-  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (7.4 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (5.0 swipes/s) -> switched
 PASS SW10 over the tab bar the swipe switches tabs even where the line could scroll (tab 3 from 4, under the pointer: SysTabControl32; begin(touch) start back begin(touch) start finish begin(touch) start finish begin(touch) let-go-early begin(wheel) start finish begin(wheel) begin(touch) text begin(touch) start finish)
   [kex] Touchpad tab swipe: disabled
 PASS SW11 touchpad tab swipe off: swiping does not switch tabs
   [kex] Touchpad tab swipe: enabled
 PASS X1 Edit > Copy: the selection flashes (1 rectangle, 1 live)
 PASS X2 copying three lines flashes 3 rectangles
-PASS X3 Edit > Cut: one double flash (cuts 1, copies 0)
-PASS X4 Delete on a selection: a red flash (deletes 1)
-SHOT 22 delete-flash
+PASS X3 Edit > Cut: the cut text lifts away, one piece (cuts 1, copies 0, flashes 0)
+PASS X4 Delete on a selection: the text shrinks away (deletes 1, 1 piece on screen)
+SHOT 25 delete-shrink
 PASS X5 typing over a selection and deleting single characters: no flash
 PASS X6 "Copy" unticked: copying flashes nothing
+  [kex] Falling letters: disabled
+PASS X7 falling letters off: the cut ghost carries the text (4 of the 4 characters to draw in "de <s")
+SHOT 26 cut-lift
+  [kex] Falling letters: enabled
+PASS X8 "Cut" and "Delete" unticked: cutting and deleting show nothing
 PASS P1 Style All Occurrences of Token: "red" splashes paint at its 4 occurrences (32 drops and washes)
-SHOT 23 paint-splash
+SHOT 27 paint-splash
 PASS P2 styling a token that already has that colour splashes nothing
 PASS P3 Style One Token: one splash, on that occurrence only (1)
   [kex] Paint splash: disabled
 PASS P4 paint splash off: colouring splashes nothing
   [kex] Paint splash: enabled
-PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (1636 frames so far, 6.75 ms of drawing per frame lately, the last one 4.05 ms); Windows' compositor puts them on screen with the graphics card."
+PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (1434 frames so far, 7.68 ms of drawing per frame lately, the last one 5.26 ms); Windows' compositor puts them on screen with the graphics card."
   [kex] Falling letters: disabled
 PASS E1 Falling letters off from Preferences: unticked and remembered, no letters left (the flashes and splashes keep the overlay)
   [kex] Falling letters: enabled
@@ -278,10 +304,10 @@ PASS E2 JetBrains shortcuts back on from Preferences
 PASS E1 Live token styles off from Preferences: unticked and remembered, 
   [kex] Live token styles: enabled
 PASS E2 Live token styles back on from Preferences
-  [kex] Copy, cut and delete flashes: disabled
-PASS E1 Copy, cut and delete flashes off from Preferences: unticked and remembered, no flashes left
-  [kex] Copy, cut and delete flashes: enabled
-PASS E2 Copy, cut and delete flashes back on from Preferences
+  [kex] Copy, cut and delete: disabled
+PASS E1 Copy, cut and delete off from Preferences: unticked and remembered, no flashes left
+  [kex] Copy, cut and delete: enabled
+PASS E2 Copy, cut and delete back on from Preferences
   [kex] Tab slide: disabled
 PASS E1 Tab slide off from Preferences: unticked and remembered, no slide running
   [kex] Tab slide: enabled
@@ -294,18 +320,26 @@ PASS E2 Paint splash back on from Preferences
 PASS E1 Touchpad tab swipe off from Preferences: unticked and remembered, touchpad reports released, no slide held
   [kex] Touchpad tab swipe: enabled
 PASS E2 Touchpad tab swipe back on from Preferences
+  [kex] Tab close and open: disabled
+PASS E1 Tab close and open off from Preferences: unticked and remembered, tab bars unhooked, no fold window
+  [kex] Tab close and open: enabled
+PASS E2 Tab close and open back on from Preferences
+  [kex] Save glint: disabled
+PASS E1 Save glint off from Preferences: unticked and remembered, no glint window
+  [kex] Save glint: enabled
+PASS E2 Save glint back on from Preferences
 PASS E3 Notepad++ still responsive
-INFO final summary: KEX: 13/13 features OK
+INFO final summary: KEX: 15/15 features OK
 PASS K1 c.txt cloned into view 3 (bottom left)
 PASS K2 view 3: deleting a line spawned 15 letters (expected 15)
 PASS K3 view 3 focused: smooth caret drawn there (target 0000000000010152, view 3 0000000000010152, visible 1, focus 0000000000010152, carets 1, main 54,0)
-SHOT 24 kex-view3-letters
+SHOT 28 kex-view3-letters
   [kex] hover tabs: tab bar of view 3 shown
 PASS K5 F12: hovering the top of view 3 shows view 3's tabs over view 3 (strip (20,350)-(496,374), view 3 (20,350)-(496,676), view 3)
-SHOT 25 kex-view3-hover-tabs
+SHOT 29 kex-view3-hover-tabs
   [kex] hover tabs: hidden
 PASS K4 view 3 snapped out: caret drawn in its own window at (68,15), inside view 3 (0,0)-(455,288)
-SHOT 26 kex-view3-snapped-out-caret
+SHOT 30 kex-view3-snapped-out-caret
 PASS J1 Alt+J from the caret selects the word, then each next occurrence: "value", 3 selections
 PASS J2 Shift+Alt+J drops the last one (2 left); releasing Alt does not open the menu bar
 PASS J3 Ctrl+Shift+Alt+J selects all 3 occurrences
@@ -331,13 +365,13 @@ INFO drag b.py from view 1: tab 2 at (210,103), cursor (210,103) over SysTabCont
 PASS N1 dragging b.py to the right edge previews the right half: (504,90)-(976,646) (view (24,90)-(976,646), preview window (508,94)-(971,641))
 PASS N2 the preview is a click-through layered window that never takes focus
 PASS N12 the dragged tab is lifted off the bar and follows the mouse: (863,353)-(953,376) around the cursor (881,368), click-through
-SHOT 27 tab-snap-preview-right
+SHOT 31 tab-snap-preview-right
 INFO after drop: b.py in view 2; view1:4 view2:1 view3:hidden/0 view4:hidden/0
 PASS N3 dropped there: b.py opened in a new view on the right, preview and lifted tab gone
 PASS N4 the new view sits where the preview was: (504,90)-(976,646) vs preview (504,90)-(976,646)
 INFO drag c.txt from view 1: tab 1 at (125,103), cursor (125,103) over SysTabControl32, capture SysTabControl32, current view 1
 PASS N5 the bottom edge of the left view previews its bottom half: (24,372)-(496,646) (view (24,90)-(496,646))
-SHOT 28 tab-snap-preview-quarter
+SHOT 32 tab-snap-preview-quarter
 INFO after drop: c.txt in view 3; view1:3 view2:1 view3:1 view4:hidden/0
 PASS N6 dropped: c.txt opened bottom left at (24,372)-(496,646) (preview (24,372)-(496,646))
 INFO drag d.txt from view 1: tab 0 at (40,103), cursor (40,103) over SysTabControl32, capture SysTabControl32, current view 1
@@ -358,14 +392,18 @@ PASS N10 tab snapping off: no preview, dropping on another view still moves the 
   [kex] Tab snapping: enabled
 PASS N11 tab snapping back on
 INFO glass: g.txt in view 1, theme background ffffff, renderers 0 1 0 0
+  [kex] glass: view 1 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 2 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 3 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 4 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
   [kex] glass: on (colour key only (test mode), key fefffe, tint 40%)
   [kex] Glass text area: enabled
 PASS G1 glass on from Preferences: the main window is colour-keyed with fefffe (theme background ffffff)
 PASS G2 all four views' backgrounds and the line-number margin are the key (0 styles left on the old background)
 PASS G3 Direct2D window renderers drawn through a DC while the glass is on (view renderers 0>0 1>3 0>0 0>0 )
-PASS G16 the views draw their text without smoothing while the glass is on (Notepad++ had quality 0), so letters get no outline
+PASS G16 no see-through layer under Wine: all 4 views fall back to text without smoothing (Notepad++ had quality 0, layer error 0x80004001)
 PASS G4 a click catcher (24,65)-(976,672) sits directly behind the window, over its client area (24,65)-(976,672)
-SHOT 29 glass-on
+SHOT 33 glass-on
 PASS G5 a click on the glass right of line 4 goes to the view under it: caret 54, line end 54
 PASS G6 the core's windowFromPoint finds the view there (plain WindowFromPoint gives Scintilla)
 PASS G7 the mouse wheel on the glass scrolls the view under it (first line 10)
@@ -375,42 +413,64 @@ PASS G10 switching g.txt to Python and back keeps the glass (0 styles left)
 PASS G11 dragging something over the glass turns it solid, so the view's own drop handling gets the drop
 PASS G12 the glass comes back once the mouse button is up
 PASS G13 after another program was in front and the window moved, the catcher is still right behind it at (64,89)-(956,676)
-PASS G14 KEX Windows page: "Running", "On: colour key only (test mode). Clicks on the glass go to the text under them. Text is drawn without smoothing while the glass is on, so letters have no outline.", style Blur, tint 40%, text edges Sharp (no outlines on the glass)
-SHOT 30 preferences-kex-windows-glass
+PASS G14 KEX Windows page: "Running", "On: colour key only (test mode). Clicks on the glass go to the text under them. This PC can't give the text a see-through layer, so it is drawn without smoothing (smoothed edges would show an outline).", style Blur, tint 40%, text edges Smooth
+SHOT 34 preferences-kex-windows-glass
   [kex] glass: off
   [kex] Glass text area: disabled
+  [kex] glass: view 1 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 2 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 3 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 4 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
   [kex] glass: on (colour key only (test mode), key fefffe, tint 40%)
   [kex] Glass text area: enabled
-PASS G17 Text edges "As Notepad++ draws them": the glass stays on and the views keep Notepad++'s own text smoothing
+PASS G17 Text edges Sharp is remembered and the glass restarts with it (0 views on a layer, 4 without)
   [kex] glass: off
   [kex] Glass text area: disabled
+  [kex] glass: view 1 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 2 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 3 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 4 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: on (colour key only (test mode), key fefffe, tint 40%)
+  [kex] Glass text area: enabled
+  [kex] glass: off
+  [kex] Glass text area: disabled
+  [kex] glass: view 1 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 2 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 3 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 4 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
   [kex] glass: on (colour key only (test mode), key fefffe, tint 40%)
   [kex] Glass text area: enabled
 PASS G18 Style Acrylic is remembered and the glass restarts with it
+PASS G21 a drag with acrylic: the plain blur waits under it (1), takes over on the first move at (94,109)-(986,696) (1), the acrylic comes back when the drag ends (1)
+PASS G22 the plain blur goes once the acrylic is back
   [kex] glass: off
   [kex] Glass text area: disabled
+  [kex] glass: view 1 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 2 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 3 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
+  [kex] glass: view 4 draws without a see-through layer (no see-through layer on this system, error 0x80004001): sharp text through a DC
   [kex] glass: on (colour key only (test mode), key fefffe, tint 40%)
   [kex] Glass text area: enabled
-  [kex] glass: off
-  [kex] Glass text area: disabled
-  [kex] glass: on (colour key only (test mode), key fefffe, tint 40%)
-  [kex] Glass text area: enabled
+PASS G23 Style Blur: no second catcher (nothing to swap)
+INFO glass layer test: smooth 89855 clear, 6889 solid, 0 soft, 0 key (0x00000000); sharp 89801 clear, 6943 solid, 0 soft, 0 key (0x00000000)
+PASS G19 the text layer: the key comes out see-through (89855 clear pixels, 0 of the key left), the text stays (6889 solid, 0 soft)
+SKIP G20 Wine's Direct2D draws text without smoothing, so soft edges can only be counted on Windows
   [kex] glass: off
   [kex] Glass text area: disabled
 PASS G15 glass off: the window is not layered, the theme's backgrounds, renderers and text smoothing are back, the catcher is gone
-PASS L1 live token styles on by default; k.cpp's lexer goes through the suite (98 lexers wrapped, 8 alive)
+PASS L1 live token styles on by default; k.cpp's lexer goes through the suite (110 lexers wrapped, 8 alive)
 PASS L2 Style All Occurrences > 1st style on "alpha": 4 of 4 whole-word occurrences styled live (not "alphabet"), 4 runs
 PASS L3 an "alpha" typed later is styled too (5 of 5)
 PASS L4 an occurrence edited into "alphx" loses the style; the other 4 keep it
 PASS L5 Bold: "alpha" in code is drawn with style 255, a bold copy of the identifier style 11 (weight 700)
 PASS L6 all 5 are bold, each on its own lexer style (comment line 2, block comment 1); every other character keeps the lexer's style (first difference: -1) 
-SHOT 31 tokens-live
+SHOT 35 tokens-live
 PASS L7 a new "alpha" typed in a comment comes out bold and coloured straight away (6 found) 
 PASS L8 Italic too: style 252 is bold italic 
 PASS L9 after Notepad++ applies the theme again, the bold italic and the colour are still there (style 252)
 PASS L10 switching the language to Python and back keeps them bold italic, and C++ colouring is back ("void" style 16, was 16)  (12 variants made, 0 lexer collisions)
 PASS L11 Ctrl+Shift+H in the editor pops the token menu up at the caret
-SHOT 32 tokens-menu
+SHOT 36 tokens-menu
 PASS L12 picking "2nd style" there styles "beta" with Mark Style 2 (2 tokens styled now)
 PASS L13 right-click > Style All Occurrences of Token has Bold, Italic and Clear This Token, with "Using 2nd Style" ticked for "beta"
 PASS L14 and so does Search > Style All Occurrences of Token
@@ -419,7 +479,7 @@ PASS L16 kex-tokens.txt remembers "beta" for k.cpp (128 bytes)
   [kex] Live token styles: 2 styled tokens and 0 single ranges restored for C:\kexsuite-test\k.cpp
 PASS L17 closed and opened again, k.cpp has its styled tokens back: "beta" coloured, "gamma" bold  [k.cpp, 2 rules, wrapped 1, beta x1 value 19284, gamma x1 style 255 base 11 flags 1, lexed to 204 of 204]
 PASS L18 KEX Highlighting page: "Running", menu key Ctrl+Shift+H (Settings > KEX Highlighting > "Token Style Menu	Ctrl+Shift+H"), "Menu key Ctrl+Shift+H. 2 tokens are styled in this file."
-SHOT 33 preferences-kex-highlighting
+SHOT 37 preferences-kex-highlighting
   [kex] Live token styles: disabled
 PASS L19 switched off: the colours and the bold are gone 
   [kex] Live token styles: 2 styled tokens and 0 single ranges restored for C:\kexsuite-test\k.cpp
@@ -442,51 +502,59 @@ PASS L28 Clear all Styles takes the single bold/italic ranges away too
   [kex] Tab snapping: disabled
   [kex] JetBrains shortcuts: disabled
   [kex] Live token styles: disabled
-  [kex] Copy, cut and delete flashes: disabled
+  [kex] Copy, cut and delete: disabled
   [kex] Tab slide: disabled
   [kex] Paint splash: disabled
   [kex] Touchpad tab swipe: disabled
-INFO PERF all KEX features on: 25.673 ms per key, 1.50% CPU idle; all off: 21.421 ms per key, 1.00% CPU idle
-INFO PERF smooth caret: drawn in 1.13 paints per key while typing, 0.0 a second while idle (glide and blink fades)
-INFO PERF text repaints per key: 1.13 with the features on, 1.00 with them off
-INFO PERF smooth caret's own code in Scintilla per key: 0.206 ms
+  [kex] Tab close and open: disabled
+  [kex] Save glint: disabled
+INFO PERF all KEX features on: 38.989 ms per key, 2.00% CPU idle; all off: 30.953 ms per key, 1.50% CPU idle
+INFO PERF smooth caret: drawn in 1.17 paints per key while typing, 0.0 a second while idle (glide and blink fades)
+INFO PERF text repaints per key: 1.17 with the features on, 1.00 with them off
+INFO PERF smooth caret's own code in Scintilla per key: 0.204 ms
   [kex] Falling letters: enabled
-INFO PERF only Falling letters                    20.828 ms per key (-0.592), 1.50% CPU idle (+0.50)
+INFO PERF only Falling letters                    29.874 ms per key (-1.079), 2.00% CPU idle (+0.50)
   [kex] Falling letters: disabled
   [kex] Smooth caret: enabled
-INFO PERF only Smooth caret                       20.377 ms per key (-1.043), 1.50% CPU idle (+0.50)
+INFO PERF only Smooth caret                       30.643 ms per key (-0.310), 1.50% CPU idle (-0.00)
   [kex] Smooth caret: disabled
   [kex] hotkey Ctrl+Alt+M: registered (error 0)
   [kex] Quick note (global hotkey): enabled
-INFO PERF only Quick note (global hotkey)         22.009 ms per key (+0.589), 1.50% CPU idle (+0.50)
+INFO PERF only Quick note (global hotkey)         31.257 ms per key (+0.304), 1.00% CPU idle (-0.50)
   [kex] Quick note (global hotkey): disabled
   [kex] F12 hover tabs: enabled
-INFO PERF only F12 hover tabs                     20.708 ms per key (-0.712), 1.50% CPU idle (+0.50)
+INFO PERF only F12 hover tabs                     31.425 ms per key (+0.472), 2.00% CPU idle (+0.50)
   [kex] F12 hover tabs: disabled
   [kex] A Notepad++ for each desktop: enabled
-INFO PERF only A Notepad++ for each desktop       24.412 ms per key (+2.992), 1.50% CPU idle (+0.50)
+INFO PERF only A Notepad++ for each desktop       32.234 ms per key (+1.282), 2.50% CPU idle (+1.00)
   [kex] A Notepad++ for each desktop: disabled
   [kex] Tab snapping: enabled
-INFO PERF only Tab snapping                       21.496 ms per key (+0.075), 1.50% CPU idle (+0.50)
+INFO PERF only Tab snapping                       30.964 ms per key (+0.011), 2.00% CPU idle (+0.50)
   [kex] Tab snapping: disabled
   [kex] JetBrains shortcuts: enabled
-INFO PERF only JetBrains shortcuts                18.928 ms per key (-2.493), 1.00% CPU idle (-0.00)
+INFO PERF only JetBrains shortcuts                28.422 ms per key (-2.531), 1.50% CPU idle (-0.00)
   [kex] JetBrains shortcuts: disabled
   [kex] Live token styles: enabled
-INFO PERF only Live token styles                  20.650 ms per key (-0.770), 1.50% CPU idle (+0.50)
+INFO PERF only Live token styles                  31.040 ms per key (+0.087), 1.50% CPU idle (+0.00)
   [kex] Live token styles: disabled
-  [kex] Copy, cut and delete flashes: enabled
-INFO PERF only Copy, cut and delete flashes       19.169 ms per key (-2.251), 1.50% CPU idle (+0.50)
-  [kex] Copy, cut and delete flashes: disabled
+  [kex] Copy, cut and delete: enabled
+INFO PERF only Copy, cut and delete               30.488 ms per key (-0.465), 1.50% CPU idle (-0.00)
+  [kex] Copy, cut and delete: disabled
   [kex] Tab slide: enabled
-INFO PERF only Tab slide                          20.713 ms per key (-0.708), 1.50% CPU idle (+0.50)
+INFO PERF only Tab slide                          28.491 ms per key (-2.462), 2.00% CPU idle (+0.50)
   [kex] Tab slide: disabled
   [kex] Paint splash: enabled
-INFO PERF only Paint splash                       20.588 ms per key (-0.833), 1.00% CPU idle (-0.00)
+INFO PERF only Paint splash                       29.373 ms per key (-1.580), 2.00% CPU idle (+0.50)
   [kex] Paint splash: disabled
   [kex] Touchpad tab swipe: enabled
-INFO PERF only Touchpad tab swipe                 21.770 ms per key (+0.349), 2.00% CPU idle (+1.00)
+INFO PERF only Touchpad tab swipe                 28.747 ms per key (-2.206), 1.50% CPU idle (-0.00)
   [kex] Touchpad tab swipe: disabled
+  [kex] Tab close and open: enabled
+INFO PERF only Tab close and open                 28.785 ms per key (-2.168), 2.00% CPU idle (+0.50)
+  [kex] Tab close and open: disabled
+  [kex] Save glint: enabled
+INFO PERF only Save glint                         28.121 ms per key (-2.832), 1.50% CPU idle (-0.00)
+  [kex] Save glint: disabled
   [kex] Falling letters: enabled
   [kex] Smooth caret: enabled
   [kex] hotkey Ctrl+Alt+M: registered (error 0)
@@ -496,10 +564,12 @@ INFO PERF only Touchpad tab swipe                 21.770 ms per key (+0.349), 2.
   [kex] Tab snapping: enabled
   [kex] JetBrains shortcuts: enabled
   [kex] Live token styles: enabled
-  [kex] Copy, cut and delete flashes: enabled
+  [kex] Copy, cut and delete: enabled
   [kex] Tab slide: enabled
   [kex] Paint splash: enabled
   [kex] Touchpad tab swipe: enabled
-PASS PERF1 the features' own work adds 4.252 ms per key and 0.50% CPU while idle; caret redraws 1.13 per key, 0.0 a second idle (total 25.673 vs 21.421 ms per key, 1.50% vs 1.00% idle)
-RESULT 239 passed, 0 failed
+  [kex] Tab close and open: enabled
+  [kex] Save glint: enabled
+PASS PERF1 the features' own work adds 8.036 ms per key and 0.50% CPU while idle; caret redraws 1.17 per key, 0.0 a second idle (total 38.989 vs 30.953 ms per key, 2.00% vs 1.50% idle)
+RESULT 261 passed, 0 failed
 DONE

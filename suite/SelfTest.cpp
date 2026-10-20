@@ -6,6 +6,7 @@
 // Optional argument: KexSuite_testdir=C:\path (default: <plugin config dir>\KexSuite-selftest).
 #include "Overlay.h"
 #include "KexSuiteRes.h"
+#include "KexScintilla.h"
 #include "preference_rc.h"
 #include "SciLexer.h"
 #include <functional>
@@ -416,6 +417,8 @@ void removeDeskSession(const wchar_t* id)
 
 POINT g_hoverPoint{};   // a point on the first tab while F12 shows the tab bar
 int g_slideDir = 0, g_slideBefore = 0, g_slideFrames = 0;   // the tab slide steps
+TabMotionStats g_motion;    // the tab fold and save glint steps
+int g_fadeSlides = 0;       // core slides counted before a closed tab's document fades
 int g_swipeIdx = 0;                        // the tab the swipe steps start from
 SwipeStats g_swipeBefore;
 std::vector<intptr_t> g_swipeOrder;        // the tabs in Ctrl+Tab order before a swipe
@@ -471,6 +474,7 @@ std::vector<intptr_t> recentOrder()
     return out;
 }
 std::string g_flashText;   // a.cpp before the flash steps edit it
+bool g_lettersWereOn = true;   // the cut ghost step turns the falling letters off for a moment
 bool g_flashModified = false;
 
 // the text of the second window's tab that holds `want` ("" when none does)
@@ -647,7 +651,8 @@ int pressHotkey()
 }
 
 // The on/off tick of a feature on its Preferences page, clicked the way the user does it.
-const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN };
+const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
+                                  IDC_F_EN, IDC_GL_EN };
 HWND enableBox(int module)
 {
     if (!prefPage(pageOfModule(module))) { openPreferences(); pump(300); }
@@ -769,12 +774,20 @@ void dragEnd()
 COLORREF g_glassBack[4] = {};
 int g_glassTech[4] = {}, g_glassQuality[4] = {};
 const UINT WM_UPDATESCINTILLAS_ = WM_USER + 5000 + 1;   // WordStyleDlg.h: Style Configurator's "apply"
-HWND glassCatcherOf(HWND host)
+HWND catcherTitled(HWND host, const wchar_t* title)
 {
     HWND h = nullptr;
-    while ((h = ::FindWindowExW(nullptr, h, L"KexGlassCatcher", nullptr)) != nullptr)
+    while ((h = ::FindWindowExW(nullptr, h, L"KexGlassCatcher", title)) != nullptr)
         if (reinterpret_cast<HWND>(::GetWindowLongPtrW(h, GWLP_USERDATA)) == host) return h;
     return nullptr;
+}
+HWND glassCatcherOf(HWND host) { return catcherTitled(host, L"KEX glass"); }
+HWND glassBlurCatcherOf(HWND host) { return catcherTitled(host, L"KEX glass (moving)"); }   // acrylic: the plain blur that moves instead
+int viewCount()
+{
+    int n = 0;
+    for (int v = 0; v < views.count(); ++v) if (views.sci(v)) ++n;
+    return n;
 }
 bool keyedWith(HWND w, COLORREF* key)
 {
@@ -2009,6 +2022,138 @@ void buildSteps()
         focusEditor();
         return until([] { return !slideStats(curSci()).active; }, 2000);
     });
+    // ---- tab close and open, save glint -------------------------------------------------------------
+    add([] {
+        check(modules[M_TABFOLD]->isEnabled() && modules[M_GLINT]->isEnabled(), L"TF0", L"tab fold and save glint on by default");
+        writeFile(path(L"f1.txt"), "fold one\r\n");
+        writeFile(path(L"f2.txt"), "fold two\r\n");
+        writeFile(path(L"f3.txt"), "fold three\r\n");
+        writeFile(path(L"sv.txt"), "save me\r\n");
+        views.activate(0, 0);
+        switchTo(L"a.cpp");
+        focusEditor();
+        pump(200);
+        g_motion = tabMotionStats();
+        tabMotionTestFreeze(0.5);
+        open(L"f1.txt");
+        return 200;
+    });
+    add([] {
+        const TabMotionStats st = tabMotionStats();
+        check(curName() == L"f1.txt" && st.unfolds == g_motion.unfolds + 1 && st.overlayShown && std::fabs(st.lastFraction - 0.5f) < 0.01f && st.lastDx > 0
+              && st.foldFrames > g_motion.foldFrames, L"TF1",
+              L"opening f1.txt unfolds its tab: the tabs on its right make room (%d px, held at %.2f, skipped %d)", st.lastDx, st.lastFraction,
+              st.foldSkipped - g_motion.foldSkipped);
+        return shot(L"tab-unfold-half-way");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        slideTestFreeze(-1);
+        return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 3000);
+    });
+    add([] {
+        check(g_untilOk, L"TF2", L"the unfold ends and its window goes: the real tab bar shows again");
+        // closing it: the tab folds shut, its document fades out over the one that takes its place
+        g_motion = tabMotionStats();
+        g_fadeSlides = slideStats(curSci()).slides;
+        tabMotionTestFreeze(0.5);
+        slideTestFreeze(0.5);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        return 200;
+    });
+    add([] {
+        const TabMotionStats st = tabMotionStats();
+        const SlideStats sl = slideStats(curSci());
+        check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && st.docFades == g_motion.docFades + 1
+              && sl.active && sl.slides == g_fadeSlides + 1 && std::fabs(sl.fraction - 0.5f) < 0.01f, L"TF3",
+              L"closing f1.txt folds its tab shut and fades its document out over %ls (fade held at %.2f)", curName().c_str(), sl.fraction);
+        return shot(L"tab-close-fold");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        slideTestFreeze(-1);
+        ::InvalidateRect(curSci(), nullptr, FALSE);
+        return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 3000);
+    });
+    add([] {
+        check(g_untilOk, L"TF4", L"the fold and the fade end: the bar and the document as they are");
+        // several tabs in one go (a session, Close All): they just change. In view 2, which has room for them
+        // (a bar with scroll arrows never folds)
+        views.activate(1, 0);
+        pump(150);
+        g_motion = tabMotionStats();
+        open(L"f2.txt");
+        open(L"f3.txt");
+        pump(300);
+        const TabMotionStats st = tabMotionStats();
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(300);
+        const TabMotionStats st2 = tabMotionStats();
+        check(st.foldBulk == g_motion.foldBulk + 1 && st.unfolds == g_motion.unfolds && st2.foldBulk == st.foldBulk + 1 && st2.folds == st.folds
+              && !st2.overlayShown, L"TF5", L"two tabs opened in one go, then two closed: no folding, they just change (in one go %d and %d, folds %d, skipped %d)",
+              st.foldBulk - g_motion.foldBulk, st2.foldBulk - st.foldBulk, st.unfolds - g_motion.unfolds + st2.folds - st.folds, st2.foldSkipped - g_motion.foldSkipped);
+        switchTo(L"a.cpp");
+        return until([] { return !slideStats(curSci()).active; }, 2000);
+    });
+    add([] {
+        // saving: a glint across the tab
+        open(L"sv.txt");
+        focusEditor();
+        pump(150);
+        HWND s = curSci();
+        sci(s, SCI_DOCUMENTEND);
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        g_motion = tabMotionStats();
+        tabMotionTestFreeze(0.5);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        return 200;
+    });
+    add([] {
+        const TabMotionStats st = tabMotionStats();
+        check(st.saves == g_motion.saves + 1 && st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines && st.overlayShown
+              && st.glintFrames > g_motion.glintFrames && sci(curSci(), SCI_GETMODIFY) == 0, L"TF6", L"saving sv.txt sends a glint across its tab");
+        return shot(L"save-glint-half-way");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        return until([] { return !tabMotionStats().overlayShown; }, 2000);
+    });
+    add([] {
+        check(g_untilOk, L"TF7", L"the glint passes and its window goes");
+        // the tab bar hidden: a line of light along the top of the view
+        nppMsg(NPPM_HIDETABBAR, 0, TRUE);
+        pump(200);
+        HWND s = curSci();
+        g_motion = tabMotionStats();
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        pump(100);
+        const TabMotionStats st = tabMotionStats();
+        check(st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines + 1, L"TF8", L"with the tab bar hidden the glint runs along the top of the view");
+        nppMsg(NPPM_HIDETABBAR, 0, FALSE);
+        waitFor([] { return !tabMotionStats().overlayShown; }, 2000);
+        // their switches
+        setModuleEnabled(M_GLINT, false, false);
+        setModuleEnabled(M_TABFOLD, false, false);
+        const TabMotionStats b2 = tabMotionStats();
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        open(L"f1.txt");
+        pump(150);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(200);
+        const TabMotionStats st2 = tabMotionStats();
+        check(st2.glints == b2.glints && st2.unfolds == b2.unfolds && st2.folds == b2.folds && st2.docFades == b2.docFades && !st2.overlayShown, L"TF9",
+              L"tab fold and save glint off: tabs and saves change at once");
+        setModuleEnabled(M_GLINT, true, false);
+        setModuleEnabled(M_TABFOLD, true, false);
+        switchTo(L"sv.txt");
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        switchTo(L"a.cpp");
+        focusEditor();
+        return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 2000);
+    });
     // ---- touchpad tab swipe ---------------------------------------------------------------------
     add([] {
         setModuleEnabled(M_SWIPE, true, false);
@@ -2186,27 +2331,31 @@ void buildSteps()
         return 100;
     });
     add([] {
-        // cut: a double flash, not also counted as a copy
+        // cut: the text lifts away, not also counted as a copy
         HWND s = curSci();
         lettersFreezeAfter(-1);
         waitFor([] { return flashStats().live == 0; }, 3000);
         sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
         const FlashStats before = flashStats();
         tokCommand(IDM_EDIT_CUT);
-        pump(250);
+        waitFor([before] { return flashStats().ghosts > before.ghosts; }, 1500);
+        pump(250);   // the clipboard listener hears of the cut, so the next removal isn't taken for one
         const FlashStats st = flashStats();
-        check(st.cuts == before.cuts + 1 && st.copies == before.copies && st.deletes == before.deletes && st.spawned == before.spawned + 1, L"X3",
-              L"Edit > Cut: one double flash (cuts %d, copies %d)", st.cuts - before.cuts, st.copies - before.copies);
+        check(st.cuts == before.cuts + 1 && st.copies == before.copies && st.deletes == before.deletes && st.ghosts == before.ghosts + 1 && st.spawned == before.spawned,
+              L"X3", L"Edit > Cut: the cut text lifts away, one piece (cuts %d, copies %d, flashes %d)", st.cuts - before.cuts, st.copies - before.copies,
+              st.spawned - before.spawned);
         sci(s, SCI_UNDO);
-        // delete: a red flash
+        // delete: the text shrinks away
         focusEditor();
         sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        lettersFreezeAfter(40);
+        lettersFreezeAfter(60);
         tap(VK_DELETE);
-        pump(150);
+        waitFor([st] { return flashStats().ghosts > st.ghosts; }, 1500);
+        pump(100);
         const FlashStats st2 = flashStats();
-        check(st2.deletes == st.deletes + 1 && st2.cuts == st.cuts && st2.lastRects == 1, L"X4", L"Delete on a selection: a red flash (deletes %d)", st2.deletes - st.deletes);
-        return shot(L"delete-flash");
+        check(st2.deletes == st.deletes + 1 && st2.cuts == st.cuts && st2.lastRects == 1 && st2.ghosts == st.ghosts + 1 && st2.ghostsLive >= 1, L"X4",
+              L"Delete on a selection: the text shrinks away (deletes %d, %d piece on screen)", st2.deletes - st.deletes, st2.ghostsLive);
+        return shot(L"delete-shrink");
     });
     add([] {
         HWND s = curSci();
@@ -2234,6 +2383,56 @@ void buildSteps()
         pump(200);
         check(flashStats().spawned == b2.spawned, L"X6", L"\"Copy\" unticked: copying flashes nothing");
         settings.setInt(modules[M_FLASH]->key(), L"Copy", 1);
+        modules[M_FLASH]->loadOptions();
+        // the falling letters off: the ghost carries the text itself, in its own fonts and colours
+        const bool letters = modules[M_LETTERS]->isEnabled();
+        setModuleEnabled(M_LETTERS, false, false);
+        waitFor([] { return flashStats().live == 0; }, 3000);
+        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
+        const std::string all = docText(s);
+        int expect = 0;
+        std::string cutText;
+        for (intptr_t i = posOf(s, 2, 0); i < posOf(s, 2, 5) && i < static_cast<intptr_t>(all.size()); ++i)
+        {
+            cutText += all[static_cast<size_t>(i)];
+            if (static_cast<unsigned char>(all[static_cast<size_t>(i)]) > ' ') ++expect;
+        }
+        const FlashStats b3 = flashStats();
+        lettersFreezeAfter(110);
+        tokCommand(IDM_EDIT_CUT);
+        waitFor([b3] { return flashStats().ghosts > b3.ghosts; }, 1500);
+        pump(150);
+        const FlashStats st3 = flashStats();
+        check(expect > 0 && st3.ghosts == b3.ghosts + 1 && st3.ghostChars == expect && st3.ghostsLive >= 1, L"X7",
+              L"falling letters off: the cut ghost carries the text (%d of the %d characters to draw in \"%hs\")", st3.ghostChars, expect, cutText.c_str());
+        g_lettersWereOn = letters;
+        return shot(L"cut-lift");
+    });
+    add([] {
+        HWND s = curSci();
+        if (g_lettersWereOn) setModuleEnabled(M_LETTERS, true, false);
+        lettersFreezeAfter(-1);
+        sci(s, SCI_UNDO);
+        // their own switches
+        settings.setInt(modules[M_FLASH]->key(), L"CutLift", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"DeleteFade", 0);
+        modules[M_FLASH]->loadOptions();
+        waitFor([] { return flashStats().live == 0; }, 3000);
+        const FlashStats b4 = flashStats();
+        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
+        tokCommand(IDM_EDIT_CUT);
+        pump(250);
+        sci(s, SCI_UNDO);
+        focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
+        tap(VK_DELETE);
+        pump(200);
+        const FlashStats st4 = flashStats();
+        check(st4.cuts == b4.cuts + 1 && st4.deletes == b4.deletes + 1 && st4.ghosts == b4.ghosts, L"X8",
+              L"\"Cut\" and \"Delete\" unticked: cutting and deleting show nothing");
+        sci(s, SCI_UNDO);
+        settings.setInt(modules[M_FLASH]->key(), L"CutLift", 1);
+        settings.setInt(modules[M_FLASH]->key(), L"DeleteFade", 1);
         modules[M_FLASH]->loadOptions();
         // a.cpp as it was
         if (docText(s) != g_flashText)
@@ -2326,6 +2525,8 @@ void buildSteps()
             case M_FLASH: restored = flashStats().live == 0; extra = L"no flashes left"; break;
             case M_SPLASH: restored = splashStats().live == 0; extra = L"no paint left"; break;
             case M_SLIDE: restored = !slideStats(views.sci(0)).active && !slideStats(views.sci(1)).active; extra = L"no slide running"; break;
+            case M_TABFOLD: restored = !tabMotionStats().overlayShown; extra = L"tab bars unhooked, no fold window"; break;
+            case M_GLINT: restored = !tabMotionStats().overlayShown; extra = L"no glint window"; break;
             case M_SWIPE: restored = !swipeStats().active && !swipeStats().rawRegistered && !slideStats(views.sci(0)).active; extra = L"touchpad reports released, no slide held"; break;
             case M_CARET:
             {
@@ -2783,11 +2984,19 @@ void buildSteps()
             ts += std::to_wstring(o) + L">" + std::to_wstring(now) + L" ";
         }
         check(tech, L"G3", L"Direct2D window renderers drawn through a DC while the glass is on (view renderers %ls)", ts.c_str());
+        // each view's text goes on a see-through layer of its own (DirectComposition); where there is none (Wine has
+        // only stubs) the view draws through a DC without smoothing, so letters get no outline
         bool sharp = true;
         for (int v = 0; v < views.count(); ++v)
             if (HWND s = views.sci(v)) sharp = sharp && sci(s, SCI_GETFONTQUALITY) == SC_EFF_QUALITY_NON_ANTIALIASED;
-        check(sharp, L"G16", L"the views draw their text without smoothing while the glass is on (Notepad++ had quality %d), so letters get no outline",
-              g_glassQuality[0]);
+        const int nv = viewCount();
+        if (underWine)
+            check(g.fallbackViews == nv && g.layerViews == 0 && sharp, L"G16",
+                  L"no see-through layer under Wine: all %d views fall back to text without smoothing (Notepad++ had quality %d, layer error 0x%08lx)",
+                  nv, g_glassQuality[0], g.layerError);
+        else
+            check(g.layerViews == nv && g.fallbackViews == 0, L"G16", L"all %d views draw their text on a see-through layer (%d fell back, error 0x%08lx)",
+                  nv, g.fallbackViews, g.layerError);
         HWND c = glassCatcherOf(npp._nppHandle);
         RECT cr = clientOnScreen(npp._nppHandle), kr = screenRectOf(c);
         check(c && ::IsWindowVisible(c) && ::EqualRect(&cr, &kr) && nextVisible(npp._nppHandle) == c && g.hosts >= 1, L"G4",
@@ -2867,26 +3076,82 @@ void buildSteps()
         HWND p = prefPage(PAGE_WINDOWS);
         std::wstring st = itemText(p, IDC_G_STATUS), info = itemText(p, IDC_G_INFO), tint = itemText(p, IDC_G_TINT);
         std::wstring style = itemText(p, IDC_G_STYLE), edges = itemText(p, IDC_G_EDGES);
-        check(st == L"Running" && info.rfind(L"On:", 0) == 0 && tint == L"40" && style == L"Blur" && edges.rfind(L"Sharp", 0) == 0, L"G14",
+        check(st == L"Running" && info.rfind(L"On:", 0) == 0 && tint == L"40" && style == L"Blur" && edges == L"Smooth"
+              && ::IsDlgButtonChecked(p, IDC_G_SMOOTHMOVE) == BST_CHECKED, L"G14",
               L"KEX Windows page: \"%ls\", \"%ls\", style %ls, tint %ls%%, text edges %ls", st.c_str(), info.c_str(), style.c_str(), tint.c_str(), edges.c_str());
         return 200;
     });
     add([] { return shot(L"preferences-kex-windows-glass"); });
     add([] {
         HWND p = prefPage(PAGE_WINDOWS);
-        pickCombo(p, IDC_G_EDGES, 2);   // "As Notepad++ draws them"
+        pickCombo(p, IDC_G_EDGES, 1);   // Sharp
         pump(300);
-        bool own = true;
+        const GlassStats g = glassStats();
+        bool sharp = true;
         for (int v = 0; v < views.count(); ++v)
-            if (HWND s = views.sci(v)) own = own && sci(s, SCI_GETFONTQUALITY) == g_glassQuality[v];
-        check(glassStats().active && own && settings.getInt(L"Glass", L"TextEdges", 0) == 2, L"G17",
-              L"Text edges \"As Notepad++ draws them\": the glass stays on and the views keep Notepad++'s own text smoothing");
+            if (HWND s = views.sci(v)) sharp = sharp && (g.layerViews > 0 || sci(s, SCI_GETFONTQUALITY) == SC_EFF_QUALITY_NON_ANTIALIASED);
+        check(g.active && sharp && settings.getInt(L"Glass", L"Edges", 0) == 1 && g.layerViews + g.fallbackViews == viewCount(), L"G17",
+              L"Text edges Sharp is remembered and the glass restarts with it (%d views on a layer, %d without)", g.layerViews, g.fallbackViews);
+        pickCombo(p, IDC_G_EDGES, 0);
         pickCombo(p, IDC_G_STYLE, 1);   // acrylic: the test engine has no blur, the setting must still be taken
         pump(200);
         check(glassStats().active && settings.getInt(L"Glass", L"Style", 0) == 1, L"G18", L"Style Acrylic is remembered and the glass restarts with it");
+        // acrylic lags behind a moving window, a plain blur doesn't: during a drag the plain blur moves instead
+        HWND host = npp._nppHandle, cat = glassCatcherOf(host), blur = glassBlurCatcherOf(host);
+        if (!blur) { tlog(L"SKIP G21-G22 no acrylic on this Windows (build below 1803)"); return 100; }
+        const GlassStats g0 = glassStats();
+        ::SendMessageW(host, WM_ENTERSIZEMOVE, 0, 0);
+        const bool under = ::IsWindowVisible(blur) && ::IsWindowVisible(cat) && nextVisible(cat) == blur;
+        RECT wr; ::GetWindowRect(host, &wr);
+        RECT cr = clientOnScreen(host);
+        ::OffsetRect(&wr, 30, 20);
+        ::OffsetRect(&cr, 30, 20);
+        ::SendMessageW(host, WM_MOVING, WMSZ_LEFT, reinterpret_cast<LPARAM>(&wr));
+        RECT br = screenRectOf(blur);
+        const bool swapped = glassStats().swaps == g0.swaps + 1 && ::IsWindowVisible(blur) && !::IsWindowVisible(cat) && nextVisible(host) == blur && ::EqualRect(&br, &cr);
+        ::SendMessageW(host, WM_EXITSIZEMOVE, 0, 0);
+        const bool back = glassStats().swapsBack == g0.swapsBack + 1 && ::IsWindowVisible(cat) && nextVisible(host) == cat;
+        check(under && swapped && back, L"G21",
+              L"a drag with acrylic: the plain blur waits under it (%d), takes over on the first move at %ls (%d), the acrylic comes back when the drag ends (%d)",
+              under ? 1 : 0, rectStr(br).c_str(), swapped ? 1 : 0, back ? 1 : 0);
+        return 400;
+    });
+    add([] {
+        HWND blur = glassBlurCatcherOf(npp._nppHandle);
+        if (blur) check(!::IsWindowVisible(blur) && ::IsWindowVisible(glassCatcherOf(npp._nppHandle)), L"G22", L"the plain blur goes once the acrylic is back");
+        HWND p = prefPage(PAGE_WINDOWS);
         pickCombo(p, IDC_G_STYLE, 0);
-        pickCombo(p, IDC_G_EDGES, 0);
         pump(300);
+        check(!glassBlurCatcherOf(npp._nppHandle), L"G23", L"Style Blur: no second catcher (nothing to swap)");
+        return 100;
+    });
+    add([] {
+        // the text layer as Scintilla draws it (into a bitmap, so it can be counted): the key colour comes out
+        // see-through, the text stays; Smooth gives soft edges, Sharp hard ones
+        const COLORREF key = glassStats().key;
+        HWND s = views.sci(viewOfFile(L"g.txt") >= 0 ? viewOfFile(L"g.txt") : 0);
+        const int tech = static_cast<int>(sci(s, SCI_GETTECHNOLOGY)), quality = static_cast<int>(sci(s, SCI_GETFONTQUALITY));
+        if (tech == SC_TECHNOLOGY_DEFAULT) sci(s, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITEDC);
+        if (sci(s, SCI_GETTECHNOLOGY) == SC_TECHNOLOGY_DEFAULT) { tlog(L"SKIP G19-G20 no Direct2D in this Wine"); return 50; }
+        sci(s, SCI_SETFONTQUALITY, SC_EFF_QUALITY_ANTIALIASED);
+        KexGlassTest smooth{}, hard{};
+        smooth.key = hard.key = static_cast<int>(key);
+        hard.sharp = 1;
+        const LRESULT ok1 = sci(s, SCI_KEX_GLASSTEST, 0, reinterpret_cast<LPARAM>(&smooth));
+        const LRESULT ok2 = sci(s, SCI_KEX_GLASSTEST, 0, reinterpret_cast<LPARAM>(&hard));
+        sci(s, SCI_SETFONTQUALITY, quality);
+        if (tech == SC_TECHNOLOGY_DEFAULT) sci(s, SCI_SETTECHNOLOGY, tech);
+        tlog(L"INFO glass layer test: smooth %d clear, %d solid, %d soft, %d key (0x%08x); sharp %d clear, %d solid, %d soft, %d key (0x%08x)",
+             smooth.clear, smooth.solid, smooth.partial, smooth.keyLeft, static_cast<unsigned>(smooth.error), hard.clear, hard.solid, hard.partial, hard.keyLeft,
+             static_cast<unsigned>(hard.error));
+        check(ok1 && ok2 && smooth.clear > 0 && smooth.keyLeft == 0 && hard.keyLeft == 0 && smooth.solid + smooth.partial > 0, L"G19",
+              L"the text layer: the key comes out see-through (%d clear pixels, %d of the key left), the text stays (%d solid, %d soft)",
+              smooth.clear, smooth.keyLeft, smooth.solid, smooth.partial);
+        if (underWine && smooth.partial == 0 && hard.partial == 0)
+            tlog(L"SKIP G20 Wine's Direct2D draws text without smoothing, so soft edges can only be counted on Windows");
+        else
+            check(smooth.partial > hard.partial, L"G20", L"Smooth text edges are soft on the layer (%d partly see-through pixels), Sharp ones hard (%d)",
+                  smooth.partial, hard.partial);
         return 100;
     });
     add([] {

@@ -34,6 +34,7 @@ const IntField kInts[] = {
     { IDC_W_MS, M_SLIDE, L"DurationMs", 200 },
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
     { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
+    { IDC_F_MS, M_TABFOLD, L"DurationMs", 180 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -51,26 +52,26 @@ const BoolField kBools[] = {
     { IDC_S_LIFT, M_SNAP, L"LiftTab", 1 },
     { IDC_J_ALL, M_KEYS, L"AlsoNotepadKeys", 1 },
     { IDC_G_MARGINS, M_GLASS, L"Margins", 1 },
+    { IDC_G_SMOOTHMOVE, M_GLASS, L"SmoothMove", 1 },
     { IDC_K_REMEMBER, M_TOKENS, L"Remember", 1 },
     { IDC_H_AUTOHIDE, M_HOTKEY, L"HideWhenInactive", 0 },
     { IDC_H_CARET, M_HOTKEY, L"SmoothCaret", 1 },
     { IDC_H_LETTERS, M_LETTERS, L"InQuickNote", 1 },
     { IDC_H_FLASH, M_FLASH, L"InQuickNote", 1 },
     { IDC_E_COPY, M_FLASH, L"Copy", 1 },
-    { IDC_E_CUT, M_FLASH, L"Cut", 1 },
-    { IDC_E_DEL, M_FLASH, L"Delete", 1 },
-    { IDC_E_RESPECT, M_FLASH, L"RespectSystemAnimationSetting", 1 },
-    { IDC_W_RESPECT, M_SLIDE, L"RespectSystemAnimationSetting", 1 },
-    { IDC_P_RESPECT, M_SPLASH, L"RespectSystemAnimationSetting", 1 },
+    { IDC_E_CUT, M_FLASH, L"CutLift", 1 },
+    { IDC_E_DEL, M_FLASH, L"DeleteFade", 1 },
+    { IDC_F_FADE, M_TABFOLD, L"FadeDocument", 1 },
     { IDC_SW_REVERSE, M_SWIPE, L"Reverse", 0 },
 };
+// one box on the Effects page for all of its animations: "Not when Windows animation effects are off"
+const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT };
 // options the feature reads again at once: no restart (which would close the quick note, or take the token styles away)
 bool liveOption(int id, int module)
 {
     return module == M_TOKENS || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY ||
-           id == IDC_E_COPY || id == IDC_E_CUT || id == IDC_E_DEL || id == IDC_E_STRENGTH || id == IDC_E_RESPECT ||
-           id == IDC_W_MS || id == IDC_W_RESPECT || id == IDC_P_DROPS || id == IDC_P_RESPECT || id == IDC_C_BLINK ||
-           module == M_SWIPE;
+           id == IDC_E_COPY || id == IDC_E_CUT || id == IDC_E_DEL || id == IDC_E_STRENGTH ||
+           id == IDC_W_MS || id == IDC_P_DROPS || id == IDC_C_BLINK || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT;
 }
 // a drop-down list: the setting is the index of the picked item
 struct ComboField { int id; int module; const wchar_t* key; int def; const wchar_t* items; };
@@ -79,11 +80,12 @@ const ComboField kCombos[] = {
     { IDC_J_CASE, M_KEYS, L"OccurrenceCase", 0, L"Like Smart Highlighting|Match case|Ignore case" },
     { IDC_J_WORDS, M_KEYS, L"OccurrenceWords", 0, L"Like Smart Highlighting|From a bare caret (IntelliJ)|Always|Never" },
     { IDC_G_STYLE, M_GLASS, L"Style", 0, L"Blur|Acrylic" },
-    { IDC_G_EDGES, M_GLASS, L"TextEdges", 0, L"Sharp (no outlines on the glass)|Smooth|As Notepad++ draws them" },
+    { IDC_G_EDGES, M_GLASS, L"Edges", 0, L"Smooth|Sharp" },
 };
-const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN };
+const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
+                              IDC_F_EN, IDC_GL_EN };
 const int kStatus[M_COUNT] = { IDC_L_STATUS, IDC_C_STATUS, IDC_H_STATUS, IDC_T_STATUS, IDC_D_STATUS, IDC_S_STATUS, IDC_J_STATUS, IDC_G_STATUS, IDC_K_STATUS,
-                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS };
+                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS, IDC_F_STATUS, IDC_GL_STATUS };
 
 bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
 
@@ -162,6 +164,8 @@ void fill(HWND d)
         if (has(d, f.id)) ::SetDlgItemInt(d, f.id, static_cast<UINT>(settings.getInt(modules[f.module]->key(), f.key, f.def)), FALSE);
     for (const BoolField& f : kBools)
         if (has(d, f.id)) ::CheckDlgButton(d, f.id, settings.getInt(modules[f.module]->key(), f.key, f.def) ? BST_CHECKED : BST_UNCHECKED);
+    if (has(d, IDC_FX_RESPECT))
+        ::CheckDlgButton(d, IDC_FX_RESPECT, settings.getInt(modules[M_FLASH]->key(), L"RespectSystemAnimationSetting", 1) ? BST_CHECKED : BST_UNCHECKED);
     for (const ComboField& f : kCombos)
     {
         if (!has(d, f.id)) continue;
@@ -291,6 +295,17 @@ void onCommand(HWND d, int id, int code)
                 refreshPrefPages();
                 return;
             }
+        if (id == IDC_FX_RESPECT)
+        {
+            const int on = ::IsDlgButtonChecked(d, id) == BST_CHECKED ? 1 : 0;
+            for (int m : kRespectModules)
+            {
+                settings.setInt(modules[m]->key(), L"RespectSystemAnimationSetting", on);
+                modules[m]->loadOptions();
+            }
+            refreshPrefPages();
+            return;
+        }
         if (id == IDC_H_WIN) { applyHotkey(d); refreshPrefPages(); }
         if (id == IDC_H_BROWSE) { browseNoteFile(d); return; }
         if (id == IDC_J_LIST || id == IDC_K_KEYMAP)
@@ -344,7 +359,7 @@ int pageOfModule(int module)
     case M_GLASS: return PAGE_WINDOWS;
     case M_TOKENS: return PAGE_HIGHLIGHT;
     case M_HOTKEY: return PAGE_NOTE;
-    case M_FLASH: case M_SLIDE: case M_SPLASH: return PAGE_EFFECTS;
+    case M_FLASH: case M_SLIDE: case M_SPLASH: case M_TABFOLD: case M_GLINT: return PAGE_EFFECTS;
     default: return PAGE_WINDOWS;
     }
 }

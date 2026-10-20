@@ -1,4 +1,4 @@
-From 639a9d755532b8de5661ad0b982255f3af6d8ab9 Mon Sep 17 00:00:00 2001
+From 35cc84de596566a8d68d0da4c6983e442bf24af4 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -71,17 +71,21 @@ Claude-Session: https://claude.ai/code/session_0174a8npohQwNFKWumRqHreA
  .../src/WinControls/shortcut/shortcut.h       |     1 +
  PowerEditor/src/menuCmdID.h                   |    21 +
  PowerEditor/src/winmain.cpp                   |    11 +
- scintilla/include/KexScintilla.h              |    62 +
+ scintilla/include/KexScintilla.h              |    92 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 18795 ++++++++--------
+ scintilla/src/Editor.cxx                      | 18817 ++++++++--------
  scintilla/src/Editor.h                        |  1579 +-
- scintilla/win32/ScintillaWin.cxx              |  8420 +++----
- 43 files changed, 17463 insertions(+), 14659 deletions(-)
+ scintilla/src/KexSurface.h                    |    21 +
+ scintilla/win32/ScintillaWin.cxx              |  8781 +++----
+ scintilla/win32/SurfaceD2D.cxx                |    59 +-
+ scintilla/win32/SurfaceGDI.cxx                |    18 +-
+ 46 files changed, 17965 insertions(+), 14668 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
  create mode 100644 scintilla/include/KexScintilla.h
+ create mode 100644 scintilla/src/KexSurface.h
 
 diff --git a/PowerEditor/gcc/makefile b/PowerEditor/gcc/makefile
 index 3f38aa9..849daf5 100644
@@ -5463,10 +5467,10 @@ index a675012..77021db 100644
  			// First of all, destroy static object NppParameters
 diff --git a/scintilla/include/KexScintilla.h b/scintilla/include/KexScintilla.h
 new file mode 100644
-index 0000000..f0cc46e
+index 0000000..0ae4bb7
 --- /dev/null
 +++ b/scintilla/include/KexScintilla.h
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,92 @@
 +// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret and the tab slide.
 +//
 +// Scintilla draws the caret itself, as usual, but glides it to each new position with an ease-out
@@ -5527,6 +5531,36 @@ index 0000000..f0cc46e
 +// view's width (0 = only the old picture, 10000 = only the new document). lParam 1 ends the slide there:
 +// the view paints as usual again. LRESULT: 1 when there was a slide to move.
 +#define SCI_KEX_SLIDEPOS 0x4B49
++
++// Glass (Notepad++ KEX's see-through editor). wParam: KEXGLASS_* flags (0 = off); lParam: the colour (0xBBGGRR) that is to
++// show as nothing. The view then draws into a DirectComposition layer on top of its window, where that colour is
++// see-through and text is smoothed in grey (ClearType needs a solid background), while the window itself is filled
++// with that colour for a colour-keyed host window to cut out. Needs a DirectWrite technology. LRESULT: 1 when glass is
++// on, 0 when this system can't (no DirectComposition, as under Wine): the view then draws as usual.
++#define SCI_KEX_GLASS 0x4B4A
++#define KEXGLASS_ON 0x1
++#define KEXGLASS_SHARP 0x2         // text edges without smoothing
++// lParam: KexGlassInfo* (may be 0). LRESULT: 0 off, 1 on, 2 asked for but failed (the view draws as usual).
++#define SCI_KEX_GETGLASS 0x4B4B
++struct KexGlassInfo {
++	int state;           // as the LRESULT
++	int frames;          // paints drawn into the layer
++	int failures;        // drawing attempts that failed (the layer is rebuilt; after a few the view gives up)
++	int lastError;       // the last failure's HRESULT
++	int width, height;   // the layer's size in pixels
++};
++// Self-test only: lParam: KexGlassTest*. Paints the view off screen the way glass draws it (Direct2D on a DIB with
++// alpha, so it runs without DirectComposition) and counts the pixels. LRESULT: 1 when it could paint.
++#define SCI_KEX_GLASSTEST 0x4B4C
++struct KexGlassTest {
++	int key;             // in: the see-through colour (0xBBGGRR)
++	int sharp;           // in: text without smoothing
++	int error;           // out: HRESULT of the off-screen drawing
++	int clear;           // out: fully see-through pixels
++	int solid;           // out: fully opaque pixels
++	int partial;         // out: partly see-through pixels (smoothed text edges, translucent fills)
++	int keyLeft;         // out: opaque pixels still in the see-through colour (should be 0)
++};
 +
 +#endif
 diff --git a/scintilla/src/EditView.cxx b/scintilla/src/EditView.cxx
@@ -5610,10 +5644,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..04d1222 100644
+index 1465bac..bfa50a4 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,9616 @@
+@@ -1,9179 +1,9638 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -14864,6 +14898,7 @@ index 1465bac..04d1222 100644
 +#include "EditView.h"
 +#include "Editor.h"
 +#include "KexScintilla.h"
++#include "KexSurface.h"
 +#include "ElapsedPeriod.h"
 +#include "RunThreads.h"
 +
@@ -17031,6 +17066,27 @@ index 1465bac..04d1222 100644
 +	// held: straight where it is put (the fingers' movement is the curve), otherwise ease-out
 +	const double e = held ? f : 1.0 - (1.0 - f) * (1.0 - f) * (1.0 - f);
 +	const XYPOSITION width = rcClient.Width();
++	if (kexSlideDir == 2) {
++		// fade (a tab closed): the new document is in place and the old picture fades out over it, shrinking a little
++		kexSlideStats.lastFraction = static_cast<float>(f);
++		++kexSlideStats.frames;
++		const PRectangle rcNew(rcClient.left, rcClient.top, std::min<XYPOSITION>(rcClient.right, rcClient.left + kexNewWidth),
++			std::min<XYPOSITION>(rcClient.bottom, rcClient.top + kexNewHeight));
++		if (rcNew.Width() > 0 && rcNew.Height() > 0)
++			surfaceWindow->Copy(rcNew, Point(0, 0), *kexSlideNew);
++		const float opacity = static_cast<float>(1.0 - e);
++		IKexSurface *kex = dynamic_cast<IKexSurface *>(surfaceWindow);
++		if (kex && opacity > 0.004f) {
++			const XYPOSITION scale = 1.0 - 0.025 * e;
++			const XYPOSITION w = kexOldWidth * scale, h = kexOldHeight * scale;
++			const XYPOSITION x = rcClient.left + (kexOldWidth - w) / 2, y = rcClient.top + (kexOldHeight - h) / 2;
++			kex->KexDrawPicture(PRectangle(x, y, x + w, y + h), *kexSlideOld,
++				PRectangle(0, 0, static_cast<XYPOSITION>(kexOldWidth), static_cast<XYPOSITION>(kexOldHeight)), opacity);
++		}
++		if (f >= 1.0 && !held)
++			KexEndSlide(false);
++		return;
++	}
 +	const XYPOSITION shift = std::round(static_cast<XYPOSITION>(e) * width);
 +	const XYPOSITION xOld = rcClient.left - kexSlideDir * shift;
 +	const XYPOSITION xNew = xOld + kexSlideDir * width;
@@ -21475,7 +21531,7 @@ index 1465bac..04d1222 100644
 +				KexEndSlide(true, 4);
 +			return 0;
 +		}
-+		return KexStartSlide(static_cast<intptr_t>(wParam) > 0 ? 1 : -1, static_cast<int>(lParam)) ? 1 : 0;
++		return KexStartSlide(wParam == 2 ? 2 : static_cast<intptr_t>(wParam) > 0 ? 1 : -1, static_cast<int>(lParam)) ? 1 : 0;
 +	case SCI_KEX_GETSLIDEINFO:
 +		if (KexSlideInfo *info = static_cast<KexSlideInfo *>(PtrFromSPtr(lParam))) {
 +			info->active = (kexSlideOld || kexSlideCapture) ? 1 : 0;
@@ -24410,7 +24466,7 @@ index 1465bac..04d1222 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..c123fe3 100644
+index 85c1410..08f88d6 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
 @@ -1,762 +1,817 @@
@@ -25404,7 +25460,7 @@ index 85c1410..c123fe3 100644
 +	// the window and put on screen side by side.
 +	std::unique_ptr<Surface> kexSlideOld, kexSlideNew;
 +	std::unique_ptr<Surface> kexFrame;	// GDI with the smooth caret: the paint is put together here first
-+	int kexSlideDir = 0;		// 1: the new document comes in from the right, -1: from the left
++	int kexSlideDir = 0;		// 1: the new document comes in from the right, -1: from the left, 2: the old picture fades out
 +	int kexSlideMs = 200;
 +	double kexSlideStart = -1;	// < 0: the old picture is taken, the slide starts at the next paint
 +	bool kexSlideCapture = false;	// the next paint takes the old picture
@@ -25993,11 +26049,38 @@ index 85c1410..c123fe3 100644
 +}
 +
 +#endif
+diff --git a/scintilla/src/KexSurface.h b/scintilla/src/KexSurface.h
+new file mode 100644
+index 0000000..fb5c99f
+--- /dev/null
++++ b/scintilla/src/KexSurface.h
+@@ -0,0 +1,21 @@
++// KexSurface.h - Notepad++ KEX: what the KEX additions need from a platform surface beyond Surface.
++#ifndef KEXSURFACE_H
++#define KEXSURFACE_H
++
++namespace Scintilla::Internal {
++
++class IKexSurface {
++public:
++	// Glass (SCI_KEX_GLASS): colours whose RGB is key (0xBBGGRR) draw as nothing, so what is behind the view
++	// shows through, and text is smoothed in grey (ClearType needs a solid background) or, sharp, not at all.
++	// key < 0: drawing as usual. Pictures made by AllocatePixMap afterwards take the setting with them.
++	virtual void KexSetGlass(int key, bool sharp) noexcept = 0;
++	// Draws the from part of a picture made by AllocatePixMap into dst, scaled when the sizes differ.
++	virtual void KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) = 0;
++protected:
++	~IKexSurface() = default;
++};
++
++}
++
++#endif
 diff --git a/scintilla/win32/ScintillaWin.cxx b/scintilla/win32/ScintillaWin.cxx
-index 1da0dcc..c03a028 100644
+index 1da0dcc..611dbdc 100644
 --- a/scintilla/win32/ScintillaWin.cxx
 +++ b/scintilla/win32/ScintillaWin.cxx
-@@ -1,4202 +1,4218 @@
+@@ -1,4202 +1,4579 @@
 -// Scintilla source code edit control
 -/** @file ScintillaWin.cxx
 - ** Windows specific subclass of ScintillaBase.
@@ -30258,6 +30341,7 @@ index 1da0dcc..c03a028 100644
 +#include <d2d1_1.h>
 +#include <d3d11_1.h>
 +#include <dwrite_1.h>
++#include <dcomp.h>	// KEX glass
 +#endif
 +
 +#include "ScintillaTypes.h"
@@ -30311,6 +30395,8 @@ index 1da0dcc..c03a028 100644
 +#include "HanjaDic.h"
 +#include "ScintillaWin.h"
 +#include "BoostRegexSearch.h"
++#include "KexScintilla.h"
++#include "KexSurface.h"
 +
 +//needed for gcc builds
 +#ifndef SPI_GETWHEELSCROLLLINES
@@ -30734,6 +30820,28 @@ index 1da0dcc..c03a028 100644
 +	return S_OK;
 +}
 +
++// KEX glass (KexScintilla.h): a DirectComposition layer on top of the window that the view draws into, with
++// see-through pixels. The window under it is filled with the colour its colour-keyed host cuts out.
++struct KexGlassLayer {
++	ComPtr<IDCompositionDesktopDevice> device;
++	ComPtr<IDCompositionTarget> target;
++	ComPtr<IDCompositionVisual2> visual;
++	ComPtr<IDCompositionVirtualSurface> surface;
++	UINT width = 0;
++	UINT height = 0;
++	void Release() noexcept {
++		if (target && device) {
++			target->SetRoot(nullptr);	// off the screen at once, not when the objects happen to go
++			device->Commit();
++		}
++		surface = nullptr;
++		visual = nullptr;
++		target = nullptr;
++		device = nullptr;
++		width = height = 0;
++	}
++};
++
 +#endif
 +
 +/**
@@ -30789,6 +30897,13 @@ index 1da0dcc..c03a028 100644
 +	// rendering parameters for current monitor
 +	HMONITOR hCurrentMonitor;
 +	std::shared_ptr<RenderingParams> renderingParams;
++	// KEX glass (KexScintilla.h)
++	KexGlassLayer kexLayer;
++	int kexGlassKey = -1;
++	bool kexGlassSharp = false;
++	int kexGlassState = 0;		// 0 off, 1 on, 2 asked for but failed
++	int kexGlassStreak = 0;		// failures in a row
++	KexGlassInfo kexGlassInfo {};
 +#endif
 +
 +	explicit ScintillaWin(HWND hwnd);
@@ -30801,6 +30916,14 @@ index 1da0dcc..c03a028 100644
 +	HRESULT SetBackBuffer(HWND hwnd, IDXGISwapChain1 *pSwapChain);
 +	HRESULT CreateSwapChain(HWND hwnd);
 +	void EnsureRenderTarget(HDC hdc);
++	// KEX glass
++	bool KexGlassStart(int flags, int key);
++	void KexGlassStop() noexcept;
++	HRESULT KexGlassCreate() noexcept;
++	void KexGlassSize(UINT &width, UINT &height) const noexcept;
++	bool KexGlassPaint(HDC hdc);
++	bool KexGlassFailed(HRESULT hr) noexcept;
++	sptr_t KexGlassTestPaint(KexGlassTest *test);
 +#endif
 +	void DropRenderTarget() noexcept;
 +	[[nodiscard]] HWND MainHWND() const noexcept;
@@ -31047,6 +31170,9 @@ index 1da0dcc..c03a028 100644
 +		FineTickerCancel(tr);
 +	}
 +	SetIdle(false);
++#if defined(USE_D2D)
++	kexLayer.Release();	// KEX glass
++#endif
 +	DropRenderTarget();
 +	::RevokeDragDrop(MainHWND());
 +	if (SUCCEEDED(hrOle)) {
@@ -31287,6 +31413,280 @@ index 1da0dcc..c03a028 100644
 +			DropRenderTarget();
 +		}
 +	}
++}
++
++// ---- KEX glass (KexScintilla.h) ----
++
++// SCI_KEX_GLASS: from now on the view draws into a DirectComposition layer where the key colour is see-through
++bool ScintillaWin::KexGlassStart(int flags, int key) {
++	const bool wasOn = kexGlassState == 1;
++	kexGlassKey = key & 0xFFFFFF;
++	kexGlassSharp = (flags & KEXGLASS_SHARP) != 0;
++	if (technology == Technology::Default) {	// glass needs Direct2D
++		KexGlassStop();
++		kexGlassState = 2;
++		kexGlassInfo.lastError = E_NOTIMPL;
++		return false;
++	}
++	if (!wasOn) {
++		// the window's own drawing target would cover the hole the host cuts out
++		DropRenderTarget();
++		pDXGISwapChain = nullptr;
++		kexGlassStreak = 0;
++		const HRESULT hr = KexGlassCreate();
++		if (FAILED(hr)) {
++			kexLayer.Release();
++			kexGlassState = 2;
++			kexGlassInfo.lastError = hr;
++			Redraw();
++			return false;
++		}
++	}
++	kexGlassState = 1;
++	// pictures were made without see-through pixels (or with another key)
++	DropGraphics();
++	KexDropPixmaps();
++	Redraw();
++	return true;
++}
++
++void ScintillaWin::KexGlassStop() noexcept {
++	const bool wasOn = kexGlassState == 1 || kexLayer.surface;
++	kexLayer.Release();
++	kexGlassState = 0;
++	kexGlassKey = -1;
++	if (wasOn) {
++		DropGraphics();
++		KexDropPixmaps();
++		Redraw();
++	}
++}
++
++void ScintillaWin::KexGlassSize(UINT &width, UINT &height) const noexcept {
++	const RECT rc = GetClientRect(MainHWND());
++	const int scale = GetFirstIntegralMultipleDeviceScaleFactor();
++	width = static_cast<UINT>(std::max(1L, (rc.right - rc.left) * scale));
++	height = static_cast<UINT>(std::max(1L, (rc.bottom - rc.top) * scale));
++}
++
++HRESULT ScintillaWin::KexGlassCreate() noexcept {
++	using CreateDevice2Sig = HRESULT (WINAPI *)(IUnknown *, REFIID, void **);
++	static const CreateDevice2Sig createDevice2 = [] {
++		const HMODULE dcomp = ::LoadLibraryExW(L"dcomp.dll", {}, LOAD_LIBRARY_SEARCH_SYSTEM32);
++		return dcomp ? DLLFunction<CreateDevice2Sig>(dcomp, "DCompositionCreateDevice2") : nullptr;
++	}();
++	if (!createDevice2)
++		return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
++	kexLayer.Release();
++	HRESULT hr = Create3D();	// the Direct2D device the layer is drawn with
++	if (FAILED(hr))
++		return hr;
++	hr = createDevice2(device.pDirect2DDevice.Get(), __uuidof(IDCompositionDesktopDevice),
++		reinterpret_cast<void **>(kexLayer.device.GetAddressOf()));
++	if (FAILED(hr))
++		return hr;
++	// not topmost: above what the window draws itself, below any child windows
++	hr = kexLayer.device->CreateTargetForHwnd(MainHWND(), FALSE, kexLayer.target.GetAddressOf());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.device->CreateVisual(kexLayer.visual.GetAddressOf());
++	UINT width = 1;
++	UINT height = 1;
++	KexGlassSize(width, height);
++	if (SUCCEEDED(hr))
++		hr = kexLayer.device->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
++			kexLayer.surface.GetAddressOf());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
++	if (SUCCEEDED(hr))
++		hr = kexLayer.visual->SetContent(kexLayer.surface.Get());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.target->SetRoot(kexLayer.visual.Get());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.device->Commit();
++	if (FAILED(hr)) {
++		kexLayer.Release();
++		return hr;
++	}
++	kexLayer.width = width;
++	kexLayer.height = height;
++	kexGlassInfo.width = static_cast<int>(width);
++	kexGlassInfo.height = static_cast<int>(height);
++	return S_OK;
++}
++
++// a drawing attempt failed (the graphics device was lost, say): build the layer again at the next paint, and
++// after a few failures in a row draw as usual
++bool ScintillaWin::KexGlassFailed(HRESULT hr) noexcept {
++	++kexGlassInfo.failures;
++	kexGlassInfo.lastError = hr;
++	kexLayer.Release();
++	targets.Release();
++	pDXGISwapChain = nullptr;
++	device.Release();
++	DropGraphics();
++	KexDropPixmaps();
++	if (++kexGlassStreak >= 3)
++		kexGlassState = 2;
++	Redraw();
++	return false;
++}
++
++bool ScintillaWin::KexGlassPaint(HDC hdc) {
++	// the window's own pixels: the see-through colour, which the host window cuts out
++	const HWND hwnd = MainHWND();
++	if (HDC dc = hdc ? hdc : ::GetDC(hwnd)) {
++		const RECT rcFill = hdc ? RectFromPRectangle(rcPaint) : GetClientRect(hwnd);
++		const HBRUSH brush = ::CreateSolidBrush(static_cast<COLORREF>(kexGlassKey));
++		::FillRect(dc, &rcFill, brush);
++		::DeleteObject(brush);
++		if (!hdc)
++			::ReleaseDC(hwnd, dc);
++	}
++	if (!kexLayer.surface) {
++		const HRESULT hr = KexGlassCreate();
++		if (FAILED(hr))
++			return KexGlassFailed(hr);
++		DropGraphics();
++	}
++	const int scale = GetFirstIntegralMultipleDeviceScaleFactor();
++	// a slide paints the whole view each frame
++	const PRectangle rcDraw = (kexSlideCapture || kexSlideOld) ? GetClientRectangle() : rcPaint;
++	RECT update {
++		std::max(0L, static_cast<LONG>(std::floor(rcDraw.left)) * scale),
++		std::max(0L, static_cast<LONG>(std::floor(rcDraw.top)) * scale),
++		std::min(static_cast<LONG>(kexLayer.width), static_cast<LONG>(std::ceil(rcDraw.right)) * scale),
++		std::min(static_cast<LONG>(kexLayer.height), static_cast<LONG>(std::ceil(rcDraw.bottom)) * scale) };
++	if (update.right <= update.left || update.bottom <= update.top)
++		return true;
++	ComPtr<ID2D1DeviceContext> dc;
++	POINT offset {};
++	HRESULT hr = kexLayer.surface->BeginDraw(&update, __uuidof(ID2D1DeviceContext), reinterpret_cast<void **>(dc.GetAddressOf()), &offset);
++	if (FAILED(hr))
++		return KexGlassFailed(hr);
++	// the update can sit anywhere in the layer's memory: Scintilla draws in client coordinates, moved there
++	const FLOAT dpi = dpiDefault * static_cast<FLOAT>(scale);
++	dc->SetDpi(dpi, dpi);
++	dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<FLOAT>(offset.x - update.left) / static_cast<FLOAT>(scale),
++		static_cast<FLOAT>(offset.y - update.top) / static_cast<FLOAT>(scale)));
++	const D2D1_RECT_F clip = D2D1::RectF(static_cast<FLOAT>(update.left) / static_cast<FLOAT>(scale), static_cast<FLOAT>(update.top) / static_cast<FLOAT>(scale),
++		static_cast<FLOAT>(update.right) / static_cast<FLOAT>(scale), static_cast<FLOAT>(update.bottom) / static_cast<FLOAT>(scale));
++	dc->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
++	const D2D1_COLOR_F clear { 0.0f, 0.0f, 0.0f, 0.0f };
++	dc->Clear(&clear);
++	{
++		AutoSurface surfaceWindow(static_cast<ID2D1RenderTarget *>(dc.Get()), this);
++		if (surfaceWindow) {
++			SetRenderingParams(surfaceWindow);
++			if (IKexSurface *kex = dynamic_cast<IKexSurface *>(static_cast<Surface *>(surfaceWindow)))
++				kex->KexSetGlass(kexGlassKey, kexGlassSharp);
++			Paint(surfaceWindow, rcPaint);
++			surfaceWindow->Release();
++		}
++	}
++	dc->PopAxisAlignedClip();
++	dc = nullptr;
++	hr = kexLayer.surface->EndDraw();
++	if (FAILED(hr))
++		return KexGlassFailed(hr);
++	// an abandoned paint is painted again in full at once: both reach the screen together
++	if (paintState != PaintState::abandoned) {
++		hr = kexLayer.device->Commit();
++		if (FAILED(hr))
++			return KexGlassFailed(hr);
++	}
++	kexGlassStreak = 0;
++	++kexGlassInfo.frames;
++	return true;
++}
++
++// SCI_KEX_GLASSTEST: the view painted the way glass draws it, into a picture with alpha, and its pixels counted
++sptr_t ScintillaWin::KexGlassTestPaint(KexGlassTest *test) {
++	if (!test)
++		return 0;
++	test->clear = test->solid = test->partial = test->keyLeft = 0;
++	test->error = E_FAIL;
++	if (technology == Technology::Default || !LoadD2D()) {
++		test->error = E_NOTIMPL;
++		return 0;
++	}
++	const RECT rc = GetClientRect(MainHWND());
++	const int width = std::max(1L, rc.right - rc.left);
++	const int height = std::max(1L, rc.bottom - rc.top);
++	BITMAPINFO bmi {};
++	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
++	bmi.bmiHeader.biWidth = width;
++	bmi.bmiHeader.biHeight = -height;
++	bmi.bmiHeader.biPlanes = 1;
++	bmi.bmiHeader.biBitCount = 32;
++	bmi.bmiHeader.biCompression = BI_RGB;
++	void *bits = nullptr;
++	const HDC hdcMem = ::CreateCompatibleDC({});
++	const HBITMAP dib = hdcMem ? ::CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits, {}, 0) : HBITMAP {};
++	HRESULT hr = E_OUTOFMEMORY;
++	if (dib && bits) {
++		const HGDIOBJ old = ::SelectObject(hdcMem, dib);
++		const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
++			{ DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED }, dpiDefault, dpiDefault);
++		DCRenderTarget rt;
++		hr = CreateDCRenderTarget(&props, rt);
++		const RECT rcBind { 0, 0, width, height };
++		if (SUCCEEDED(hr))
++			hr = rt->BindDC(hdcMem, &rcBind);
++		if (SUCCEEDED(hr)) {
++			// the pictures in use belong to the window's drawing: this paint makes its own and drops them after
++			DropGraphics();
++			KexDropPixmaps();
++			const PaintState paintStateOld = paintState;
++			const PRectangle rcPaintOld = rcPaint;
++			const bool paintingAllTextOld = paintingAllText;
++			paintState = PaintState::painting;
++			rcPaint = GetClientRectangle();
++			paintingAllText = true;
++			rt->BeginDraw();
++			const D2D1_COLOR_F clear { 0.0f, 0.0f, 0.0f, 0.0f };
++			rt->Clear(&clear);
++			{
++				AutoSurface surface(static_cast<ID2D1RenderTarget *>(rt.Get()), this);
++				if (surface) {
++					SetRenderingParams(surface);
++					if (IKexSurface *kex = dynamic_cast<IKexSurface *>(static_cast<Surface *>(surface)))
++						kex->KexSetGlass(test->key & 0xFFFFFF, test->sharp != 0);
++					Paint(surface, rcPaint);
++					surface->Release();
++				}
++			}
++			hr = rt->EndDraw();
++			paintState = paintStateOld;
++			rcPaint = rcPaintOld;
++			paintingAllText = paintingAllTextOld;
++			DropGraphics();
++			::GdiFlush();
++		}
++		if (SUCCEEDED(hr)) {
++			const unsigned int key = static_cast<unsigned int>(test->key);
++			const unsigned int keyPixel = ((key & 0xFF) << 16) | (key & 0xFF00) | ((key >> 16) & 0xFF);
++			const unsigned int *px = static_cast<const unsigned int *>(bits);
++			for (size_t i = 0; i < static_cast<size_t>(width) * height; i++) {
++				const unsigned int a = px[i] >> 24;
++				if (a == 0)
++					test->clear++;
++				else if (a == 255) {
++					test->solid++;
++					if ((px[i] & 0xFFFFFF) == keyPixel)
++						test->keyLeft++;
++				} else
++					test->partial++;
++			}
++		}
++		::SelectObject(hdcMem, old);
++	}
++	if (dib)
++		::DeleteObject(dib);
++	if (hdcMem)
++		::DeleteDC(hdcMem);
++	test->error = hr;
++	Redraw();
++	return SUCCEEDED(hr) ? 1 : 0;
 +}
 +#endif
 +
@@ -31542,6 +31942,9 @@ index 1da0dcc..c03a028 100644
 +		// Avoid issues resizing inside Paint when calling IDXGISwapChain1->ResizeBuffers
 +		// with committed resources by refreshing the style data first.
 +		RefreshStyleData();
++
++		if (kexGlassState == 1)
++			return KexGlassPaint(hdc);	// KEX glass: into the see-through layer
 +
 +		EnsureRenderTarget(hdc);
 +		if (ID2D1RenderTarget *pRenderTarget = targets.RenderTarget()) {
@@ -32062,6 +32465,23 @@ index 1da0dcc..c03a028 100644
 +			Platform::DebugPrintf("Failed ResizeBuffers 0x%lx\n", hrResize);
 +		}
 +	}
++	if (kexGlassState == 1) {
++		// KEX glass: the layer takes the new size; there is no drawing target of the window's own to drop
++		hrResize = S_OK;
++		UINT width = 1;
++		UINT height = 1;
++		KexGlassSize(width, height);
++		if (kexLayer.surface && (width != kexLayer.width || height != kexLayer.height)) {
++			if (SUCCEEDED(kexLayer.surface->Resize(width, height))) {
++				kexLayer.width = width;
++				kexLayer.height = height;
++				kexGlassInfo.width = static_cast<int>(width);
++				kexGlassInfo.height = static_cast<int>(height);
++			} else {
++				kexLayer.Release();	// made again at the next paint
++			}
++		}
++	}
 +	if (FAILED(hrResize)) {
 +		if (paintState == PaintState::notPainting) {
 +			DropRenderTarget();
@@ -32515,6 +32935,13 @@ index 1da0dcc..c03a028 100644
 +				}
 +				DropRenderTarget();
 +				KexDropPixmaps();	// KEX: pictures of the old kind can't be drawn with the new one
++#if defined(USE_D2D)
++				if (technologyNew == Technology::Default && kexGlassState == 1) {
++					KexGlassStop();	// KEX glass needs Direct2D
++				} else if (kexGlassState == 1) {
++					pDXGISwapChain = nullptr;
++				}
++#endif
 +				technology = technologyNew;
 +				view.bufferedDraw = technologyNew == Technology::Default;
 +				// Invalidate all cached information including layout.
@@ -32580,6 +33007,23 @@ index 1da0dcc..c03a028 100644
 +				}
 +				return started;
 +			}
++
++#if defined(USE_D2D)
++		case SCI_KEX_GLASS:
++			if (wParam & KEXGLASS_ON)
++				return KexGlassStart(static_cast<int>(wParam), static_cast<int>(lParam)) ? 1 : 0;
++			KexGlassStop();
++			return 0;
++
++		case SCI_KEX_GETGLASS:
++			kexGlassInfo.state = kexGlassState;
++			if (KexGlassInfo *info = static_cast<KexGlassInfo *>(PtrFromSPtr(lParam)))
++				*info = kexGlassInfo;
++			return kexGlassState;
++
++		case SCI_KEX_GLASSTEST:
++			return KexGlassTestPaint(static_cast<KexGlassTest *>(PtrFromSPtr(lParam)));
++#endif
 +
 +		case WM_PRINTCLIENT: {
 +				HDC hdc = reinterpret_cast<HDC>(wParam);
@@ -34418,6 +34862,207 @@ index 1da0dcc..c03a028 100644
 +extern "C" int Scintilla_ReleaseResources() {
 +	return Scintilla::Internal::ResourcesRelease(false);
 +}
+diff --git a/scintilla/win32/SurfaceD2D.cxx b/scintilla/win32/SurfaceD2D.cxx
+index de8b7ae..999f453 100644
+--- a/scintilla/win32/SurfaceD2D.cxx
++++ b/scintilla/win32/SurfaceD2D.cxx
+@@ -70,6 +70,7 @@ using Microsoft::WRL::ComPtr;
+ #if defined(USE_D2D)
+ #include "SurfaceD2D.h"
+ #endif
++#include "KexSurface.h"
+ 
+ // __uuidof is a Microsoft extension but makes COM code neater, so disable warning
+ #if defined(__clang__)
+@@ -306,7 +307,7 @@ constexpr D2D_COLOR_F ColorFromColourAlpha(ColourRGBA colour) noexcept {
+ 
+ class BlobInline;
+ 
+-class SurfaceD2D : public Surface, public ISetRenderingParams {
++class SurfaceD2D : public Surface, public ISetRenderingParams, public IKexSurface {
+ 	SurfaceMode mode;
+ 
+ 	// Text measuring surface: both pRenderTarget and pBitmapRenderTarget are null.
+@@ -323,7 +324,10 @@ class SurfaceD2D : public Surface, public ISetRenderingParams {
+ 	int logPixelsY = USER_DEFAULT_SCREEN_DPI;
+ 	int deviceScaleFactor = 1;
+ 	std::shared_ptr<RenderingParams> renderingParams;
++	int kexGlassKey = -1;	// KEX glass: this colour draws as nothing (KexSurface.h)
++	bool kexSharp = false;
+ 
++	[[nodiscard]] D2D_COLOR_F KexColour(ColourRGBA colour) const noexcept;
+ 	void Clear() noexcept;
+ 	void SetFontQuality(FontQuality extraFontFlag);
+ 	HRESULT GetBitmap(ID2D1Bitmap **ppBitmap);
+@@ -331,7 +335,8 @@ class SurfaceD2D : public Surface, public ISetRenderingParams {
+ 
+ public:
+ 	SurfaceD2D() noexcept = default;
+-	SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_) noexcept;
++	SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_,
++		int kexGlassKey_ = -1, bool kexSharp_ = false) noexcept;
+ 	// Deleted so SurfaceD2D objects can not be copied.
+ 	SurfaceD2D(const SurfaceD2D &) = delete;
+ 	SurfaceD2D(SurfaceD2D &&) = delete;
+@@ -399,9 +404,13 @@ public:
+ 	void FlushDrawing() override;
+ 
+ 	void SetRenderingParams(std::shared_ptr<RenderingParams> renderingParams_) override;
++
++	void KexSetGlass(int key, bool sharp) noexcept override;
++	void KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) override;
+ };
+ 
+-SurfaceD2D::SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_) noexcept {
++SurfaceD2D::SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_,
++	int kexGlassKey_, bool kexSharp_) noexcept : kexGlassKey(kexGlassKey_), kexSharp(kexSharp_) {
+ 	const D2D1_SIZE_F desiredSize = D2D1::SizeF(static_cast<float>(width), static_cast<float>(height));
+ 	D2D1_PIXEL_FORMAT desiredFormat;
+ #ifdef __MINGW32__
+@@ -409,13 +418,18 @@ SurfaceD2D::SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, in
+ #else
+ 	desiredFormat = pRenderTargetCompatible->GetPixelFormat();
+ #endif
+-	desiredFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
++	// KEX glass: a picture with see-through pixels, starting fully see-through
++	desiredFormat.alphaMode = kexGlassKey >= 0 ? D2D1_ALPHA_MODE_PREMULTIPLIED : D2D1_ALPHA_MODE_IGNORE;
+ 	const HRESULT hr = pRenderTargetCompatible->CreateCompatibleRenderTarget(
+ 		&desiredSize, nullptr, &desiredFormat, D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE, pBitmapRenderTarget.GetAddressOf());
+ 	if (SUCCEEDED(hr)) {
+ 		pRenderTarget = pBitmapRenderTarget;
+ 		SetDeviceScaleFactor(pRenderTarget.Get());
+ 		pRenderTarget->BeginDraw();
++		if (kexGlassKey >= 0) {
++			const D2D1_COLOR_F clear{ 0.0f, 0.0f, 0.0f, 0.0f };
++			pRenderTarget->Clear(&clear);
++		}
+ 	}
+ 	mode = mode_;
+ 	logPixelsY = logPixelsY_;
+@@ -474,7 +488,7 @@ void SurfaceD2D::Init(SurfaceID sid, WindowID wid) {
+ }
+ 
+ std::unique_ptr<Surface> SurfaceD2D::AllocatePixMap(int width, int height) {
+-	std::unique_ptr<SurfaceD2D> surf = std::make_unique<SurfaceD2D>(pRenderTarget.Get(), width, height, mode, logPixelsY);
++	std::unique_ptr<SurfaceD2D> surf = std::make_unique<SurfaceD2D>(pRenderTarget.Get(), width, height, mode, logPixelsY, kexGlassKey, kexSharp);
+ 	surf->SetRenderingParams(renderingParams);
+ 	return surf;
+ }
+@@ -488,9 +502,15 @@ HRESULT SurfaceD2D::GetBitmap(ID2D1Bitmap **ppBitmap) {
+ 	return pBitmapRenderTarget->GetBitmap(ppBitmap);
+ }
+ 
++D2D_COLOR_F SurfaceD2D::KexColour(ColourRGBA colour) const noexcept {
++	if (kexGlassKey >= 0 && colour.OpaqueRGB() == kexGlassKey)
++		return D2D_COLOR_F{ 0.0f, 0.0f, 0.0f, 0.0f };	// KEX glass: the see-through colour
++	return ColorFromColourAlpha(colour);
++}
++
+ void SurfaceD2D::D2DPenColourAlpha(ColourRGBA fore) noexcept {
+ 	if (pRenderTarget) {
+-		const D2D_COLOR_F col = ColorFromColourAlpha(fore);
++		const D2D_COLOR_F col = KexColour(fore);
+ 		if (pBrush) {
+ 			pBrush->SetColor(col);
+ 		} else {
+@@ -505,7 +525,10 @@ void SurfaceD2D::D2DPenColourAlpha(ColourRGBA fore) noexcept {
+ void SurfaceD2D::SetFontQuality(FontQuality extraFontFlag) {
+ 	if ((fontQuality != extraFontFlag) && renderingParams) {
+ 		fontQuality = extraFontFlag;
+-		const D2D1_TEXT_ANTIALIAS_MODE aaMode = DWriteMapFontQuality(extraFontFlag);
++		D2D1_TEXT_ANTIALIAS_MODE aaMode = DWriteMapFontQuality(extraFontFlag);
++		if (kexGlassKey >= 0)	// KEX glass: ClearType needs a solid background
++			aaMode = kexSharp ? D2D1_TEXT_ANTIALIAS_MODE_ALIASED :
++				aaMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE ? D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE : aaMode;
+ 		if (aaMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE && renderingParams->customRenderingParams) {
+ 			pRenderTarget->SetTextRenderingParams(renderingParams->customRenderingParams.Get());
+ 		} else if (renderingParams->defaultRenderingParams) {
+@@ -743,7 +766,7 @@ void SurfaceD2D::GradientRectangle(PRectangle rc, const std::vector<ColourStop>
+ 
+ 		std::vector<D2D1_GRADIENT_STOP> gradientStops;
+ 		for (const ColourStop &stop : stops) {
+-			gradientStops.push_back({ static_cast<FLOAT>(stop.position), ColorFromColourAlpha(stop.colour) });
++			gradientStops.push_back({ static_cast<FLOAT>(stop.position), KexColour(stop.colour) });
+ 		}
+ 		ComPtr<ID2D1GradientStopCollection> pGradientStops;
+ 		HRESULT hr = pRenderTarget->CreateGradientStopCollection(
+@@ -1597,6 +1620,26 @@ void SurfaceD2D::SetRenderingParams(std::shared_ptr<RenderingParams> renderingPa
+ 	renderingParams = std::move(renderingParams_);
+ }
+ 
++void SurfaceD2D::KexSetGlass(int key, bool sharp) noexcept {
++	kexGlassKey = key;
++	kexSharp = sharp;
++	fontQuality = invalidFontQuality;	// text smoothing is set again at the next text
++}
++
++void SurfaceD2D::KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) {
++	SurfaceD2D *other = dynamic_cast<SurfaceD2D *>(&picture);
++	if (!pRenderTarget || !other || !other->pBitmapRenderTarget)
++		return;
++	ComPtr<ID2D1Bitmap> pBitmap;
++	const HRESULT hr = other->GetBitmap(pBitmap.GetAddressOf());
++	if (SUCCEEDED(hr) && pBitmap) {
++		const D2D1_RECT_F rcDestination = RectangleFromPRectangle(dst);
++		const D2D1_RECT_F rcSource = RectangleFromPRectangle(from);
++		pRenderTarget->DrawBitmap(pBitmap.Get(), rcDestination, std::clamp(opacity, 0.0f, 1.0f),
++			D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, rcSource);
++	}
++}
++
+ #endif
+ 
+ }
+diff --git a/scintilla/win32/SurfaceGDI.cxx b/scintilla/win32/SurfaceGDI.cxx
+index 963d165..981141f 100644
+--- a/scintilla/win32/SurfaceGDI.cxx
++++ b/scintilla/win32/SurfaceGDI.cxx
+@@ -52,6 +52,7 @@
+ #include "WinTypes.h"
+ #include "PlatWin.h"
+ #include "SurfaceGDI.h"
++#include "KexSurface.h"
+ 
+ using namespace Scintilla;
+ using namespace Scintilla::Internal;
+@@ -128,7 +129,7 @@ struct FontGDI : public FontWin {
+ 	}
+ };
+ 
+-class SurfaceGDI : public Surface {
++class SurfaceGDI : public Surface, public IKexSurface {
+ 	SurfaceMode mode;
+ 	HDC hdc{};
+ 	bool hdcOwned = false;
+@@ -217,6 +218,9 @@ public:
+ 	void PopClip() override;
+ 	void FlushCachedState() override;
+ 	void FlushDrawing() override;
++
++	void KexSetGlass(int, bool) noexcept override {}	// glass draws with Direct2D only
++	void KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) override;
+ };
+ 
+ SurfaceGDI::SurfaceGDI(HDC hdcCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_) noexcept {
+@@ -636,6 +640,18 @@ void SurfaceGDI::Stadium(PRectangle rc, FillStroke fillStroke, [[maybe_unused]]
+ 	RectangleDraw(rc, fillStroke);
+ }
+ 
++// KEX: a picture scaled and faded (the document fade when a tab closes)
++void SurfaceGDI::KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) {
++	const SurfaceGDI *other = dynamic_cast<SurfaceGDI *>(&picture);
++	if (!other || !other->hdc || !hdc)
++		return;
++	const BLENDFUNCTION blend{ AC_SRC_OVER, 0, static_cast<BYTE>(std::clamp(opacity, 0.0f, 1.0f) * 255.0f + 0.5f), 0 };
++	::GdiAlphaBlend(hdc, static_cast<int>(std::round(dst.left)), static_cast<int>(std::round(dst.top)),
++		static_cast<int>(std::round(dst.Width())), static_cast<int>(std::round(dst.Height())),
++		other->hdc, static_cast<int>(from.left), static_cast<int>(from.top),
++		static_cast<int>(from.Width()), static_cast<int>(from.Height()), blend);
++}
++
+ void SurfaceGDI::Copy(PRectangle rc, Point from, Surface &surfaceSource) {
+ 	::BitBlt(hdc,
+ 		static_cast<int>(rc.left), static_cast<int>(rc.top),
 -- 
 2.43.0
 

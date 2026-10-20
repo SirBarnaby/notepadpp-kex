@@ -110,6 +110,7 @@ void bufferSwitching(HWND view, void* oldBuffer, void* newBuffer)
     try
     {
         if (kex::swipeSwitching(view)) return;   // a touchpad swipe moves this slide itself
+        if (kex::tabFoldSwitching(view, oldBuffer, newBuffer)) return;   // its tab closed: the document fades out instead
         if (kex::s_self) kex::s_self->switching(view, oldBuffer, newBuffer);
     }
     catch (...) { kex::log(L"Tab slide: exception while switching documents"); }
