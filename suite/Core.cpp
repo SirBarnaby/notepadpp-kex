@@ -309,6 +309,7 @@ void setInfo(HINSTANCE inst, const NppData& d)
         modules[M_FLASH] = createEditFlash();
         modules[M_SLIDE] = createTabSlide();
         modules[M_SPLASH] = createPaintSplash();
+        modules[M_SWIPE] = createTabSwipe();
     }
     catch (...) { for (Module*& m : modules) m = nullptr; }
 }

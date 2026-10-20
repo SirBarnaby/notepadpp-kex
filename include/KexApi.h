@@ -81,3 +81,7 @@ struct KexCommandList {
 // wParam: a BufferID. LRESULT: the Scintilla document of that buffer (as SCI_GETDOCPOINTER returns it for
 // a view showing it), 0 if there is no such buffer. Lets a feature read and mark any open document.
 #define NPPM_KEX_GETBUFFERDOC         (KEX_USER + 19)
+// wParam: a BufferID, lParam: 0 = read, 1 = make it the most recent tab. LRESULT: the buffer's place in the
+// Ctrl+Tab order (a higher number is more recent; Notepad++ raises it on every switch), -1 if there is no
+// such buffer. A tab shown only for a moment (a touchpad swipe that slides back) puts the order back with it.
+#define NPPM_KEX_RECENTTAG            (KEX_USER + 20)

@@ -31,6 +31,7 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Falling letters**: deleted text falls off the screen. Their opacity can be set.
 - **Copy, cut and delete flashes**: copied text flashes once, cut text flashes twice, deleted text flashes red.
 - **Tab slide**: switching tabs slides the next document in, like switching desktops in Windows 10.
+- **Touchpad tab swipe**: swipe two fingers left or right to move to the next tab. The tab follows your fingers, and you can stop half way.
 - **Paint splash**: giving a word a colour splashes paint off it.
 - **JetBrains keys**: <kbd>Alt</kbd>+<kbd>J</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>/</kbd>, <kbd>Ctrl</kbd>+<kbd>D</kbd>, <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> and more. Rebind any of them in *Shortcut Mapper*.
 - **Live token styles**: styled words stay styled as you type. Bold and italic too, for every occurrence or just one.

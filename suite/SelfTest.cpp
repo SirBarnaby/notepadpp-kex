@@ -416,6 +416,60 @@ void removeDeskSession(const wchar_t* id)
 
 POINT g_hoverPoint{};   // a point on the first tab while F12 shows the tab bar
 int g_slideDir = 0, g_slideBefore = 0, g_slideFrames = 0;   // the tab slide steps
+int g_swipeIdx = 0;                        // the tab the swipe steps start from
+SwipeStats g_swipeBefore;
+std::vector<intptr_t> g_swipeOrder;        // the tabs in Ctrl+Tab order before a swipe
+
+// a two-finger swipe as Windows sends it: WM_MOUSEHWHEEL over the view (or its tab bar), in small steps.
+// units > 0 move toward the tab on the right with Windows' default touchpad setting (the content follows
+// the fingers, so the fingers moving right scroll left: a negative delta).
+void swipeBy(HWND target, int units, int step = 40, int gapMs = 4)
+{
+    RECT r; ::GetWindowRect(target, &r);
+    const POINT pt{ (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
+    for (int done = 0; done < std::abs(units);)
+    {
+        const int d = std::min(step, std::abs(units) - done);
+        done += d;
+        const short delta = static_cast<short>(units > 0 ? -d : d);
+        ::SendMessageW(target, WM_MOUSEHWHEEL, MAKEWPARAM(0, static_cast<WORD>(delta)), MAKELPARAM(pt.x, pt.y));
+        pump(gapMs);
+    }
+}
+// the same over the active tab of view 0's tab bar, where the pointer would be
+std::wstring g_underTab;
+void swipeOverTab(int units)
+{
+    HWND bar = views.tabBar(0);
+    RECT r{};
+    ::SendMessageW(bar, TCM_GETITEMRECT, ::SendMessageW(bar, TCM_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(&r));
+    ::MapWindowPoints(bar, nullptr, reinterpret_cast<POINT*>(&r), 2);
+    const POINT pt{ (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
+    wchar_t cls[64] = {};
+    ::GetClassNameW(kexsuite::windowFromPoint(pt), cls, 63);
+    g_underTab = cls;
+    for (int done = 0; done < std::abs(units); done += 40)
+    {
+        const short delta = static_cast<short>(units > 0 ? -40 : 40);
+        ::SendMessageW(bar, WM_MOUSEHWHEEL, MAKEWPARAM(0, static_cast<WORD>(delta)), MAKELPARAM(pt.x, pt.y));
+        pump(4);
+    }
+}
+// the buffers of every view, most recent first (Ctrl+Tab order)
+std::vector<intptr_t> recentOrder()
+{
+    std::vector<std::pair<long, intptr_t>> all;
+    for (int v = 0; v < views.count(); ++v)
+        for (int i = 0, n = views.nbFiles(v); i < n; ++i)
+        {
+            const intptr_t b = views.bufferId(v, i);
+            all.push_back({ static_cast<long>(nppMsg(NPPM_KEX_RECENTTAG, static_cast<WPARAM>(b), 0)), b });
+        }
+    std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<intptr_t> out;
+    for (const auto& a : all) out.push_back(a.second);
+    return out;
+}
 std::string g_flashText;   // a.cpp before the flash steps edit it
 bool g_flashModified = false;
 
@@ -593,7 +647,7 @@ int pressHotkey()
 }
 
 // The on/off tick of a feature on its Preferences page, clicked the way the user does it.
-const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN };
+const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN };
 HWND enableBox(int module)
 {
     if (!prefPage(pageOfModule(module))) { openPreferences(); pump(300); }
@@ -1955,6 +2009,159 @@ void buildSteps()
         focusEditor();
         return until([] { return !slideStats(curSci()).active; }, 2000);
     });
+    // ---- touchpad tab swipe ---------------------------------------------------------------------
+    add([] {
+        setModuleEnabled(M_SWIPE, true, false);
+        check(modules[M_SWIPE]->isEnabled(), L"SW0", L"touchpad tab swipe on (touchpad reports %ls)",
+              swipeStats().rawRegistered ? L"registered" : L"not available here");
+        views.activate(0, 0);
+        focusEditor();
+        pump(300);
+        g_swipeIdx = views.currentIndex(0);
+        g_swipeBefore = swipeStats();
+        g_swipeOrder = recentOrder();
+        // two fingers down, half a swipe to the right
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), 400);
+        settle(150);
+        return 100;
+    });
+    add([] {
+        HWND s = views.sci(0);
+        const SwipeStats st = swipeStats();
+        const SlideStats sl = slideStats(s);
+        check(st.holding && sl.active && std::fabs(sl.fraction - 0.5f) < 0.02f && views.currentIndex(0) == g_swipeIdx + 1 && st.lastDir == 1, L"SW1",
+              L"half a swipe: the tab on the right is half way in (at %.2f, tab %d -> %d)", sl.fraction, g_swipeIdx, views.currentIndex(0));
+        return shot(L"tab-swipe-half-way");
+    });
+    add([] {
+        pump(450);   // the fingers rest on the pad: no wheel messages, the slide stays
+        const SlideStats sl = slideStats(views.sci(0));
+        check(swipeStats().holding && sl.active && std::fabs(sl.fraction - 0.5f) < 0.02f, L"SW2",
+              L"fingers resting: the slide holds where they left it (%.2f after 450 ms)", sl.fraction);
+        // back to 0.3, then let go: it slides back
+        swipeBy(views.sci(0), -160);
+        settle(60);
+        const float back = slideStats(views.sci(0)).fraction;
+        swipeTestFingers(0);
+        check(std::fabs(back - 0.3f) < 0.02f, L"SW3a", L"the slide follows the fingers back (%.2f)", back);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        const std::vector<intptr_t> order = recentOrder();
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx && st.cancels == g_swipeBefore.cancels + 1 && st.commits == g_swipeBefore.commits,
+              L"SW3", L"let go before half way: it slides back to the first tab (tab %d)", views.currentIndex(0));
+        check(order == g_swipeOrder, L"SW3b", L"the Ctrl+Tab order is as it was before the swipe (%d tabs)", static_cast<int>(order.size()));
+        // most of the way, then let go: the tab on the right stays
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), 560);
+        swipeTestFingers(0);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        const SlideStats sl = slideStats(views.sci(0));
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx + 1 && st.commits == g_swipeBefore.commits + 1 && std::fabs(sl.fraction - 1.0f) < 0.001f,
+              L"SW4", L"let go past half way: the switch finishes (tab %d, last frame at %.2f)", views.currentIndex(0), sl.fraction);
+        // a quick flick the other way, only a fifth of a swipe long: back to the tab on the left
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), -160, 40, 6);
+        swipeTestFingers(0);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx && st.lastDir == -1 && st.commits == g_swipeBefore.commits + 2, L"SW5",
+              L"a short quick flick to the left switches to the tab on the left (tab %d)", views.currentIndex(0));
+        // the first tab: there is nothing on the left
+        const SwipeStats before = st;
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), -480);
+        const bool moved = slideStats(views.sci(0)).active;
+        swipeTestFingers(0);
+        pump(200);
+        check(!moved && views.currentIndex(0) == 0 && swipeStats().edges == before.edges + 1 && swipeStats().slides == before.slides, L"SW6",
+              L"swiping left on the first tab does nothing");
+        // no precision touchpad (an older driver): a pause is letting go
+        swipeTestFingers(-1);
+        pump(300);
+        g_swipeBefore = swipeStats();
+        swipeBy(views.sci(0), 560, 35);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        check(g_untilOk && views.currentIndex(0) == 1 && st.commits == g_swipeBefore.commits + 1, L"SW7",
+              L"without touchpad reports a pause in the swipe lets go (tab %d;%ls)", views.currentIndex(0), st.trace.c_str());
+        // a mouse's tilt wheel: one notch, one tab
+        pump(300);
+        const SwipeStats before = swipeStats();
+        HWND s = views.sci(0);
+        RECT r; ::GetWindowRect(s, &r);
+        ::SendMessageW(s, WM_MOUSEHWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        pump(50);
+        check(views.currentIndex(0) == 2 && swipeStats().notches == before.notches + 1, L"SW8", L"tilt wheel right: the next tab at once (tab %d)", views.currentIndex(0));
+        pump(300);
+        // a long line that scrolls sideways: the swipe scrolls it
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_NEW);
+        pump(150);
+        s = views.sci(0);
+        sci(s, SCI_SETWRAPMODE, SC_WRAP_NONE);
+        std::string line(3000, 'x');
+        sci(s, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(line.c_str()));
+        sci(s, SCI_GOTOPOS, 0);
+        sci(s, SCI_SETXOFFSET, 0);
+        settle(100);
+        g_swipeIdx = views.currentIndex(0);
+        g_swipeBefore = swipeStats();
+        swipeTestFingers(2);
+        swipeBy(s, -240);   // toward the left tab, which scrolls the text to the right
+        settle(60);
+        return 100;
+    });
+    add([] {
+        HWND s = views.sci(0);
+        const SwipeStats st = swipeStats();
+        const intptr_t x = sci(s, SCI_GETXOFFSET);
+        check(x > 0 && !slideStats(s).active && views.currentIndex(0) == g_swipeIdx && st.textScrolls == g_swipeBefore.textScrolls + 1, L"SW9",
+              L"where the line scrolls sideways the swipe scrolls it (x offset %d), no tab moves", static_cast<int>(x));
+        swipeTestFingers(0);
+        pump(300);
+        // over the tab bar it switches anyway
+        swipeTestFingers(2);
+        swipeOverTab(-560);
+        swipeTestFingers(0);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx - 1 && swipeStats().commits == g_swipeBefore.commits + 1, L"SW10",
+              L"over the tab bar the swipe switches tabs even where the line could scroll (tab %d from %d, under the pointer: %ls;%ls)", views.currentIndex(0), g_swipeIdx, g_underTab.c_str(), swipeStats().trace.c_str());
+        // the new tab goes again
+        views.activate(0, g_swipeIdx);
+        pump(100);
+        HWND s = views.sci(0);
+        sci(s, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(""));
+        sci(s, SCI_EMPTYUNDOBUFFER);
+        sci(s, SCI_SETSAVEPOINT);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(200);
+        // off: a swipe does what Notepad++ does without KEX
+        setModuleEnabled(M_SWIPE, false, false);
+        views.activate(0, 0);
+        pump(100);
+        const SwipeStats before = swipeStats();
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), 560);
+        pump(300);
+        check(views.currentIndex(0) == 0 && !slideStats(views.sci(0)).active && swipeStats().gestures == before.gestures, L"SW11",
+              L"touchpad tab swipe off: swiping does not switch tabs");
+        setModuleEnabled(M_SWIPE, true, false);
+        swipeTestFingers(-1);
+        switchTo(L"a.cpp");
+        focusEditor();
+        return 200;
+    });
     add([] {
         // copy: the selection flashes once
         HWND s = curSci();
@@ -2119,6 +2326,7 @@ void buildSteps()
             case M_FLASH: restored = flashStats().live == 0; extra = L"no flashes left"; break;
             case M_SPLASH: restored = splashStats().live == 0; extra = L"no paint left"; break;
             case M_SLIDE: restored = !slideStats(views.sci(0)).active && !slideStats(views.sci(1)).active; extra = L"no slide running"; break;
+            case M_SWIPE: restored = !swipeStats().active && !swipeStats().rawRegistered && !slideStats(views.sci(0)).active; extra = L"touchpad reports released, no slide held"; break;
             case M_CARET:
             {
                 int now = static_cast<int>(sci(views.sci(0), SCI_GETCARETSTYLE));

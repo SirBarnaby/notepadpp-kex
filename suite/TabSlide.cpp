@@ -107,8 +107,11 @@ namespace kexsuite {
 
 void bufferSwitching(HWND view, void* oldBuffer, void* newBuffer)
 {
-    if (!kex::s_self) return;
-    try { kex::s_self->switching(view, oldBuffer, newBuffer); }
+    try
+    {
+        if (kex::swipeSwitching(view)) return;   // a touchpad swipe moves this slide itself
+        if (kex::s_self) kex::s_self->switching(view, oldBuffer, newBuffer);
+    }
     catch (...) { kex::log(L"Tab slide: exception while switching documents"); }
 }
 

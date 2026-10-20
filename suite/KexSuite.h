@@ -146,8 +146,9 @@ Module* createTokenStyles();
 Module* createEditFlash();
 Module* createTabSlide();
 Module* createPaintSplash();
+Module* createTabSwipe();
 
-enum ModuleId { M_LETTERS = 0, M_CARET, M_HOTKEY, M_TABS, M_DESKTOP, M_SNAP, M_KEYS, M_GLASS, M_TOKENS, M_FLASH, M_SLIDE, M_SPLASH, M_COUNT };
+enum ModuleId { M_LETTERS = 0, M_CARET, M_HOTKEY, M_TABS, M_DESKTOP, M_SNAP, M_KEYS, M_GLASS, M_TOKENS, M_FLASH, M_SLIDE, M_SPLASH, M_SWIPE, M_COUNT };
 extern Module* modules[M_COUNT];
 
 // Core services used across modules.
@@ -208,6 +209,14 @@ struct SlideStats { int seen = 0, started = 0, skipped = 0, lastDir = 0; bool ac
                     int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0; float fraction = 0; };
 SlideStats slideStats(HWND view);
 void slideTestFreeze(double fraction);   // <0 = run normally
+// Touchpad tab swipe (TabSwipe.cpp). swipeSwitching: a view is about to show another document; true when the
+// swipe is doing that (then the tab slide leaves it alone).
+bool swipeSwitching(HWND view);
+struct SwipeStats { int gestures = 0, slides = 0, commits = 0, cancels = 0, textScrolls = 0, notches = 0, edges = 0, lastDir = 0;
+                    double lastPos = 0; bool active = false, holding = false, rawRegistered = false; int fingers = -1;
+                    std::wstring trace; };   // the last decisions, for the self-test's log
+SwipeStats swipeStats();
+void swipeTestFingers(int n);   // self-test: pretend this many fingers are on a precision touchpad (-1 = the real one)
 std::wstring effectsInfo();       // the line on the KEX Effects page
 // what Scintilla's smooth caret drew in the focused view at its last paint (KexScintilla.h)
 struct CaretStats { int carets = 0; bool visible = false; HWND target = nullptr;

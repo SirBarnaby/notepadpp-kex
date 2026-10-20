@@ -90,3 +90,7 @@
 #define IDC_P_STATUS       2201
 #define IDC_P_DROPS        2202
 #define IDC_P_RESPECT      2203
+#define IDC_SW_EN          2300
+#define IDC_SW_STATUS      2301
+#define IDC_SW_SENS        2302
+#define IDC_SW_REVERSE     2303

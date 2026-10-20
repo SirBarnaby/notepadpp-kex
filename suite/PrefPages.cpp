@@ -33,6 +33,7 @@ const IntField kInts[] = {
     { IDC_E_STRENGTH, M_FLASH, L"Strength", 100 },
     { IDC_W_MS, M_SLIDE, L"DurationMs", 200 },
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
+    { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -61,13 +62,15 @@ const BoolField kBools[] = {
     { IDC_E_RESPECT, M_FLASH, L"RespectSystemAnimationSetting", 1 },
     { IDC_W_RESPECT, M_SLIDE, L"RespectSystemAnimationSetting", 1 },
     { IDC_P_RESPECT, M_SPLASH, L"RespectSystemAnimationSetting", 1 },
+    { IDC_SW_REVERSE, M_SWIPE, L"Reverse", 0 },
 };
 // options the feature reads again at once: no restart (which would close the quick note, or take the token styles away)
 bool liveOption(int id, int module)
 {
     return module == M_TOKENS || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY ||
            id == IDC_E_COPY || id == IDC_E_CUT || id == IDC_E_DEL || id == IDC_E_STRENGTH || id == IDC_E_RESPECT ||
-           id == IDC_W_MS || id == IDC_W_RESPECT || id == IDC_P_DROPS || id == IDC_P_RESPECT || id == IDC_C_BLINK;
+           id == IDC_W_MS || id == IDC_W_RESPECT || id == IDC_P_DROPS || id == IDC_P_RESPECT || id == IDC_C_BLINK ||
+           module == M_SWIPE;
 }
 // a drop-down list: the setting is the index of the picked item
 struct ComboField { int id; int module; const wchar_t* key; int def; const wchar_t* items; };
@@ -78,9 +81,9 @@ const ComboField kCombos[] = {
     { IDC_G_STYLE, M_GLASS, L"Style", 0, L"Blur|Acrylic" },
     { IDC_G_EDGES, M_GLASS, L"TextEdges", 0, L"Sharp (no outlines on the glass)|Smooth|As Notepad++ draws them" },
 };
-const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN };
+const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN };
 const int kStatus[M_COUNT] = { IDC_L_STATUS, IDC_C_STATUS, IDC_H_STATUS, IDC_T_STATUS, IDC_D_STATUS, IDC_S_STATUS, IDC_J_STATUS, IDC_G_STATUS, IDC_K_STATUS,
-                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS };
+                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS };
 
 bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
 
@@ -337,7 +340,7 @@ int pageOfModule(int module)
     switch (module)
     {
     case M_LETTERS: case M_CARET: case M_KEYS: return PAGE_EDITING;
-    case M_TABS: case M_SNAP: return PAGE_TABS;
+    case M_TABS: case M_SNAP: case M_SWIPE: return PAGE_TABS;
     case M_GLASS: return PAGE_WINDOWS;
     case M_TOKENS: return PAGE_HIGHLIGHT;
     case M_HOTKEY: return PAGE_NOTE;

@@ -67,6 +67,14 @@ BEGIN
     LTEXT           "Hide after (ms):", -1, 102, 103, 56, 8
     EDITTEXT        IDC_T_DELAY, 160, 101, 30, 12, ES_NUMBER
 
+    GROUPBOX        "Touchpad tab swipe", -1, 4, 122, 452, 66
+    AUTOCHECKBOX    "Two fingers swiped sideways on the touchpad switch to the tab beside", IDC_SW_EN, 12, 135, 254, 10
+    LTEXT           "", IDC_SW_STATUS, 272, 136, 176, 9
+    LTEXT           "Sensitivity (%):", -1, 12, 151, 54, 8
+    EDITTEXT        IDC_SW_SENS, 68, 149, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Swipe left goes to the tab on the right", IDC_SW_REVERSE, 110, 150, 170, 10
+    LTEXT           "The tab follows your fingers. Let go past half way, or flick, to switch; let go before that and it slides back. Where a long line scrolls sideways the swipe scrolls it first; over the tab bar it always switches tabs.", -1, 12, 164, 436, 18
+
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END
 

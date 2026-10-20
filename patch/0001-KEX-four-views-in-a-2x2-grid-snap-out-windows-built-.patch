@@ -1,4 +1,4 @@
-From fbaeacc45f22aa3b4b3207b4bf65f8c6a3da7367 Mon Sep 17 00:00:00 2001
+From 639a9d755532b8de5661ad0b982255f3af6d8ab9 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -35,8 +35,8 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_0174a8npohQwNFKWumRqHreA
 ---
  PowerEditor/gcc/makefile                      |     1 +
- PowerEditor/src/KexViews.cpp                  |  1302 ++
- PowerEditor/src/MISC/PluginsManager/KexApi.h  |    83 +
+ PowerEditor/src/KexViews.cpp                  |  1313 ++
+ PowerEditor/src/MISC/PluginsManager/KexApi.h  |    87 +
  .../src/MISC/PluginsManager/KexSuiteHost.h    |    60 +
  .../MISC/PluginsManager/PluginsManager.cpp    |    72 +-
  .../src/MISC/PluginsManager/PluginsManager.h  |     7 +
@@ -71,13 +71,13 @@ Claude-Session: https://claude.ai/code/session_0174a8npohQwNFKWumRqHreA
  .../src/WinControls/shortcut/shortcut.h       |     1 +
  PowerEditor/src/menuCmdID.h                   |    21 +
  PowerEditor/src/winmain.cpp                   |    11 +
- scintilla/include/KexScintilla.h              |    56 +
+ scintilla/include/KexScintilla.h              |    62 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 18779 ++++++++--------
- scintilla/src/Editor.h                        |  1578 +-
+ scintilla/src/Editor.cxx                      | 18795 ++++++++--------
+ scintilla/src/Editor.h                        |  1579 +-
  scintilla/win32/ScintillaWin.cxx              |  8420 +++----
- 43 files changed, 17425 insertions(+), 14659 deletions(-)
+ 43 files changed, 17463 insertions(+), 14659 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
@@ -97,10 +97,10 @@ index 3f38aa9..849daf5 100644
  
 diff --git a/PowerEditor/src/KexViews.cpp b/PowerEditor/src/KexViews.cpp
 new file mode 100644
-index 0000000..4755601
+index 0000000..366cd30
 --- /dev/null
 +++ b/PowerEditor/src/KexViews.cpp
-@@ -0,0 +1,1302 @@
+@@ -0,0 +1,1313 @@
 +// This file is part of the KEX four-view patch for Notepad++.
 +//
 +// This program is free software: you can redistribute it and/or modify
@@ -1357,6 +1357,17 @@ index 0000000..4755601
 +			return reinterpret_cast<LRESULT>(MainFileManager.getBufferByID(id)->getDocument());
 +		}
 +
++		case NPPM_KEX_RECENTTAG:
++		{
++			const BufferID id = reinterpret_cast<BufferID>(wParam);
++			if (!id || MainFileManager.getBufferIndexByID(id) < 0)
++				return -1;
++			Buffer* buf = MainFileManager.getBufferByID(id);
++			if (lParam == 1)
++				buf->increaseRecentTag();
++			return buf->getRecentTag();
++		}
++
 +		case NPPM_KEX_SHOWPREFPAGE:
 +			command(IDM_SETTING_KEX); // opens Preferences (on the first KEX page)
 +			if (wParam > 0)
@@ -1405,10 +1416,10 @@ index 0000000..4755601
 +}
 diff --git a/PowerEditor/src/MISC/PluginsManager/KexApi.h b/PowerEditor/src/MISC/PluginsManager/KexApi.h
 new file mode 100644
-index 0000000..a66f983
+index 0000000..7cce50c
 --- /dev/null
 +++ b/PowerEditor/src/MISC/PluginsManager/KexApi.h
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,87 @@
 +// KexApi.h - messages added to Notepad++ by the KEX four-view patch.
 +//
 +// The patch gives Notepad++ four editing views (0 = main, 1 = second, 2 = third, 3 = fourth)
@@ -1492,6 +1503,10 @@ index 0000000..a66f983
 +// wParam: a BufferID. LRESULT: the Scintilla document of that buffer (as SCI_GETDOCPOINTER returns it for
 +// a view showing it), 0 if there is no such buffer. Lets a feature read and mark any open document.
 +#define NPPM_KEX_GETBUFFERDOC         (KEX_USER + 19)
++// wParam: a BufferID, lParam: 0 = read, 1 = make it the most recent tab. LRESULT: the buffer's place in the
++// Ctrl+Tab order (a higher number is more recent; Notepad++ raises it on every switch), -1 if there is no
++// such buffer. A tab shown only for a moment (a touchpad swipe that slides back) puts the order back with it.
++#define NPPM_KEX_RECENTTAG            (KEX_USER + 20)
 diff --git a/PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h b/PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
 new file mode 100644
 index 0000000..064fa98
@@ -5448,10 +5463,10 @@ index a675012..77021db 100644
  			// First of all, destroy static object NppParameters
 diff --git a/scintilla/include/KexScintilla.h b/scintilla/include/KexScintilla.h
 new file mode 100644
-index 0000000..8b7fec6
+index 0000000..f0cc46e
 --- /dev/null
 +++ b/scintilla/include/KexScintilla.h
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,62 @@
 +// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret and the tab slide.
 +//
 +// Scintilla draws the caret itself, as usual, but glides it to each new position with an ease-out
@@ -5490,7 +5505,8 @@ index 0000000..8b7fec6
 +// the new document should come in from the right, -1 from the left; lParam: the slide's length in
 +// milliseconds. The view paints what it shows now into a picture at once; from the next paint on, that
 +// picture slides out while the new document slides in. LRESULT: 1 when the slide is set up, 0 when the
-+// view can't (hidden, no size). wParam 0 stops a slide.
++// view can't (hidden, no size). wParam 0 stops a slide. lParam 0: the slide doesn't run on its own but stays
++// where SCI_KEX_SLIDEPOS puts it (a touchpad swipe moves it with the fingers), starting with the old picture.
 +#define SCI_KEX_SLIDE 0x4B46
 +// lParam: KexSlideInfo*. LRESULT: 1 while a slide is running or set up.
 +#define SCI_KEX_GETSLIDEINFO 0x4B47
@@ -5503,9 +5519,14 @@ index 0000000..8b7fec6
 +	float fraction;      // how far the last frame was, 0..1
 +	int stopReason;      // why the last slide stopped early: 1 the view had no size, 2 or 3 no picture could be made,
 +	                     // 4 stopped (SCI_KEX_SLIDE 0), 5 the drawing target was dropped, 6 nothing was painted
++	int held;            // the slide is set up to stay where SCI_KEX_SLIDEPOS puts it
 +};
 +// Self-test only: wParam = fraction in thousandths to stop the slide at (-1 = run normally).
 +#define SCI_KEX_SLIDETEST 0x4B48
++// A slide started with lParam 0 (held): wParam = how far the new document is in, in ten-thousandths of the
++// view's width (0 = only the old picture, 10000 = only the new document). lParam 1 ends the slide there:
++// the view paints as usual again. LRESULT: 1 when there was a slide to move.
++#define SCI_KEX_SLIDEPOS 0x4B49
 +
 +#endif
 diff --git a/scintilla/src/EditView.cxx b/scintilla/src/EditView.cxx
@@ -5589,10 +5610,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..df0fa06 100644
+index 1465bac..04d1222 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,9600 @@
+@@ -1,9179 +1,9616 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -16962,7 +16983,8 @@ index 1465bac..df0fa06 100644
 +		if (kexSlideStart < 0) {
 +			kexSlideStart = KexNowMs();
 +			++kexSlideStats.slides;
-+			FineTickerStart(TickReason::kexSlide, 15, 0);
++			if (kexSlideHeld < 0)
++				FineTickerStart(TickReason::kexSlide, 15, 0);
 +		}
 +		*target = kexSlideNew.get();
 +		*area = rcClient;
@@ -17001,11 +17023,13 @@ index 1465bac..df0fa06 100644
 +		return;
 +	}
 +	// slide: the old picture moves out, the new one follows it in
-+	double f = kexSlideMs > 0 ? (KexNowMs() - kexSlideStart) / kexSlideMs : 1.0;
++	const bool held = kexSlideHeld >= 0;
++	double f = held ? kexSlideHeld : kexSlideMs > 0 ? (KexNowMs() - kexSlideStart) / kexSlideMs : 1.0;
 +	if (kexSlideFreeze >= 0 && f > kexSlideFreeze)
 +		f = kexSlideFreeze;
 +	f = std::clamp(f, 0.0, 1.0);
-+	const double e = 1.0 - (1.0 - f) * (1.0 - f) * (1.0 - f);
++	// held: straight where it is put (the fingers' movement is the curve), otherwise ease-out
++	const double e = held ? f : 1.0 - (1.0 - f) * (1.0 - f) * (1.0 - f);
 +	const XYPOSITION width = rcClient.Width();
 +	const XYPOSITION shift = std::round(static_cast<XYPOSITION>(e) * width);
 +	const XYPOSITION xOld = rcClient.left - kexSlideDir * shift;
@@ -17030,7 +17054,7 @@ index 1465bac..df0fa06 100644
 +	}
 +	put(*kexSlideOld, xOld, kexOldWidth, kexOldHeight);
 +	put(*kexSlideNew, xNew, kexNewWidth, kexNewHeight);
-+	if (f >= 1.0)
++	if (f >= 1.0 && !held)
 +		KexEndSlide(false);
 +}
 +
@@ -17042,6 +17066,7 @@ index 1465bac..df0fa06 100644
 +		return false;
 +	kexSlideDir = direction;
 +	kexSlideMs = std::clamp(ms, 1, 2000);
++	kexSlideHeld = ms == 0 ? 0.0 : -1.0;
 +	kexSlideCapture = true;
 +	kexSlideStart = -1;
 +	Redraw();
@@ -17058,6 +17083,7 @@ index 1465bac..df0fa06 100644
 +	kexSlideCapture = false;
 +	kexSlideDir = 0;
 +	kexSlideStart = -1;
++	kexSlideHeld = -1;
 +}
 +
 +// the pictures belong to the window's drawing target: when that goes, they go too
@@ -21459,8 +21485,19 @@ index 1465bac..df0fa06 100644
 +			info->cancelled = kexSlideStats.cancelled;
 +			info->fraction = kexSlideStats.lastFraction;
 +			info->stopReason = kexSlideStats.stopReason;
++			info->held = kexSlideHeld >= 0 ? 1 : 0;
 +		}
 +		return (kexSlideOld || kexSlideCapture) ? 1 : 0;
++	case SCI_KEX_SLIDEPOS:
++		if (!(kexSlideOld || kexSlideCapture) || kexSlideHeld < 0)
++			return 0;
++		kexSlideHeld = std::clamp(static_cast<double>(wParam) / 10000.0, 0.0, 1.0);
++		if (lParam) {
++			kexSlideStats.lastFraction = static_cast<float>(kexSlideHeld);
++			KexEndSlide(false);
++		}
++		Redraw();
++		return 1;
 +	case SCI_KEX_SLIDETEST:
 +		kexSlideFreeze = static_cast<intptr_t>(wParam) < 0 ? -1.0 : static_cast<double>(wParam) / 1000.0;
 +		if (kexSlideOld)
@@ -24373,10 +24410,10 @@ index 1465bac..df0fa06 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..73beb20 100644
+index 85c1410..c123fe3 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
-@@ -1,762 +1,816 @@
+@@ -1,762 +1,817 @@
 -// Scintilla source code edit control
 -/** @file Editor.h
 - ** Defines the main editor class.
@@ -25372,6 +25409,7 @@ index 85c1410..73beb20 100644
 +	double kexSlideStart = -1;	// < 0: the old picture is taken, the slide starts at the next paint
 +	bool kexSlideCapture = false;	// the next paint takes the old picture
 +	double kexSlideFreeze = -1;	// self-test: fraction to stop at
++	double kexSlideHeld = -1;	// >= 0: the slide stays at this fraction (SCI_KEX_SLIDEPOS), < 0: it runs on its own
 +	int kexOldWidth = 0, kexOldHeight = 0, kexNewWidth = 0, kexNewHeight = 0, kexFrameWidth = 0, kexFrameHeight = 0;
 +	struct {
 +		int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0;
