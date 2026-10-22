@@ -18,7 +18,7 @@ static bool g_ready = false, g_shutdown = false, g_subclassed = false;
 static const UINT_PTR kSubclassId = 0x4B455853;   // 'KEXS'
 
 // ---------------------------------------------------------------------------------------------
-// switching features on and off (Settings > Preferences > the KEX pages)
+// switching features on and off (the KEX menu and the KEX Settings window)
 
 bool setModuleEnabled(int id, bool on, bool interactive)
 {
@@ -269,6 +269,7 @@ static void onShutdown()
 {
     if (g_shutdown) return;
     g_shutdown = true;
+    try { if (HWND d = settingsDialog()) ::SendMessageW(d, WM_CLOSE, 0, 0); } catch (...) {}   // what is typed in it counts
     for (int i = M_COUNT - 1; i >= 0; --i)
         if (modules[i] && modules[i]->isEnabled())
         {
@@ -309,6 +310,9 @@ void setInfo(HINSTANCE inst, const NppData& d)
         modules[M_FLASH] = createEditFlash();
         modules[M_SLIDE] = createTabSlide();
         modules[M_SPLASH] = createPaintSplash();
+        modules[M_SWIPE] = createTabSwipe();
+        modules[M_TABFOLD] = createTabFold();
+        modules[M_GLINT] = createSaveGlint();
     }
     catch (...) { for (Module*& m : modules) m = nullptr; }
 }
@@ -338,6 +342,7 @@ void notify(SCNotification* n)
     }
     catch (...) { log(L"exception in notification %u", n->nmhdr.code); return; }
     if (!g_ready || g_shutdown) return;
+    if (n->nmhdr.code == NPPN_DARKMODECHANGED) { try { settingsThemeChanged(); } catch (...) {} }
     for (int i = 0; i < M_COUNT; ++i)
     {
         Module* m = modules[i];

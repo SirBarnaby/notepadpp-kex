@@ -100,24 +100,42 @@ bool pushLayered(HWND wnd, Surface& s, POINT pos, SIZE size)
     return ::UpdateLayeredWindow(wnd, nullptr, &pos, &size, s.dc, &src, 0, &bf, ULW_ALPHA) != FALSE;
 }
 
-bool renderRuns(Sprite& out, const std::vector<TextRun>& runs, int w, int h, int baseline, int pad)
+bool renderRuns(Sprite& out, const std::vector<TextRun>& runs, int w, int h, int baseline, int pad, COLORREF back, float backAlpha)
 {
     Surface mask;
     int W = w + 2 * pad, H = h + 2 * pad;
     if (!mask.ensure(W, H)) return false;
     out.w = W; out.h = H;
     out.px.assign(static_cast<size_t>(W) * H, 0);
+    if (backAlpha > 0)
+    {
+        const uint32_t a = static_cast<uint32_t>(std::min(1.0f, backAlpha) * 255.0f + 0.5f);
+        const uint32_t p = (a << 24) | ((GetRValue(back) * a / 255) << 16) | ((GetGValue(back) * a / 255) << 8) | (GetBValue(back) * a / 255);
+        for (int y = pad; y < pad + h; ++y)
+            std::fill(out.px.begin() + static_cast<size_t>(y) * W + pad, out.px.begin() + static_cast<size_t>(y) * W + pad + w, p);
+    }
     ::SetBkMode(mask.dc, TRANSPARENT);
     ::SetTextColor(mask.dc, RGB(255, 255, 255));
     ::SetTextAlign(mask.dc, TA_BASELINE | TA_LEFT);
-    for (const TextRun& r : runs)
+    // the runs of one colour are drawn into the mask together and put on the sprite in one pass
+    std::vector<size_t> order(runs.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return runs[a].color < runs[b].color; });
+    for (size_t g = 0; g < order.size();)
     {
+        const COLORREF colour = runs[order[g]].color;
         mask.clear();
-        HGDIOBJ of = ::SelectObject(mask.dc, r.font ? r.font : ::GetStockObject(DEFAULT_GUI_FONT));
-        ::ExtTextOutW(mask.dc, pad + r.dx, pad + baseline, 0, nullptr, r.text.c_str(), static_cast<UINT>(r.text.size()), nullptr);
-        ::SelectObject(mask.dc, of);
+        size_t e = g;
+        for (; e < order.size() && runs[order[e]].color == colour; ++e)
+        {
+            const TextRun& r = runs[order[e]];
+            HGDIOBJ of = ::SelectObject(mask.dc, r.font ? r.font : ::GetStockObject(DEFAULT_GUI_FONT));
+            ::ExtTextOutW(mask.dc, pad + r.dx, pad + baseline, 0, nullptr, r.text.c_str(), static_cast<UINT>(r.text.size()), nullptr);
+            ::SelectObject(mask.dc, of);
+        }
+        g = e;
         ::GdiFlush();
-        uint32_t cr = GetRValue(r.color), cg = GetGValue(r.color), cb = GetBValue(r.color);
+        uint32_t cr = GetRValue(colour), cg = GetGValue(colour), cb = GetBValue(colour);
         for (int y = 0; y < H; ++y)
         {
             const uint32_t* mrow = mask.px + static_cast<size_t>(y) * mask.stride;
@@ -182,34 +200,36 @@ static inline bool clipLinear(float a, float b, float mn, float mx, float& lo, f
     return lo <= hi;
 }
 
-void drawSprite(Surface& s, const Sprite& sp, float cx, float cy, float angle, float alpha)
+void drawSprite(Surface& s, const Sprite& sp, float cx, float cy, float angle, float alpha, float sx, float sy)
 {
-    if (!s.px || sp.w <= 0 || sp.h <= 0 || alpha <= 0.0f) return;
+    if (!s.px || sp.w <= 0 || sp.h <= 0 || alpha <= 0.0f || sx <= 0.01f || sy <= 0.01f) return;
     const uint32_t k = alpha >= 1.0f ? 256u : static_cast<uint32_t>(alpha * 256.0f + 0.5f);
     if (!k) return;
     const float c = std::cos(angle), sn = std::sin(angle);
     const float hw = sp.w * 0.5f, hh = sp.h * 0.5f;
-    const float ex = std::fabs(c) * hw + std::fabs(sn) * hh, ey = std::fabs(sn) * hw + std::fabs(c) * hh;
+    const float ex = std::fabs(c) * hw * sx + std::fabs(sn) * hh * sy, ey = std::fabs(sn) * hw * sx + std::fabs(c) * hh * sy;
+    // screen to sprite: turned back by the angle, then divided by the scale
+    const float ux = c / sx, uy = -sn / sy, vx = sn / sx, vy = c / sy;
     const int x0 = std::max(0, static_cast<int>(std::floor(cx - ex))), x1 = std::min(s.w - 1, static_cast<int>(std::ceil(cx + ex)));
     const int y0 = std::max(0, static_cast<int>(std::floor(cy - ey))), y1 = std::min(s.h - 1, static_cast<int>(std::ceil(cy + ey)));
     if (x0 > x1 || y0 > y1) return;
     const int W = sp.w, H = sp.h;
     const uint32_t* src = sp.px.data();
-    // The sprite pixel under the centre of screen pixel x is (sx, sy) = (c x + bx, -sn x + by): a
-    // straight line along each row, walked in 16.16 fixed point. Only the part of the row where the
-    // sample touches the sprite is visited.
-    const int32_t dfx = static_cast<int32_t>(c * 65536.0f), dfy = static_cast<int32_t>(-sn * 65536.0f);
+    // The sprite pixel under the centre of screen pixel x is (ux x + bx, uy x + by): a straight line
+    // along each row, walked in 16.16 fixed point. Only the part of the row where the sample touches
+    // the sprite is visited.
+    const int32_t dfx = static_cast<int32_t>(ux * 65536.0f), dfy = static_cast<int32_t>(uy * 65536.0f);
     for (int y = y0; y <= y1; ++y)
     {
         const float dy = y + 0.5f - cy;
-        const float bx = c * (0.5f - cx) + sn * dy + hw - 0.5f;
-        const float by = -sn * (0.5f - cx) + c * dy + hh - 0.5f;
+        const float bx = ux * (0.5f - cx) + vx * dy + hw - 0.5f;
+        const float by = uy * (0.5f - cx) + vy * dy + hh - 0.5f;
         float lo = static_cast<float>(x0), hi = static_cast<float>(x1);
-        if (!clipLinear(bx, c, -1.0f, static_cast<float>(W), lo, hi)) continue;
-        if (!clipLinear(by, -sn, -1.0f, static_cast<float>(H), lo, hi)) continue;
+        if (!clipLinear(bx, ux, -1.0f, static_cast<float>(W), lo, hi)) continue;
+        if (!clipLinear(by, uy, -1.0f, static_cast<float>(H), lo, hi)) continue;
         const int xs = std::max(x0, static_cast<int>(std::ceil(lo))), xe = std::min(x1, static_cast<int>(std::floor(hi)));
         if (xs > xe) continue;
-        int32_t fx = static_cast<int32_t>((c * xs + bx) * 65536.0f), fy = static_cast<int32_t>((-sn * xs + by) * 65536.0f);
+        int32_t fx = static_cast<int32_t>((ux * xs + bx) * 65536.0f), fy = static_cast<int32_t>((uy * xs + by) * 65536.0f);
         uint32_t* row = s.px + static_cast<size_t>(y) * s.stride;
         for (int x = xs; x <= xe; ++x, fx += dfx, fy += dfy)
         {

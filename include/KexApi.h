@@ -46,8 +46,8 @@
 // lParam: a folder written by NPPM_KEX_SAVEDESKTOPCOPY. Opens those tabs here; files already open from
 // the command line stay last and active. LRESULT: tabs opened, -1 on failure.
 #define NPPM_KEX_LOADDESKTOPCOPY      (KEX_USER + 13)
-// wParam: a KEX Preferences page (0 "KEX Editing", 1 "KEX Tabs", 2 "KEX Windows", 3 "KEX Highlighting",
-// 4 "KEX Quick Note", 5 "KEX Effects"). Opens Settings > Preferences on that page. LRESULT: TRUE.
+// wParam: a page of the KEX Settings window (0 "Editing", 1 "Tabs", 2 "Windows", 3 "Highlighting",
+// 4 "Quick Note", 5 "Effects"). Opens KEX > Settings... on that page. LRESULT: TRUE.
 #define NPPM_KEX_SHOWPREFPAGE         (KEX_USER + 14)
 
 // Commands of the KEX features. They are added to a menu of the feature's, Settings > Shortcut Mapper
@@ -81,3 +81,7 @@ struct KexCommandList {
 // wParam: a BufferID. LRESULT: the Scintilla document of that buffer (as SCI_GETDOCPOINTER returns it for
 // a view showing it), 0 if there is no such buffer. Lets a feature read and mark any open document.
 #define NPPM_KEX_GETBUFFERDOC         (KEX_USER + 19)
+// wParam: a BufferID, lParam: 0 = read, 1 = make it the most recent tab. LRESULT: the buffer's place in the
+// Ctrl+Tab order (a higher number is more recent; Notepad++ raises it on every switch), -1 if there is no
+// such buffer. A tab shown only for a moment (a touchpad swipe that slides back) puts the order back with it.
+#define NPPM_KEX_RECENTTAG            (KEX_USER + 20)

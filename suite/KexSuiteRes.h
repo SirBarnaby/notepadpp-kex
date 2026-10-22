@@ -1,6 +1,8 @@
-// KexSuiteRes.h - the KEX Preferences pages: dialog ids (IDD_KEX_PREF_FIRST + page, KexSuiteHost.h)
-// and control ids
+// KexSuiteRes.h - the KEX Settings window and its pages (IDD_KEX_PAGE_EDITING + page): dialog and control ids
 #pragma once
+#define IDD_KEX_SETTINGS     30520
+#define IDC_KEX_PAGELIST     1010
+#define IDC_KEX_CLOSE        1011
 #define IDD_KEX_PAGE_EDITING 30500
 #define IDD_KEX_PAGE_TABS    30501
 #define IDD_KEX_PAGE_WINDOWS 30502
@@ -68,6 +70,7 @@
 #define IDC_G_INFO         1804
 #define IDC_G_STYLE        1805
 #define IDC_G_EDGES        1806
+#define IDC_G_SMOOTHMOVE   1807
 #define IDC_K_EN           1900
 #define IDC_K_STATUS       1901
 #define IDC_K_KEY          1902
@@ -80,13 +83,20 @@
 #define IDC_E_CUT          2003
 #define IDC_E_DEL          2004
 #define IDC_E_STRENGTH     2005
-#define IDC_E_RESPECT      2006
 #define IDC_E_INFO         2007
 #define IDC_W_EN           2100
 #define IDC_W_STATUS       2101
 #define IDC_W_MS           2102
-#define IDC_W_RESPECT      2103
 #define IDC_P_EN           2200
 #define IDC_P_STATUS       2201
 #define IDC_P_DROPS        2202
-#define IDC_P_RESPECT      2203
+#define IDC_SW_EN          2300
+#define IDC_SW_STATUS      2301
+#define IDC_SW_SENS        2302
+#define IDC_SW_REVERSE     2303
+#define IDC_F_EN           2400
+#define IDC_F_STATUS       2401
+#define IDC_F_MS           2402
+#define IDC_GL_EN          2500
+#define IDC_GL_STATUS      2501
+#define IDC_FX_RESPECT     2600
