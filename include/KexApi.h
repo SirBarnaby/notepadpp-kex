@@ -46,8 +46,8 @@
 // lParam: a folder written by NPPM_KEX_SAVEDESKTOPCOPY. Opens those tabs here; files already open from
 // the command line stay last and active. LRESULT: tabs opened, -1 on failure.
 #define NPPM_KEX_LOADDESKTOPCOPY      (KEX_USER + 13)
-// wParam: a KEX Preferences page (0 "KEX Editing", 1 "KEX Tabs", 2 "KEX Windows", 3 "KEX Highlighting",
-// 4 "KEX Quick Note", 5 "KEX Effects"). Opens Settings > Preferences on that page. LRESULT: TRUE.
+// wParam: a page of the KEX Settings window (0 "Editing", 1 "Tabs", 2 "Windows", 3 "Highlighting",
+// 4 "Quick Note", 5 "Effects"). Opens KEX > Settings... on that page. LRESULT: TRUE.
 #define NPPM_KEX_SHOWPREFPAGE         (KEX_USER + 14)
 
 // Commands of the KEX features. They are added to a menu of the feature's, Settings > Shortcut Mapper

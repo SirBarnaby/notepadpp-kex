@@ -393,7 +393,7 @@ try {
             $answer = if ($Yes) { 'y' } else { Read-Host 'Install new Notepad++ releases with KEX automatically? [Y/n]' }
             if ($answer -notmatch '^[nN]') { Enable-AutoUpdate $npp }
         }
-        Write-Host 'Done. Start Notepad++ as usual; the KEX settings are in the KEX group at the bottom of the Settings menu.' -ForegroundColor Green
+        Write-Host 'Done. Start Notepad++ as usual; the KEX settings are in the KEX menu, between Plugins and Window.' -ForegroundColor Green
     }
 }
 catch {

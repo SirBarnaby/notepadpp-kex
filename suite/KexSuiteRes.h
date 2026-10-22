@@ -1,6 +1,8 @@
-// KexSuiteRes.h - the KEX Preferences pages: dialog ids (IDD_KEX_PREF_FIRST + page, KexSuiteHost.h)
-// and control ids
+// KexSuiteRes.h - the KEX Settings window and its pages (IDD_KEX_PAGE_EDITING + page): dialog and control ids
 #pragma once
+#define IDD_KEX_SETTINGS     30520
+#define IDC_KEX_PAGELIST     1010
+#define IDC_KEX_CLOSE        1011
 #define IDD_KEX_PAGE_EDITING 30500
 #define IDD_KEX_PAGE_TABS    30501
 #define IDD_KEX_PAGE_WINDOWS 30502
@@ -95,7 +97,6 @@
 #define IDC_F_EN           2400
 #define IDC_F_STATUS       2401
 #define IDC_F_MS           2402
-#define IDC_F_FADE         2403
 #define IDC_GL_EN          2500
 #define IDC_GL_STATUS      2501
 #define IDC_FX_RESPECT     2600

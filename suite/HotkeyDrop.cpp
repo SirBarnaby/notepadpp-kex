@@ -102,7 +102,7 @@ public:
         if (!s_stats.registered && s_stats.byOtherNpp)
             ::SetTimer(hwnd(), TIMER_TAKEOVER, 3000, nullptr);   // take the hotkey over once that window closes
         else if (!s_stats.registered && !selfTestMode)
-            showNote(L"KEX: the quick note hotkey " + s_stats.text + L" is already taken by another program. Pick another one in Settings > KEX Quick Note > Preferences.", 8000);
+            showNote(L"KEX: the quick note hotkey " + s_stats.text + L" is already taken by another program. Pick another one in KEX > Quick Note > Settings.", 8000);
         return true;
     }
 
@@ -176,7 +176,7 @@ public:
     std::wstring file() const { return _file.empty() ? noteFileSetting() : _file; }
     std::wstring fileError() const { return _fileError; }
 
-    // Settings > KEX Quick Note > Open Note File in Notepad++
+    // KEX > Quick Note > Open Note File in Notepad++
     void openFileInNpp()
     {
         if (_sci && !_closing) { _dirty = true; save(); }   // a file that doesn't exist yet is made first
@@ -719,7 +719,7 @@ std::wstring quickNoteFileError() { return s_mod ? s_mod->fileError() : std::wst
 void quickNoteOpenFile() { if (s_mod) s_mod->openFileInNpp(); }
 void quickNoteOptionsChanged() { if (s_mod) s_mod->loadOptions(); }
 
-// Settings > KEX Quick Note > Open Note File in Notepad++ (Shortcut Mapper can give it a key)
+// KEX > Quick Note > Open Note File in Notepad++ (Shortcut Mapper can give it a key)
 void addNoteCommands(HMENU parent, int position)
 {
     static int id = 0;

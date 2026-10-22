@@ -160,14 +160,19 @@ void refreshPrefPages();           // after a feature was switched on/off or fai
 void showNote(const std::wstring& text, int ms);   // non-modal note in the corner of Notepad++
 bool isPostItMode();
 enum PrefPageId { PAGE_EDITING = 0, PAGE_TABS, PAGE_WINDOWS, PAGE_HIGHLIGHT, PAGE_NOTE, PAGE_EFFECTS, PAGE_COUNT };
-HWND prefPage(int i);              // a KEX Preferences page (PrefPageId), once created
+// The KEX Settings window (PrefPages.cpp): KEX's own settings, apart from Notepad++'s Preferences.
+HWND prefPage(int i);              // a page of it (PrefPageId), while the window is open
+HWND settingsDialog();             // the window, while it is open
 int pageOfModule(int module);      // the page a feature's settings are on
-void openPreferences();            // Preferences on the "KEX Editing" page
-// The KEX group in the Settings menu (SettingsMenu.cpp): a submenu per Preferences page, with a switch
-// for each feature on it and "Preferences..." to open the page.
+const wchar_t* pageTitle(int page);   // "Editing", "Tabs", ...
+void openSettings(int page = -1);  // open it on a page (-1: the one shown last)
+void settingsThemeChanged();       // NPPN_DARKMODECHANGED
+// The KEX menu in the menu bar (SettingsMenu.cpp): a submenu per settings page, with a switch for each
+// feature on it, the features' commands and "Settings..." to open the page; then "Settings...".
 bool buildSettingsMenu();
 void settingsMenuPopup(HMENU m);   // WM_INITMENUPOPUP
-bool settingsMenuCommand(UINT id); // WM_COMMAND; true when it was one of the group's
+bool settingsMenuCommand(UINT id); // WM_COMMAND; true when it was one of the menu's
+HMENU kexMenu();                   // the KEX menu itself
 HMENU settingsSubmenu(int page);
 UINT settingsSwitchId(int module);
 UINT settingsPreferencesId(int page);
@@ -209,7 +214,7 @@ struct FlashStats { int copies = 0, cuts = 0, deletes = 0, lastRects = 0, live =
 FlashStats flashStats();
 struct SplashStats { int splashes = 0, lastTokens = 0, live = 0, spawned = 0; };
 SplashStats splashStats();
-struct SlideStats { int seen = 0, started = 0, skipped = 0, lastDir = 0; bool active = false;
+struct SlideStats { int seen = 0, started = 0, skipped = 0, lastDir = 0, afterClose = 0; bool active = false;
                     int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0; float fraction = 0; };
 SlideStats slideStats(HWND view);
 void slideTestFreeze(double fraction);   // <0 = run normally
@@ -223,12 +228,11 @@ SwipeStats swipeStats();
 void swipeTestFingers(int n);   // self-test: pretend this many fingers are on a precision touchpad (-1 = the real one)
 std::wstring effectsInfo();       // the line on the KEX Effects page
 // Tab close and open, save glint (TabMotion.cpp)
-struct TabMotionStats { int folds = 0, unfolds = 0, foldBulk = 0, foldSkipped = 0, foldFrames = 0, lastDx = 0; float lastFraction = 0;
-                        int docFades = 0, saves = 0, glints = 0, glintLines = 0, glintSkipped = 0, glintFrames = 0; bool overlayShown = false; };
+struct TabMotionStats { int folds = 0, unfolds = 0, foldBulk = 0, foldSkipped = 0, foldFrames = 0, lastDx = 0; float lastFraction = 0, lastWidth = 0;
+                        int saves = 0, glints = 0, glintLines = 0, glintSkipped = 0, glintFrames = 0; bool overlayShown = false; };
 TabMotionStats tabMotionStats();
 void tabMotionTestFreeze(double fraction);   // <0 = run normally
-// a view is about to show another document; true when its own was just closed and now fades out (SCI_KEX_SLIDE 2)
-bool tabFoldSwitching(HWND view, void* oldBuffer, void* newBuffer);
+bool tabMotionTestSave(HWND target, const std::wstring& file);   // the overlay's picture now, as a .bmp
 // what Scintilla's smooth caret drew in the focused view at its last paint (KexScintilla.h)
 struct CaretStats { int carets = 0; bool visible = false; HWND target = nullptr;
                     float mainX = 0, mainY = 0, mainH = 0; bool block = false;

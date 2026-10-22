@@ -1,7 +1,8 @@
-// PrefPages.cpp - Settings > Preferences > "KEX Editing", "KEX Tabs", "KEX Windows", "KEX Highlighting", "KEX Quick Note" and "KEX Effects" (the core
-// creates the pages inside Notepad++'s Preferences dialog and hands their messages to prefPageProc).
-// Like the other Preferences pages, every change takes effect at once; numbers apply half a second
-// after the last keystroke.
+// PrefPages.cpp - the KEX Settings window (KEX > Settings...): KEX's own settings, apart from Notepad++'s
+// Preferences but built the same way: the pages "Editing", "Tabs", "Windows", "Highlighting", "Quick Note"
+// and "Effects" in a list on the left, the picked page on the right, a Close button, Notepad++'s dark mode.
+// Like the Preferences pages, every change takes effect at once; numbers apply half a second after the
+// last keystroke (or when the window closes).
 #include "KexSuite.h"
 #include "KexSuiteRes.h"
 #include <cwchar>
@@ -13,8 +14,9 @@ namespace {
 
 const UINT_PTR TIMER_APPLY = 1;
 HWND g_pages[PAGE_COUNT] = {};
-const wchar_t* const kPageTitle[PAGE_COUNT] = { L"KEX Editing", L"KEX Tabs", L"KEX Windows", L"KEX Highlighting", L"KEX Quick Note", L"KEX Effects" };
-const wchar_t* const kPageName[PAGE_COUNT] = { L"KexEditing", L"KexTabs", L"KexWindows", L"KexHighlighting", L"KexQuickNote", L"KexEffects" };
+HWND g_dialog = nullptr;
+int g_page = 0;                 // the page showing (or shown last)
+const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects" };
 bool g_filling = false;
 
 struct IntField { int id; int module; const wchar_t* key; int def; };
@@ -61,7 +63,6 @@ const BoolField kBools[] = {
     { IDC_E_COPY, M_FLASH, L"Copy", 1 },
     { IDC_E_CUT, M_FLASH, L"CutLift", 1 },
     { IDC_E_DEL, M_FLASH, L"DeleteFade", 1 },
-    { IDC_F_FADE, M_TABFOLD, L"FadeDocument", 1 },
     { IDC_SW_REVERSE, M_SWIPE, L"Reverse", 0 },
 };
 // one box on the Effects page for all of its animations: "Not when Windows animation effects are off"
@@ -341,14 +342,122 @@ void onCommand(HWND d, int id, int code)
     }
 }
 
-int pageIndex(HWND d)
+INT_PTR CALLBACK pageProc(HWND d, UINT m, WPARAM w, LPARAM)
 {
-    return has(d, IDC_E_EN) ? PAGE_EFFECTS : has(d, IDC_L_EN) ? PAGE_EDITING : has(d, IDC_S_EN) ? PAGE_TABS : has(d, IDC_K_EN) ? PAGE_HIGHLIGHT : has(d, IDC_H_EN) ? PAGE_NOTE : PAGE_WINDOWS;
+    if (!modules[0]) return FALSE;
+    try
+    {
+        switch (m)
+        {
+        case WM_INITDIALOG:
+            fill(d);
+            return FALSE;
+        case WM_SHOWWINDOW:
+            if (w) fill(d);
+            break;
+        case WM_TIMER:
+            if (w == TIMER_APPLY) { ::KillTimer(d, TIMER_APPLY); applyNumbers(d); refreshPrefPages(); return TRUE; }
+            break;
+        case WM_COMMAND:
+            onCommand(d, LOWORD(w), HIWORD(w));
+            return TRUE;
+        case WM_DESTROY:
+            ::KillTimer(d, TIMER_APPLY);
+            break;
+        }
+    }
+    catch (...) { log(L"exception on a KEX Settings page"); }
+    return FALSE;
+}
+
+void showPage(int p)
+{
+    if (!g_dialog || p < 0 || p >= PAGE_COUNT || !g_pages[p]) return;
+    g_page = p;
+    ::SendDlgItemMessageW(g_dialog, IDC_KEX_PAGELIST, LB_SETCURSEL, static_cast<WPARAM>(p), 0);
+    for (int i = 0; i < PAGE_COUNT; ++i)
+        if (g_pages[i] && i != p) ::ShowWindow(g_pages[i], SW_HIDE);
+    ::ShowWindow(g_pages[p], SW_SHOW);
+}
+
+// the window closes: what is still typed in a number box counts, as it would half a second later
+void closeDialog()
+{
+    if (!g_dialog) return;
+    for (HWND p : g_pages)
+        if (p) { ::KillTimer(p, TIMER_APPLY); applyNumbers(p); }
+    nppMsg(NPPM_MODELESSDIALOG, MODELESSDIALOGREMOVE, reinterpret_cast<LPARAM>(g_dialog));
+    HWND d = g_dialog;
+    ::DestroyWindow(d);
+}
+
+INT_PTR CALLBACK dialogProc(HWND d, UINT m, WPARAM w, LPARAM)
+{
+    try
+    {
+        switch (m)
+        {
+        case WM_INITDIALOG:
+        {
+            g_dialog = d;
+            HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
+            for (const wchar_t* t : kPageTitle) ::SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(t));
+            // the pages go where Notepad++'s Preferences puts its own: right of the list, at the top
+            RECT at{ 115, 10, 115 + 460, 10 + 205 };
+            ::MapDialogRect(d, &at);
+            for (int p = 0; p < PAGE_COUNT; ++p)
+            {
+                g_pages[p] = ::CreateDialogParamW(hInst, MAKEINTRESOURCEW(IDD_KEX_PAGE_EDITING + p), d, pageProc, 0);
+                if (!g_pages[p]) { log(L"KEX Settings: page %d could not be made (error %lu)", p, ::GetLastError()); continue; }
+                ::SetWindowPos(g_pages[p], nullptr, at.left, at.top, at.right - at.left, at.bottom - at.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                fill(g_pages[p]);
+                nppMsg(NPPM_DARKMODESUBCLASSANDTHEME, 0x1 /* dmfSubclassParent */, reinterpret_cast<LPARAM>(g_pages[p]));
+            }
+            nppMsg(NPPM_DARKMODESUBCLASSANDTHEME, static_cast<WPARAM>(NppDarkMode::dmfInit), reinterpret_cast<LPARAM>(d));
+            nppMsg(NPPM_MODELESSDIALOG, MODELESSDIALOGADD, reinterpret_cast<LPARAM>(d));
+            // in the middle of Notepad++, as Preferences opens
+            RECT pr{}, dr{};
+            ::GetWindowRect(npp._nppHandle, &pr);
+            ::GetWindowRect(d, &dr);
+            const int w0 = dr.right - dr.left, h0 = dr.bottom - dr.top;
+            int x = pr.left + ((pr.right - pr.left) - w0) / 2, y = pr.top + ((pr.bottom - pr.top) - h0) / 2;
+            HMONITOR mon = ::MonitorFromWindow(npp._nppHandle, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi{ sizeof(mi) };
+            if (::GetMonitorInfoW(mon, &mi))
+            {
+                x = std::max<int>(mi.rcWork.left, std::min<int>(x, mi.rcWork.right - w0));
+                y = std::max<int>(mi.rcWork.top, std::min<int>(y, mi.rcWork.bottom - h0));
+            }
+            ::SetWindowPos(d, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            showPage(g_page);
+            return FALSE;
+        }
+        case WM_COMMAND:
+            if (LOWORD(w) == IDC_KEX_PAGELIST && HIWORD(w) == LBN_SELCHANGE)
+            {
+                const LRESULT sel = ::SendDlgItemMessageW(d, IDC_KEX_PAGELIST, LB_GETCURSEL, 0, 0);
+                if (sel >= 0) showPage(static_cast<int>(sel));
+                return TRUE;
+            }
+            if (LOWORD(w) == IDCANCEL || LOWORD(w) == IDC_KEX_CLOSE) { closeDialog(); return TRUE; }
+            break;
+        case WM_CLOSE:
+            closeDialog();
+            return TRUE;
+        case WM_DESTROY:
+            for (HWND& p : g_pages) p = nullptr;   // destroyed with it
+            g_dialog = nullptr;
+            break;
+        }
+    }
+    catch (...) { log(L"exception in the KEX Settings window"); }
+    return FALSE;
 }
 
 } // namespace
 
 HWND prefPage(int i) { return (i >= 0 && i < PAGE_COUNT) ? g_pages[i] : nullptr; }
+HWND settingsDialog() { return g_dialog; }
 
 int pageOfModule(int module)
 {
@@ -364,52 +473,46 @@ int pageOfModule(int module)
     }
 }
 
+const wchar_t* pageTitle(int page) { return (page >= 0 && page < PAGE_COUNT) ? kPageTitle[page] : L""; }
+
 void refreshPrefPages()
 {
     for (HWND d : g_pages)
         if (d && ::IsWindow(d)) fill(d);
 }
 
-void openPreferences() { nppMsg(NPPM_MENUCOMMAND, 0, IDM_SETTING_KEX); }
+// KEX > Settings...: the window on that page (-1: the page shown last), brought forward when it is open already
+void openSettings(int page)
+{
+    if (!modules[0]) return;
+    if (page >= 0 && page < PAGE_COUNT) g_page = page;
+    if (!g_dialog)
+    {
+        ::CreateDialogParamW(hInst, MAKEINTRESOURCEW(IDD_KEX_SETTINGS), npp._nppHandle, dialogProc, 0);
+        if (!g_dialog) { log(L"KEX Settings: the window could not be made (error %lu)", ::GetLastError()); return; }
+    }
+    else showPage(g_page);
+    ::ShowWindow(g_dialog, SW_SHOW);
+    ::SetForegroundWindow(g_dialog);
+    ::SetFocus(::GetDlgItem(g_dialog, IDC_KEX_PAGELIST));
+}
+
+void settingsThemeChanged()
+{
+    if (!g_dialog) return;
+    nppMsg(NPPM_DARKMODESUBCLASSANDTHEME, static_cast<WPARAM>(NppDarkMode::dmfHandleChange), reinterpret_cast<LPARAM>(g_dialog));
+    ::RedrawWindow(g_dialog, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+}
 
 } // namespace kex
 
 namespace kexsuite {
 
-using namespace kex;
-
-int prefPageCount() { return PAGE_COUNT; }
-const wchar_t* prefPageTitle(int page) { return (page >= 0 && page < PAGE_COUNT) ? kPageTitle[page] : L"KEX"; }
-const wchar_t* prefPageName(int page) { return (page >= 0 && page < PAGE_COUNT) ? kPageName[page] : L"Kex"; }
-
-intptr_t prefPageProc(HWND d, UINT m, WPARAM w, LPARAM)
+// the core: KEX > Settings... (IDM_SETTING_KEX) and NPPM_KEX_SHOWPREFPAGE
+void showSettings(int page)
 {
-    if (!modules[0]) return FALSE;
-    try
-    {
-        switch (m)
-        {
-        case WM_INITDIALOG:
-            g_pages[pageIndex(d)] = d;
-            fill(d);
-            return TRUE;
-        case WM_SHOWWINDOW:
-            if (w) fill(d);
-            break;
-        case WM_TIMER:
-            if (w == TIMER_APPLY) { ::KillTimer(d, TIMER_APPLY); applyNumbers(d); refreshPrefPages(); return TRUE; }
-            break;
-        case WM_COMMAND:
-            onCommand(d, LOWORD(w), HIWORD(w));
-            return TRUE;
-        case WM_DESTROY:
-            ::KillTimer(d, TIMER_APPLY);
-            if (g_pages[pageIndex(d)] == d) g_pages[pageIndex(d)] = nullptr;
-            break;
-        }
-    }
-    catch (...) { log(L"exception on a KEX Preferences page"); }
-    return FALSE;
+    try { kex::openSettings(page); }
+    catch (...) { kex::log(L"exception while opening the KEX Settings window"); }
 }
 
 } // namespace kexsuite

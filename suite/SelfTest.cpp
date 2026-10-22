@@ -418,7 +418,8 @@ void removeDeskSession(const wchar_t* id)
 POINT g_hoverPoint{};   // a point on the first tab while F12 shows the tab bar
 int g_slideDir = 0, g_slideBefore = 0, g_slideFrames = 0;   // the tab slide steps
 TabMotionStats g_motion;    // the tab fold and save glint steps
-int g_fadeSlides = 0;       // core slides counted before a closed tab's document fades
+int g_slideCloses = 0, g_closedIdx = -1;
+int g_fadeSlides = 0;       // core slides counted before a tab is closed
 int g_swipeIdx = 0;                        // the tab the swipe steps start from
 SwipeStats g_swipeBefore;
 std::vector<intptr_t> g_swipeOrder;        // the tabs in Ctrl+Tab order before a swipe
@@ -650,12 +651,12 @@ int pressHotkey()
     return 0;
 }
 
-// The on/off tick of a feature on its Preferences page, clicked the way the user does it.
+// The on/off tick of a feature on its KEX Settings page, clicked the way the user does it.
 const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
                                   IDC_F_EN, IDC_GL_EN };
 HWND enableBox(int module)
 {
-    if (!prefPage(pageOfModule(module))) { openPreferences(); pump(300); }
+    if (!prefPage(pageOfModule(module))) { openSettings(); pump(300); }
     HWND p = prefPage(pageOfModule(module));
     return p ? ::GetDlgItem(p, kEnableBox[module]) : nullptr;
 }
@@ -667,15 +668,17 @@ void clickEnable(int module)
     ::SendMessageW(::GetParent(b), WM_COMMAND, MAKEWPARAM(kEnableBox[module], BN_CLICKED), reinterpret_cast<LPARAM>(b));
 }
 bool enableTicked(int module) { HWND b = enableBox(module); return b && ::SendMessageW(b, BM_GETCHECK, 0, 0) == BST_CHECKED; }
-HWND prefDialog() { HWND p = prefPage(0); return p ? ::GetParent(p) : nullptr; }
+HWND prefDialog() { return settingsDialog(); }
+// a page of the KEX Settings window picked in its list, as the user does (the window opens first if it isn't)
 void showPrefPage(const wchar_t* name)
 {
-    HWND d = prefDialog();
+    if (!settingsDialog()) { openSettings(); pump(300); }
+    HWND d = settingsDialog();
     if (!d) return;
-    HWND list = ::GetDlgItem(d, IDC_LIST_DLGTITLE);
+    HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
     LRESULT i = ::SendMessageW(list, LB_FINDSTRINGEXACT, static_cast<WPARAM>(-1), reinterpret_cast<LPARAM>(name));
     ::SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(i), 0);
-    ::SendMessageW(d, WM_COMMAND, MAKEWPARAM(IDC_LIST_DLGTITLE, LBN_SELCHANGE), reinterpret_cast<LPARAM>(list));
+    ::SendMessageW(d, WM_COMMAND, MAKEWPARAM(IDC_KEX_PAGELIST, LBN_SELCHANGE), reinterpret_cast<LPARAM>(list));
 }
 std::wstring itemText(HWND page, int id) { wchar_t t[256] = {}; if (page) ::GetDlgItemTextW(page, id, t, 255); return t; }
 
@@ -985,49 +988,86 @@ void buildSteps()
         return 600;
     });
 
-    // ---- the KEX group in the Settings menu, and the Preferences pages ------------------------
+    // ---- the KEX menu in the menu bar, and the KEX Settings window ---------------------------------
     add([] {
         HMENU mm = reinterpret_cast<HMENU>(nppMsg(NPPM_GETMENUHANDLE, NPPMAINMENU, 0));
-        HMENU sm = subWith(mm, IDM_SETTING_PREFERENCE);
-        const int n = sm ? ::GetMenuItemCount(sm) : 0;
-        static const wchar_t* const kNames[PAGE_COUNT] = { L"KEX Editing", L"KEX Tabs", L"KEX Windows", L"KEX Highlighting", L"KEX Quick Note", L"KEX Effects" };
-        bool group = n > PAGE_COUNT && (::GetMenuState(sm, n - PAGE_COUNT - 1, MF_BYPOSITION) & MF_SEPARATOR);
+        HMENU km = kexMenu();
+        int at = -1;
+        for (int i = 0, n = ::GetMenuItemCount(mm); i < n; ++i) if (km && ::GetSubMenu(mm, i) == km) at = i;
+        wchar_t top[64] = {}, plugins[64] = {}, window[64] = {};
+        ::GetMenuStringW(mm, at, top, 63, MF_BYPOSITION);
+        ::GetMenuStringW(mm, at - 1, plugins, 63, MF_BYPOSITION);
+        ::GetMenuStringW(mm, at + 1, window, 63, MF_BYPOSITION);
+        check(at == 11 && wcscmp(top, L"&KEX") == 0 && ::GetSubMenu(mm, at - 1) == reinterpret_cast<HMENU>(nppMsg(NPPM_GETMENUHANDLE, NPPPLUGINMENU, 0))
+              && wcscmp(window, L"&Window") == 0 && menuHasId(::GetSubMenu(mm, at + 1), IDM_WINDOW_WINDOWS), L"M1",
+              L"the menu bar has its own KEX menu, item %d, between \"%ls\" and \"%ls\"", at + 1, plugins, window);
+        const int n = km ? ::GetMenuItemCount(km) : 0;
+        bool group = n == PAGE_COUNT + 2 && (::GetMenuState(km, PAGE_COUNT, MF_BYPOSITION) & MF_SEPARATOR) && ::GetMenuItemID(km, n - 1) == IDM_SETTING_KEX;
         std::wstring names, items;
         for (int p = 0; p < PAGE_COUNT && group; ++p)
         {
             wchar_t t[64] = {};
-            ::GetMenuStringW(sm, n - PAGE_COUNT + p, t, 63, MF_BYPOSITION);
-            HMENU sub = ::GetSubMenu(sm, n - PAGE_COUNT + p);
+            ::GetMenuStringW(km, p, t, 63, MF_BYPOSITION);
+            HMENU sub = ::GetSubMenu(km, p);
             int switches = 0, onPage = 0;
             for (int i = 0; i < M_COUNT; ++i)
                 if (pageOfModule(i) == p) { ++onPage; if (menuHasId(sub, settingsSwitchId(i))) ++switches; }
             const int last = sub ? ::GetMenuItemCount(sub) - 1 : -1;
-            if (!sub || sub != settingsSubmenu(p) || wcscmp(t, kNames[p]) || switches != onPage
+            if (!sub || sub != settingsSubmenu(p) || wcscmp(t, pageTitle(p)) || switches != onPage
                 || ::GetMenuItemID(sub, last) != settingsPreferencesId(p)) group = false;
             names += (p ? L", " : L"") + std::wstring(t);
             items += (p ? L" / " : L"") + std::to_wstring(switches) + L"+1";
         }
-        check(group, L"M1", L"the Settings menu ends with the KEX group: %ls (feature switches + Preferences...: %ls)", names.c_str(), items.c_str());
-        int import = -1;
-        for (int i = 0; i < n; ++i)
+        check(group, L"M1a", L"the KEX menu: %ls (feature switches + Settings...: %ls), a line, Settings...", names.c_str(), items.c_str());
+        HMENU sm = subWith(mm, IDM_SETTING_PREFERENCE);
+        int import = -1, kexInSettings = 0;
+        for (int i = 0, c = sm ? ::GetMenuItemCount(sm) : 0; i < c; ++i)
+        {
             if (HMENU sub = ::GetSubMenu(sm, i)) if (menuHasId(sub, IDM_SETTING_IMPORTPLUGIN)) import = i;
-        check(import == 4 && !menuHasId(mm, IDM_SETTING_KEX), L"M1b",
-              L"Notepad++'s own Settings items keep their places (Import is item %d, as upstream) and the old KEX Features item is gone", import + 1);
+            wchar_t t[64] = {}; ::GetMenuStringW(sm, i, t, 63, MF_BYPOSITION);
+            if (wcsstr(t, L"KEX")) ++kexInSettings;
+        }
+        check(import == 4 && kexInSettings == 0 && !menuHasId(sm, IDM_SETTING_KEX), L"M1b",
+              L"Notepad++'s Settings menu is as upstream again: Import is item %d, nothing KEX in it", import + 1);
         HMENU pm = reinterpret_cast<HMENU>(nppMsg(NPPM_GETMENUHANDLE, NPPPLUGINMENU, 0));
         bool inPlugins = false;
-        for (int i = 0, n = ::GetMenuItemCount(pm); i < n; ++i)
+        for (int i = 0, c = ::GetMenuItemCount(pm); i < c; ++i)
         {
             wchar_t p[128] = {}; ::GetMenuStringW(pm, i, p, 127, MF_BYPOSITION);
             if (wcsstr(p, L"KEX")) inPlugins = true;
         }
         check(!inPlugins, L"M2", L"nothing KEX left in the Plugins menu (the suite is built in)");
         focusEditor();
-        ::PostMessageW(npp._nppHandle, WM_SYSCOMMAND, SC_KEYMENU, 't');   // open Settings from the menu bar
+        ::PostMessageW(npp._nppHandle, WM_SYSCOMMAND, SC_KEYMENU, 'k');   // open KEX from the menu bar (Alt+K)
         return 500;
     });
-    add([] { tap(VK_UP); tap(VK_UP); tap(VK_UP); tap(VK_RIGHT); return 500; });   // up to KEX Windows, and open it
-    add([] { return shot(L"menu-settings-kex"); });
+    add([] { tap(VK_DOWN); tap(VK_DOWN); tap(VK_RIGHT); return 500; });   // down to Windows, and open it
+    add([] { return shot(L"menu-kex"); });
     add([] { ::EndMenu(); return 300; });
+    add([] {
+        // Notepad++'s own Preferences: no KEX pages any more
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_SETTING_PREFERENCE);
+        pump(400);
+        HWND pref = nullptr;
+        for (HWND w = ::GetWindow(::GetDesktopWindow(), GW_CHILD); w && !pref; w = ::GetWindow(w, GW_HWNDNEXT))
+        {
+            wchar_t t[64] = {};
+            if (::GetWindow(w, GW_OWNER) == npp._nppHandle && ::GetWindowTextW(w, t, 63) && wcscmp(t, L"Preferences") == 0) pref = w;
+        }
+        HWND list = pref ? ::GetDlgItem(pref, IDC_LIST_DLGTITLE) : nullptr;
+        const int c = list ? static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0)) : 0;
+        int kexPages = 0;
+        for (int i = 0; i < c; ++i)
+        {
+            wchar_t t[128] = {};
+            if (::SendMessageW(list, LB_GETTEXTLEN, i, 0) < 127) ::SendMessageW(list, LB_GETTEXT, i, reinterpret_cast<LPARAM>(t));
+            if (wcsstr(t, L"KEX")) ++kexPages;
+        }
+        check(pref && c > 10 && kexPages == 0, L"M1c", L"Settings > Preferences is Notepad++'s own again: %d pages, none of them KEX", c);
+        if (pref) ::SendMessageW(pref, WM_COMMAND, IDCANCEL, 0);
+        focusEditor();
+        return 300;
+    });
     add([] {
         // the switches show what runs; picking one switches the feature and stores it, as the Preferences tick does
         bool marks = true;
@@ -1039,7 +1079,7 @@ void buildSteps()
                 if (pageOfModule(i) == p && ((::GetMenuState(sub, settingsSwitchId(i), MF_BYCOMMAND) & MF_CHECKED) != 0) != modules[i]->isEnabled())
                     marks = false;
         }
-        check(marks, L"M3", L"each feature's switch in the KEX submenus is ticked exactly when the feature runs");
+        check(marks, L"M3", L"each feature's switch in the KEX menu is ticked exactly when the feature runs");
         const bool was = modules[M_CARET]->isEnabled();
         ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsSwitchId(M_CARET), 0);
         const bool flipped = modules[M_CARET]->isEnabled() != was;
@@ -1047,11 +1087,22 @@ void buildSteps()
         ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsSwitchId(M_CARET), 0);
         const int back = settings.getInt(modules[M_CARET]->key(), L"Enabled", -1);
         check(flipped && stored == (was ? 0 : 1) && modules[M_CARET]->isEnabled() == was && back == (was ? 1 : 0), L"M4",
-              L"Settings > KEX Editing > Smooth caret switches it %ls and back, and remembers it (stored %d, then %d)", was ? L"off" : L"on", stored, back);
+              L"KEX > Editing > Smooth caret switches it %ls and back, and remembers it (stored %d, then %d)", was ? L"off" : L"on", stored, back);
         ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsPreferencesId(PAGE_TABS), 0);
         pump(300);
         HWND d = prefDialog(), p = prefPage(PAGE_TABS);
-        check(d && ::IsWindowVisible(d) && p && ::IsWindowVisible(p), L"M5", L"Settings > KEX Tabs > Preferences... opens Preferences on the \"KEX Tabs\" page");
+        wchar_t cap[64] = {};
+        if (d) ::GetWindowTextW(d, cap, 63);
+        check(d && ::IsWindowVisible(d) && p && ::IsWindowVisible(p) && wcscmp(cap, L"KEX Settings") == 0 && ::GetWindow(d, GW_OWNER) == npp._nppHandle
+              && ::SendDlgItemMessageW(d, IDC_KEX_PAGELIST, LB_GETCURSEL, 0, 0) == PAGE_TABS, L"M5",
+              L"KEX > Tabs > Settings... opens the \"%ls\" window on its \"Tabs\" page", cap);
+        ::SendMessageW(d, WM_COMMAND, IDCANCEL, 0);
+        pump(200);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_SETTING_KEX);
+        pump(300);
+        check(prefDialog() && prefPage(PAGE_TABS) && ::IsWindowVisible(prefPage(PAGE_TABS)), L"M6",
+              L"KEX > Settings... opens it again on the page shown last");
+        ::SendMessageW(prefDialog(), WM_COMMAND, IDCANCEL, 0);
         focusEditor();
         return 300;
     });
@@ -1111,28 +1162,28 @@ void buildSteps()
         bool ticks = true;
         for (int i = 0; i < M_COUNT; ++i) if (enableTicked(i) != modules[i]->isEnabled()) ticks = false;
         check(d && ::IsWindowVisible(d) && p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_TABS)), L"P1",
-              L"Settings > KEX Editing > Preferences... opens Preferences on the \"KEX Editing\" page");
+              L"KEX > Editing > Settings... shows the \"Editing\" page");
         check(ticks, L"P2", L"the on/off ticks on both pages match the running features");
         tlog(L"INFO page summary: \"%ls\"", itemText(p, IDC_SUMMARY).c_str());
         return 300;
     });
     add([] { return shot(L"preferences-kex-editing"); });
     add([] {
-        showPrefPage(L"KEX Quick Note");
+        showPrefPage(L"Quick Note");
         pump(200);
         HWND p = prefPage(PAGE_NOTE);
         std::wstring k = itemText(p, IDC_H_KEYSTATUS);
-        check(p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_EDITING)), L"P3", L"\"KEX Quick Note\" page shows when picked in the list");
+        check(p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_EDITING)), L"P3", L"\"Quick Note\" page shows when picked in the list");
         check(k.find(L"works") != std::wstring::npos, L"P4", L"the page reports the quick note hotkey: \"%ls\"", k.c_str());
         return 300;
     });
     add([] { return shot(L"preferences-kex-quicknote"); });
     add([] {
-        showPrefPage(L"KEX Tabs");
+        showPrefPage(L"Tabs");
         pump(200);
         HWND p = prefPage(PAGE_TABS);
         check(p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_NOTE)) && ::IsDlgButtonChecked(p, IDC_S_EN) == BST_CHECKED,
-            L"P3b", L"\"KEX Tabs\" page shows tab snapping (on) and F12 hover tabs: \"%ls\"", itemText(p, IDC_S_STATUS).c_str());
+            L"P3b", L"\"Tabs\" page shows tab snapping (on) and F12 hover tabs: \"%ls\"", itemText(p, IDC_S_STATUS).c_str());
         return 300;
     });
     add([] { return shot(L"preferences-kex-tabs"); });
@@ -1166,7 +1217,7 @@ void buildSteps()
         pump(800);
         ::SendMessageW(prefDialog(), WM_COMMAND, IDCANCEL, 0);
         pump(200);
-        check(!::IsWindowVisible(prefDialog()), L"P9", L"Preferences closes");
+        check(!prefDialog(), L"P9", L"the KEX Settings window closes");
         focusEditor();
         return 300;
     });
@@ -2044,6 +2095,15 @@ void buildSteps()
               && st.foldFrames > g_motion.foldFrames, L"TF1",
               L"opening f1.txt unfolds its tab: the tabs on its right make room (%d px, held at %.2f, skipped %d)", st.lastDx, st.lastFraction,
               st.foldSkipped - g_motion.foldSkipped);
+        for (int k = 1; k <= 9; k += 2)   // the motion at 10, 30, 50, 70 and 90%, for a look at it
+        {
+            tabMotionTestFreeze(k / 10.0);
+            pump(60);
+            wchar_t n[64]; swprintf(n, 64, L"frame-tab-open-%d0.bmp", k);
+            tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
+        }
+        tabMotionTestFreeze(0.5);
+        pump(60);
         return shot(L"tab-unfold-half-way");
     });
     add([] {
@@ -2053,9 +2113,12 @@ void buildSteps()
     });
     add([] {
         check(g_untilOk, L"TF2", L"the unfold ends and its window goes: the real tab bar shows again");
-        // closing it: the tab folds shut, its document fades out over the one that takes its place
+        // closing it: the tab collapses (never squeezed), the tabs on its right close the gap, and the document that
+        // takes its place slides in from the right, the side its tab comes from
         g_motion = tabMotionStats();
         g_fadeSlides = slideStats(curSci()).slides;
+        g_slideCloses = slideStats(curSci()).afterClose;
+        g_closedIdx = views.currentIndex(views.viewOf(curSci()));
         tabMotionTestFreeze(0.5);
         slideTestFreeze(0.5);
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
@@ -2064,9 +2127,23 @@ void buildSteps()
     add([] {
         const TabMotionStats st = tabMotionStats();
         const SlideStats sl = slideStats(curSci());
-        check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && st.docFades == g_motion.docFades + 1
-              && sl.active && sl.slides == g_fadeSlides + 1 && std::fabs(sl.fraction - 0.5f) < 0.01f, L"TF3",
-              L"closing f1.txt folds its tab shut and fades its document out over %ls (fade held at %.2f)", curName().c_str(), sl.fraction);
+        const float expect = st.lastDx * 0.125f;   // ease-out at half time: 7/8 of the way closed
+        check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && std::fabs(st.lastWidth - expect) < 1.0f, L"TF3",
+              L"closing f1.txt collapses its tab: %.1f of %d px left half-way (ease-out), the tabs on its right sliding over", st.lastWidth, st.lastDx);
+        const int now = views.currentIndex(views.viewOf(curSci()));
+        const int dir = now >= g_closedIdx ? 1 : -1;
+        check(sl.active && sl.slides == g_fadeSlides + 1 && sl.afterClose == g_slideCloses + 1 && sl.lastDir == dir && std::fabs(sl.fraction - 0.5f) < 0.01f, L"TF3b",
+              L"%ls, which takes its place (tab %d, the closed one was %d), slides in from the %ls with the tab slide (held at %.2f)", curName().c_str(),
+              now + 1, g_closedIdx + 1, dir > 0 ? L"right" : L"left", sl.fraction);
+        for (int k = 1; k <= 9; k += 2)   // the motion at 10, 30, 50, 70 and 90%, for a look at it
+        {
+            tabMotionTestFreeze(k / 10.0);
+            pump(60);
+            wchar_t n[64]; swprintf(n, 64, L"frame-tab-close-%d0.bmp", k);
+            tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
+        }
+        tabMotionTestFreeze(0.5);
+        pump(60);
         return shot(L"tab-close-fold");
     });
     add([] {
@@ -2076,7 +2153,7 @@ void buildSteps()
         return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 3000);
     });
     add([] {
-        check(g_untilOk, L"TF4", L"the fold and the fade end: the bar and the document as they are");
+        check(g_untilOk, L"TF4", L"the collapse and the slide end: the bar and the document as they are");
         // several tabs in one go (a session, Close All): they just change. In view 2, which has room for them
         // (a bar with scroll arrows never folds)
         views.activate(1, 0);
@@ -2113,6 +2190,7 @@ void buildSteps()
         const TabMotionStats st = tabMotionStats();
         check(st.saves == g_motion.saves + 1 && st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines && st.overlayShown
               && st.glintFrames > g_motion.glintFrames && sci(curSci(), SCI_GETMODIFY) == 0, L"TF6", L"saving sv.txt sends a glint across its tab");
+        tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(L"frame-glint-half.bmp"));
         return shot(L"save-glint-half-way");
     });
     add([] {
@@ -2121,6 +2199,50 @@ void buildSteps()
     });
     add([] {
         check(g_untilOk, L"TF7", L"the glint passes and its window goes");
+        // a bar with more tabs than room (scroll arrows): the glint still goes across the tab, not along the view
+        views.activate(0, 0);
+        for (int i = 1; i <= 16; ++i)
+        {
+            wchar_t n[64]; swprintf(n, 64, L"scroll-arrows-tab-%02d.txt", i);
+            writeFile(path(n), "tab\r\n");
+            open(n);
+        }
+        pump(400);
+        HWND bar = views.tabBar(0);
+        bool arrows = false;
+        for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
+        {
+            wchar_t cls[32] = {};
+            if (::IsWindowVisible(c) && ::GetClassNameW(c, cls, 31) && ::lstrcmpiW(cls, UPDOWN_CLASSW) == 0) arrows = true;
+        }
+        HWND s = curSci();
+        sci(s, SCI_DOCUMENTEND);
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        g_motion = tabMotionStats();
+        tabMotionTestFreeze(0.5);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        pump(150);
+        const TabMotionStats st = tabMotionStats();
+        check(arrows && st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines && st.overlayShown, L"TF7b",
+              L"a bar with scroll arrows (%ls): saving %ls sends the glint across its tab, as everywhere else", arrows ? L"shown" : L"NOT shown", curName().c_str());
+        pump(250);   // to half way
+        tabMotionTestSave(bar, path(L"frame-glint-scroll-arrows.bmp"));
+        return shot(L"save-glint-scroll-arrows");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        waitFor([] { return !tabMotionStats().overlayShown; }, 2000);
+        for (int i = 1; i <= 16; ++i)
+        {
+            wchar_t n[64]; swprintf(n, 64, L"scroll-arrows-tab-%02d.txt", i);
+            switchTo(n);
+            if (curName() == n) nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        }
+        views.activate(1, 0);
+        switchTo(L"sv.txt");
+        return until([] { return !tabMotionStats().overlayShown; }, 2000);
+    });
+    add([] {
         // the tab bar hidden: a line of light along the top of the view
         nppMsg(NPPM_HIDETABBAR, 0, TRUE);
         pump(200);
@@ -2144,7 +2266,7 @@ void buildSteps()
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
         pump(200);
         const TabMotionStats st2 = tabMotionStats();
-        check(st2.glints == b2.glints && st2.unfolds == b2.unfolds && st2.folds == b2.folds && st2.docFades == b2.docFades && !st2.overlayShown, L"TF9",
+        check(st2.glints == b2.glints && st2.unfolds == b2.unfolds && st2.folds == b2.folds && !st2.overlayShown, L"TF9",
               L"tab fold and save glint off: tabs and saves change at once");
         setModuleEnabled(M_GLINT, true, false);
         setModuleEnabled(M_TABFOLD, true, false);
@@ -2495,7 +2617,7 @@ void buildSteps()
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
         pump(150);
         // the Effects page: a line on how the effects are drawn and how fast
-        showPrefPage(L"KEX Effects");
+        showPrefPage(L"Effects");
         const std::wstring info = itemText(prefPage(PAGE_EFFECTS), IDC_E_INFO);
         check(prefPage(PAGE_EFFECTS) && !info.empty(), L"P5", L"KEX Effects page: \"%ls\"", info.c_str());
         switchTo(L"a.cpp");
@@ -3069,9 +3191,9 @@ void buildSteps()
         RECT cr = clientOnScreen(npp._nppHandle), kr = screenRectOf(c);
         check(nextVisible(npp._nppHandle) == c && ::EqualRect(&cr, &kr), L"G13",
               L"after another program was in front and the window moved, the catcher is still right behind it at %ls", rectStr(kr).c_str());
-        openPreferences();
+        openSettings();
         pump(300);
-        showPrefPage(L"KEX Windows");
+        showPrefPage(L"Windows");
         pump(200);
         HWND p = prefPage(PAGE_WINDOWS);
         std::wstring st = itemText(p, IDC_G_STATUS), info = itemText(p, IDC_G_INFO), tint = itemText(p, IDC_G_TINT);
@@ -3352,16 +3474,16 @@ void buildSteps()
         const std::vector<intptr_t> ga = wordsIn(s, "gamma");
         check(curName() == L"k.cpp" && tokenRuleCount(s) == 2 && tokOurs(s, 24, wordsIn(s, "beta")[0], 4) && styledAs(s, ga, 5, 1, -1, &why), L"L17",
               L"closed and opened again, k.cpp has its styled tokens back: \"beta\" coloured, \"gamma\" bold %ls %ls", why.c_str(), tokDiag(s).c_str());
-        openPreferences();
+        openSettings();
         pump(300);
-        showPrefPage(L"KEX Highlighting");
+        showPrefPage(L"Highlighting");
         pump(200);
         HWND p = prefPage(PAGE_HIGHLIGHT);
         const std::wstring st = itemText(p, IDC_K_STATUS), info = itemText(p, IDC_K_INFO), key = itemText(p, IDC_K_KEY);
         wchar_t item[128] = {};
         ::GetMenuStringW(settingsSubmenu(PAGE_HIGHLIGHT), static_cast<UINT>(tokenMenuCommandId()), item, 128, MF_BYCOMMAND);
         check(p && ::IsWindowVisible(p) && st == L"Running" && key == L"Ctrl+Shift+H" && std::wstring(item) == L"Token Style Menu\tCtrl+Shift+H" && info.find(L"2 tokens") != std::wstring::npos,
-              L"L18", L"KEX Highlighting page: \"%ls\", menu key %ls (Settings > KEX Highlighting > \"%ls\"), \"%ls\"", st.c_str(), key.c_str(), item, info.c_str());
+              L"L18", L"KEX Highlighting page: \"%ls\", menu key %ls (KEX > Highlighting > \"%ls\"), \"%ls\"", st.c_str(), key.c_str(), item, info.c_str());
         return 200;
     });
     add([] { return shot(L"preferences-kex-highlighting"); });

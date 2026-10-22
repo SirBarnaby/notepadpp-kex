@@ -3,14 +3,17 @@
 // Tab close and open: Notepad++ adds and removes tabs with TCM_INSERTITEM and TCM_DELETEITEM. Just before
 // one of them the tab bar is copied, and a layered window showing that copy is put over the bar at once,
 // so the bar changing underneath can't be seen. Once Notepad++ has finished (a posted message), the bar
-// is copied again, and the window plays the change: a closed tab folds shut while it fades and the tabs
-// on its right close the gap; a new tab unfolds from nothing while the tabs on its right make room. Then
-// the window goes and the real bar shows. Several tabs at once (Close All, opening a session) just change.
-// A closed tab's document fades out over the one that takes its place (SCI_KEX_SLIDE 2, KexScintilla.h).
+// is copied again, and the window plays the change the way Chrome and Firefox do: a closed tab collapses
+// (its picture is never squeezed: its right edge moves in over it while it fades out quickly) and the tabs
+// on its right slide over to close the gap; a new tab opens out the same way, fading in. Then the window
+// goes and the real bar shows. Several tabs at once (Close All, opening a session) just change.
+// The document area changes at once, as in every editor; with Tab slide on, the document that takes a
+// closed one's place slides in from the side its tab came from (TabSlide.cpp).
 //
 // Save glint: a soft diagonal band of light sweeps once across the tab of the file just saved, in a
-// click-through layered window over the bar. With the tab bar hidden, the band runs along the top of the
-// view instead. Save All staggers the glints along the tabs.
+// click-through layered window over the bar, wherever the tab is (one row or several, scroll arrows or
+// not). Only when the file's tab can't be seen at all (the tab bar hidden, or scrolled away from it) does
+// the band run along the top of the view instead. Save All staggers the glints along the tabs.
 #include "Overlay.h"
 #include "KexScintilla.h"
 #include <cmath>
@@ -34,6 +37,7 @@ TabMotionStats s_stats;
 double s_freeze = -1;   // self-test: animations stop at this fraction
 
 double easeOutCubic(double t) { t = std::clamp(t, 0.0, 1.0); return 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t); }
+double easeOutQuad(double t) { t = std::clamp(t, 0.0, 1.0); return 1.0 - (1.0 - t) * (1.0 - t); }
 double easeInOutCubic(double t)
 {
     t = std::clamp(t, 0.0, 1.0);
@@ -79,6 +83,51 @@ int barStrip(HWND bar)
     return strip >= 8 ? strip : 0;
 }
 
+// The part of a tab bar that can be seen, any layout (several rows, scroll arrows, tabs down the side):
+// the client area less what the views lie over. Empty when the bar is hidden.
+RECT barVisible(HWND bar)
+{
+    RECT none{};
+    if (!bar || !::IsWindowVisible(bar)) return none;
+    HWND root = ::GetAncestor(bar, GA_ROOT);
+    if (!root || ::IsIconic(root) || isCloaked(root)) return none;
+    const bool vertical = (::GetWindowLongPtrW(bar, GWL_STYLE) & TCS_VERTICAL) != 0;
+    RECT rc; ::GetClientRect(bar, &rc);
+    POINT org{ 0, 0 };
+    ::ClientToScreen(bar, &org);
+    for (int v = 0; v < views.count(); ++v)
+    {
+        if (views.tabBar(v) != bar) continue;
+        HWND s = views.sci(v);
+        RECT sr{};
+        if (!s || !::IsWindowVisible(s) || !::GetWindowRect(s, &sr)) continue;
+        if (sr.left >= org.x + rc.right || sr.right <= org.x || sr.top >= org.y + rc.bottom || sr.bottom <= org.y) continue;
+        if (vertical) rc.right = std::min<LONG>(rc.right, sr.left - org.x);
+        else rc.bottom = std::min<LONG>(rc.bottom, sr.top - org.y);
+    }
+    return (rc.right >= 8 && rc.bottom >= 8) ? rc : none;
+}
+
+// Where tab idx of a bar can be seen (clipped to the visible bar, short of the scroll arrows); empty when it can't.
+RECT tabShows(HWND bar, int idx, const RECT& vis)
+{
+    RECT it{}, none{};
+    if (!::SendMessageW(bar, TCM_GETITEMRECT, idx, reinterpret_cast<LPARAM>(&it))) return none;
+    RECT clip = vis;
+    for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
+    {
+        wchar_t cls[32] = {};
+        if (!::IsWindowVisible(c) || !::GetClassNameW(c, cls, 31) || ::lstrcmpiW(cls, UPDOWN_CLASSW) != 0) continue;
+        RECT ur{};
+        ::GetWindowRect(c, &ur);
+        ::MapWindowPoints(nullptr, bar, reinterpret_cast<POINT*>(&ur), 2);
+        if (ur.top < it.bottom && ur.bottom > it.top) clip.right = std::min(clip.right, ur.left);
+    }
+    RECT r{};
+    if (!::IntersectRect(&r, &it, &clip) || r.right - r.left < 4 || r.bottom - r.top < 4) return none;
+    return r;
+}
+
 // copy what a window shows (its own pixels, whatever covers it on screen) into s, opaque
 bool grab(HWND w, Surface& s, int width, int height)
 {
@@ -116,30 +165,17 @@ inline void over(uint32_t& d, uint32_t s, uint32_t k)
     d = s + (rb | (ag << 8));
 }
 
-// columns [sx, sx + sw) of src drawn into [dx, dx + dw) of dst, squeezed or stretched (linear), with opacity k
-void blitColumns(Surface& dst, Surface& src, int sx, int sw, double dx, double dw, int h, uint32_t k)
+// the first `width` columns from sx of src drawn unscaled at dx with opacity k (0..256); the last column
+// partly, so an edge that moves by fractions of a pixel moves smoothly
+void copyFaded(Surface& dst, Surface& src, int sx, int dx, double width, double k)
 {
-    if (sw <= 0 || dw <= 0.01 || k == 0) return;
-    const int x0 = std::max(0, static_cast<int>(std::floor(dx))), x1 = std::min(dst.w, static_cast<int>(std::ceil(dx + dw)));
-    const double scale = sw / dw;
-    for (int x = x0; x < x1; ++x)
+    if (width <= 0.01 || k <= 0) return;
+    const int n = std::min(static_cast<int>(std::ceil(width)), std::min(src.w - sx, dst.w - dx));
+    for (int i = 0; i < n; ++i)
     {
-        // coverage of this destination column by the drawn band (soft edges)
-        const double cov = std::min(dx + dw, x + 1.0) - std::max(dx, static_cast<double>(x));
-        if (cov <= 0) continue;
-        double u = (x + 0.5 - dx) * scale - 0.5;
-        u = std::clamp(u, 0.0, static_cast<double>(sw - 1));
-        const int i0 = static_cast<int>(u), i1 = std::min(sw - 1, i0 + 1);
-        const uint32_t f = static_cast<uint32_t>((u - i0) * 256.0);
-        const uint32_t kk = static_cast<uint32_t>(k * std::min(1.0, cov));
-        for (int y = 0; y < h; ++y)
-        {
-            const uint32_t* srow = rowOf(src, y);
-            const uint32_t a = srow[sx + i0], b = srow[sx + i1];
-            const uint32_t rb = (((a & 0x00FF00FFu) * (256 - f) + (b & 0x00FF00FFu) * f) >> 8) & 0x00FF00FFu;
-            const uint32_t ag = ((((a >> 8) & 0x00FF00FFu) * (256 - f) + ((b >> 8) & 0x00FF00FFu) * f) >> 8) & 0x00FF00FFu;
-            over(rowOf(dst, y)[x], rb | (ag << 8), kk);
-        }
+        const uint32_t kk = static_cast<uint32_t>(std::clamp(k * std::min(1.0, width - i), 0.0, 256.0));
+        if (!kk || dx + i < 0) continue;
+        for (int y = 0; y < dst.h && y < src.h; ++y) over(rowOf(dst, y)[dx + i], rowOf(src, y)[sx + i], kk);
     }
 }
 
@@ -266,7 +302,6 @@ public:
     void loadOptions() override
     {
         _ms = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 180)));
-        _fadeDoc = settings.getInt(key(), L"FadeDocument", 1) != 0;
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
     }
 
@@ -385,7 +420,6 @@ public:
         double t = (now - b.start) / _ms;
         if (s_freeze >= 0) t = std::min(t, s_freeze);
         if (t >= 1.0) { b.folding = false; return false; }
-        const double e = easeOutCubic(t);
         s_stats.lastFraction = static_cast<float>(t);
         if (!b.frame.ensure(b.w, b.h)) return false;
         Surface& bg = b.closing ? b.after : b.before;   // where the bar's empty background can be seen
@@ -398,20 +432,21 @@ public:
             uint32_t* row = rowOf(b.frame, y);
             for (int x = b.x0; x < b.w; ++x) row[x] = c;
         }
+        // the room the tab takes: shrinking to nothing, or growing from it (fast first, settling softly)
+        const double e = easeOutCubic(t);
         const double width = b.closing ? b.dx * (1.0 - e) : b.dx * e;
-        // the tabs on the right, moving
-        const int shift = static_cast<int>(std::lround(width));
-        copyColumns(b.frame, b.after, b.closing ? b.x0 : b.x0 + b.dx, b.w - (b.closing ? b.x0 : b.x0 + b.dx), b.x0 + shift, b.h);
-        // the tab itself folding shut (from the old picture) or open (from the new one), fading with it
-        const double alpha = b.closing ? 1.0 - e : e;
-        blitColumns(b.frame, b.closing ? b.before : b.after, b.x0, std::min(b.dx, b.w - b.x0), b.x0, width, b.h,
-                    static_cast<uint32_t>(alpha * 256.0));
+        s_stats.lastWidth = static_cast<float>(width);
+        // the tab itself, upright and whole, cut off where its room ends: a closing one fades out within the
+        // first half, a new one fades in once it has some room
+        const double alpha = b.closing ? 1.0 - easeOutQuad(t / 0.5) : easeOutQuad((t - 0.15) / 0.6);
+        copyFaded(b.frame, b.closing ? b.before : b.after, b.x0, b.x0, std::min<double>(width, b.w - b.x0), alpha * 256.0);
+        // the tabs on its right, sliding (whole pixels: text never blurs)
+        const int from = b.closing ? b.x0 : b.x0 + b.dx;
+        copyColumns(b.frame, b.after, from, b.w - from, b.x0 + static_cast<int>(std::lround(width)), b.h);
         ++s_stats.foldFrames;
         return true;
     }
 
-    bool fadeDocument() const { return _fadeDoc && animationsAllowed(_respect); }
-    int durationMs() const { return _ms; }
 
 private:
     static LRESULT CALLBACK barProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
@@ -438,7 +473,7 @@ private:
 
     std::vector<HWND> _bars;
     int _ms = 180;
-    bool _fadeDoc = true, _respect = true;
+    bool _respect = true;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -500,20 +535,19 @@ public:
             Glint g{};
             g.start = start;
             HWND target = nullptr;
-            if (barStrip(bar))
+            const RECT vis = barVisible(bar);
+            const RECT tab = ::IsRectEmpty(&vis) ? RECT{} : tabShows(bar, idx, vis);
+            if (!::IsRectEmpty(&tab))
             {
-                RECT it{};
-                if (!::SendMessageW(bar, TCM_GETITEMRECT, idx, reinterpret_cast<LPARAM>(&it))) continue;
-                RECT cr; ::GetClientRect(bar, &cr);
-                if (it.right <= 0 || it.left >= cr.right) continue;   // scrolled out of sight
                 target = bar;
-                g.r = it;
+                g.r = tab;
                 g.colour = dark ? RGB(255, 255, 255) : mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), 0.35);
                 g.peak = dark ? 0.30f : 0.42f;
             }
             else
             {
-                // no tab bar to be seen: a thin line of light along the top of the view (only for the document it shows)
+                // its tab can't be seen (the bar hidden, or scrolled away from it): a thin line of light along the
+                // top of the view, for the document it shows
                 HWND s = views.sci(v);
                 if (!s || !::IsWindowVisible(s) || views.bufferId(v, views.currentIndex(v)) != buffer) continue;
                 RECT cr; ::GetClientRect(s, &cr);
@@ -559,7 +593,7 @@ private:
         if (r <= l || btm <= t) return;
         const double h = btm - t;
         const double slant = h > 6 ? 0.6 : 0.0;   // a line along the view has no slant
-        const double bandW = std::max(5.0, h > 6 ? h * 0.5 : (r - l) * 0.06);
+        const double bandW = std::max(5.0, h > 6 ? std::min<double>(h, r - l) * 0.5 : (r - l) * 0.06);
         const double travel = (r - l) + h * slant + bandW * 6;
         const double pos = -bandW * 3 + travel * e;
         const uint32_t cr = GetRValue(g.colour), cg = GetGValue(g.colour), cb = GetBValue(g.colour);
@@ -617,9 +651,9 @@ void Motion::frame()
         // a view's glint is only its top edge; a bar's, the part of the bar that shows
         if (!b.folding)
         {
-            b.w = rc.right;
-            b.h = views.viewOf(b.target) >= 0 ? std::min<LONG>(3, rc.bottom) : barStrip(b.target);
-            if (b.h <= 0) { b.glints.clear(); hideOverlay(b); ++it; continue; }
+            if (views.viewOf(b.target) >= 0) { b.w = rc.right; b.h = std::min<LONG>(3, rc.bottom); }
+            else { const RECT vis = barVisible(b.target); b.w = vis.right; b.h = vis.bottom; }
+            if (b.h <= 0 || b.w <= 0) { b.glints.clear(); hideOverlay(b); ++it; continue; }
         }
         bool folded = b.folding && s_fold && s_fold->drawFold(b, now);
         bool glinted = !b.glints.empty() && s_glint && s_glint->drawGlints(b, now, folded);
@@ -640,18 +674,28 @@ Module* createSaveGlint() { return new SaveGlint(); }
 TabMotionStats tabMotionStats() { return s_stats; }
 void tabMotionTestFreeze(double fraction) { s_freeze = fraction; }
 
-// a view is about to show another document because its own was closed: the closed one fades out over it
-bool tabFoldSwitching(HWND view, void* oldBuffer, void* newBuffer)
+// self-test: what the overlay over a bar (or view) shows now, over the window itself, as a .bmp
+bool tabMotionTestSave(HWND target, const std::wstring& file)
 {
-    if (!s_fold || !oldBuffer || !newBuffer || oldBuffer == newBuffer) return false;
-    const int v = views.viewOf(view);
-    if (v < 0 || !::IsWindowVisible(view) || ::IsIconic(npp._nppHandle)) return false;
-    for (int i = 0, n = views.nbFiles(v); i < n; ++i)
-        if (views.bufferId(v, i) == reinterpret_cast<intptr_t>(oldBuffer)) return false;   // still there: a switch, not a close
-    if (!s_fold->fadeDocument()) return false;
-    if (!::SendMessageW(view, SCI_KEX_SLIDE, 2, static_cast<LPARAM>(s_fold->durationMs() * 13 / 10))) return false;
-    ++s_stats.docFades;
-    return true;
+    auto f = s_bars.find(target);
+    if (f == s_bars.end() || !f->second.shown || f->second.frame.w <= 0) return false;
+    BarFx& b = f->second;
+    Surface pic;
+    const int w = std::min(b.w, b.frame.w), h = std::min(b.h, b.frame.h);
+    if (!grab(target, pic, w, h)) return false;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) over(rowOf(pic, y)[x], rowOf(b.frame, y)[x], 256);
+    BITMAPFILEHEADER fh{};
+    BITMAPINFOHEADER ih{};
+    ih.biSize = sizeof(ih); ih.biWidth = w; ih.biHeight = -h; ih.biPlanes = 1; ih.biBitCount = 32; ih.biCompression = BI_RGB;
+    fh.bfType = 0x4D42; fh.bfOffBits = sizeof(fh) + sizeof(ih); fh.bfSize = fh.bfOffBits + static_cast<DWORD>(w) * h * 4;
+    HANDLE out = ::CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (out == INVALID_HANDLE_VALUE) return false;
+    DWORD n = 0;
+    bool ok = ::WriteFile(out, &fh, sizeof(fh), &n, nullptr) && ::WriteFile(out, &ih, sizeof(ih), &n, nullptr);
+    for (int y = 0; y < h && ok; ++y) ok = ::WriteFile(out, rowOf(pic, y), static_cast<DWORD>(w) * 4, &n, nullptr) != 0;
+    ::CloseHandle(out);
+    return ok;
 }
 
 } // namespace kex

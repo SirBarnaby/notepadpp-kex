@@ -727,7 +727,7 @@ intptr_t applyStatics(const Sci& s, Doc& d, const std::vector<Static>& statics)
 //   S <tab> kind <tab> value <tab> pos <tab> text                             a single range
 std::wstring storeText(const std::vector<Stored>& store)
 {
-    std::wstring w = L"# KEX live token styles, one block per file (Settings > Preferences > KEX Highlighting)\n";
+    std::wstring w = L"# KEX live token styles, one block per file (KEX > Settings > Highlighting)\n";
     for (const Stored& st : store)
     {
         w += L"F\t" + st.path + (st.hash ? L"\t" + std::to_wstring(st.hash) : L"") + L"\n";
@@ -1778,7 +1778,7 @@ void showTokenMenu()
     ::PostMessageW(s_mod->hwnd(), WM_TOK_MENU, 0, reinterpret_cast<LPARAM>(view));
 }
 
-// Settings > KEX Highlighting > Token Style Menu, a command Shortcut Mapper lists (default Ctrl+Shift+H,
+// KEX > Highlighting > Token Style Menu, a command Shortcut Mapper lists (default Ctrl+Shift+H,
 // or the menu key set on the KEX Highlighting page before it moved to Shortcut Mapper)
 void addTokenCommands(HMENU parent, int position)
 {

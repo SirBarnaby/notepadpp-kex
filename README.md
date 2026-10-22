@@ -31,7 +31,7 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Falling letters**: deleted text falls off the screen. Their opacity can be set.
 - **Copy, cut and delete**: copied text flashes, cut text lifts off the page, deleted text shrinks away.
 - **Tab slide**: switching tabs slides the next document in, like switching desktops in Windows 10.
-- **Tab fold**: a closed tab folds out of the bar while its document fades out. New tabs unfold.
+- **Tab close**: a closed tab collapses and the tabs beside it slide over, as in Chrome and Firefox. New tabs open out.
 - **Save glint**: a glint runs across a tab when its file is saved.
 - **Touchpad tab swipe**: swipe two fingers left or right to move to the next tab. The tab follows your fingers, and you can stop half way.
 - **Paint splash**: giving a word a colour splashes paint off it.
@@ -70,9 +70,9 @@ Right-click > *Style all occurrences of token*. New occurrences pick up the styl
 
 ### Settings
 
-Each KEX page in *Preferences* has the on/off switches, the options, and whether each feature is running.
+KEX has its own menu in the menu bar, between *Plugins* and *Window*, with an on/off switch for every feature. *KEX* > *Settings...* opens the KEX Settings window: the options for each feature and whether it is running, apart from Notepad++'s own *Preferences*.
 
-<p align="center"><img src="assets/preferences.gif" alt="Clicking through the KEX Editing, KEX Tabs, KEX Highlighting and KEX Windows pages in Preferences" /></p>
+<p align="center"><img src="assets/preferences.gif" alt="Clicking through the Editing, Tabs, Highlighting and Windows pages of the KEX settings" /></p>
 
 ## Install
 
@@ -100,7 +100,7 @@ A daily build checks for new Notepad++ releases and publishes a matching KEX bui
 Yes, in views 1 and 2. In views 3 and 4, a plugin's commands are blocked unless the plugin exports `kexAware()` (see [`include/KexApi.h`](include/KexApi.h)).
 
 **How do I get <kbd>Ctrl</kbd>+<kbd>Y</kbd> (redo) back?**  
-*Settings* > *KEX Editing* > *Preferences...*, untick *Also the keys Notepad++ uses*. This restores <kbd>Ctrl</kbd>+<kbd>Y</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>R</kbd>, <kbd>F11</kbd> and the zoom keys. To change a single key instead, open *Settings* > *Shortcut Mapper* > *Plugin commands* and edit the KEX entry.
+*KEX* > *Editing* > *Settings...*, untick *Also the keys Notepad++ uses*. This restores <kbd>Ctrl</kbd>+<kbd>Y</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>R</kbd>, <kbd>F11</kbd> and the zoom keys. To change a single key instead, open *Settings* > *Shortcut Mapper* > *Plugin commands* and edit the KEX entry.
 
 **Glass doesn't show up.**  
 Turn it on under *Settings* > *KEX Windows*, and turn on Windows' *Transparency effects* (*Settings* > *Personalization* > *Colors*). *Acrylic* can lag behind a moving window on Windows 10, so while you drag the window KEX shows plain *Blur* and switches back when you let go.
