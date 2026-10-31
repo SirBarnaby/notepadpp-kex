@@ -1,5 +1,5 @@
-// Effects.h - the screen effects of the KEX features (falling letters, paint splashes, the copy flash,
-// the cut and delete ghosts) are drawn by one renderer on a thread of its own, into a click-through,
+// Effects.h - the screen effects of the KEX features (falling letters, paint splashes, the copy flash)
+// are drawn by one renderer on a thread of its own, into a click-through,
 // non-activating topmost layered window that only exists while something moves. Windows' compositor
 // puts that window on the screen with the graphics card; the pieces themselves are drawn in software
 // (fixed-point, only the pixels a piece covers), which costs about a millisecond a frame for 200 letters.
@@ -10,7 +10,7 @@
 namespace kex {
 namespace fx {
 
-enum Kind { K_LETTER = 0, K_DROP, K_FLASH, K_GHOST, K_COUNT };
+enum Kind { K_LETTER = 0, K_DROP, K_FLASH, K_COUNT };
 
 struct Key { float t, a; };          // opacity keyframe: at t seconds, opacity a (linear in between)
 
@@ -47,9 +47,6 @@ struct FontSpec {
 };
 struct CapRun { std::wstring text; int dx = 0; COLORREF color = 0; int font = 0; };
 struct CapItem { int x = 0, y = 0, w = 0, h = 0; std::vector<CapRun> runs; };
-// How the pieces of a batch move: letters fall; a ghost of cut text lifts away; a ghost of deleted text
-// shrinks into its left edge.
-enum Motion { MOTION_FALL = 0, MOTION_LIFT, MOTION_SHRINK };
 struct LetterBatch {
     std::vector<FontSpec> fonts;     // fonts[0] = STYLE_DEFAULT font (baseline reference)
     std::vector<CapItem> items;
@@ -57,12 +54,6 @@ struct LetterBatch {
     int extraAscent = 0;
     float gravity = 2200, drift = 90, spin = 4.0f, pop = 220, opacity = 1;
     int maxLive = 400;               // letters on screen at most: the oldest go first
-    int motion = MOTION_FALL;
-    int kind = K_LETTER;
-    COLORREF back = 0;               // a box behind each piece's text (ghosts: the selection), backAlpha 0 = none
-    float backAlpha = 0;
-    float duration = 0.3f;           // ghosts: seconds
-    float lift = 12;                 // MOTION_LIFT: pixels up
 };
 
 struct Stats {

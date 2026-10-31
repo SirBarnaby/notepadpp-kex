@@ -147,7 +147,7 @@ BEGIN
     AUTOCHECKBOX    "Highlight the current line", IDC_H_CARETLINE, 308, 52, 140, 10
     AUTOCHECKBOX    "Fade in and out", IDC_H_FADE, 12, 67, 140, 10
     AUTOCHECKBOX    "Stay on top of other windows", IDC_H_ONTOP, 160, 67, 140, 10
-    AUTOCHECKBOX    "Open where I left it", IDC_H_PLACE, 308, 67, 140, 10
+    AUTOCHECKBOX    "Pinned: opens where I left it", IDC_H_PLACE, 308, 67, 140, 10
     AUTOCHECKBOX    "Keep the text between uses (saved as you type)", IDC_H_KEEP, 12, 82, 220, 10
     AUTOCHECKBOX    "Hide it when I click another window", IDC_H_AUTOHIDE, 308, 82, 140, 10
     LTEXT           "Note file:", -1, 12, 101, 34, 8
@@ -160,7 +160,7 @@ BEGIN
     AUTOCHECKBOX    "Copy, cut and delete effects", IDC_H_FLASH, 190, 131, 116, 10
     LTEXT           "Opacity (%):", -1, 314, 132, 44, 8
     EDITTEXT        IDC_H_OPACITY, 360, 130, 28, 12, ES_NUMBER
-    LTEXT           "The note has no title bar: drag its top edge to move it, the other edges and corners to resize it. Esc or the hotkey hides it again and gives the focus back; Ctrl+mouse wheel zooms. Its size and zoom are remembered. KEX > Quick Note > Open Note File in Notepad++ opens its text as a normal tab.", -1, 12, 150, 436, 28
+    LTEXT           "The note has no title bar: drag the strip along its top to move it, the other edges and corners to resize it. The pin on that strip keeps it where it is; pinned, the pin sends it back to the middle. Esc or the hotkey hides it and gives the focus back (never to a window on another desktop); Ctrl+mouse wheel zooms. Enter keeps the indentation. KEX > Quick Note > Open Note File in Notepad++ opens its text as a tab.", -1, 12, 147, 436, 36
 
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END
@@ -173,17 +173,17 @@ BEGIN
     AUTOCHECKBOX    "The selection reacts when it is copied, cut or deleted", IDC_E_EN, 12, 14, 214, 10
     LTEXT           "", IDC_E_STATUS, 232, 15, 216, 9
     AUTOCHECKBOX    "Copy: a flash", IDC_E_COPY, 12, 29, 62, 10
-    AUTOCHECKBOX    "Cut: the text lifts away", IDC_E_CUT, 78, 29, 100, 10
-    AUTOCHECKBOX    "Delete: the text shrinks away", IDC_E_DEL, 182, 29, 118, 10
-    LTEXT           "Flash strength (%):", -1, 306, 30, 68, 8
+    AUTOCHECKBOX    "Cut: it lights up, the text closes up", IDC_E_CUT, 78, 29, 128, 10
+    AUTOCHECKBOX    "Delete: the text closes up", IDC_E_DEL, 210, 29, 98, 10
+    LTEXT           "Light (%):", -1, 330, 30, 44, 8
     EDITTEXT        IDC_E_STRENGTH, 376, 28, 28, 12, ES_NUMBER
 
     GROUPBOX        "Tabs", -1, 4, 50, 452, 72
     AUTOCHECKBOX    "Switching tabs slides the new document in, like switching desktops", IDC_W_EN, 12, 62, 246, 10
     LTEXT           "", IDC_W_STATUS, 264, 63, 184, 9
-    AUTOCHECKBOX    "A closed tab collapses and the tabs beside it close the gap", IDC_F_EN, 12, 75, 246, 10
+    AUTOCHECKBOX    "A closed tab sinks into the bar and the tabs beside it close the gap", IDC_F_EN, 12, 75, 246, 10
     LTEXT           "", IDC_F_STATUS, 264, 76, 184, 9
-    AUTOCHECKBOX    "Saving a file sends a glint across its tab", IDC_GL_EN, 12, 88, 246, 10
+    AUTOCHECKBOX    "Saving a file sends a glint across its tab and the top of the page", IDC_GL_EN, 12, 88, 246, 10
     LTEXT           "", IDC_GL_STATUS, 264, 89, 184, 9
     LTEXT           "Slide (ms):", -1, 12, 105, 38, 8
     EDITTEXT        IDC_W_MS, 52, 103, 30, 12, ES_NUMBER

@@ -100,20 +100,13 @@ bool pushLayered(HWND wnd, Surface& s, POINT pos, SIZE size)
     return ::UpdateLayeredWindow(wnd, nullptr, &pos, &size, s.dc, &src, 0, &bf, ULW_ALPHA) != FALSE;
 }
 
-bool renderRuns(Sprite& out, const std::vector<TextRun>& runs, int w, int h, int baseline, int pad, COLORREF back, float backAlpha)
+bool renderRuns(Sprite& out, const std::vector<TextRun>& runs, int w, int h, int baseline, int pad)
 {
     Surface mask;
     int W = w + 2 * pad, H = h + 2 * pad;
     if (!mask.ensure(W, H)) return false;
     out.w = W; out.h = H;
     out.px.assign(static_cast<size_t>(W) * H, 0);
-    if (backAlpha > 0)
-    {
-        const uint32_t a = static_cast<uint32_t>(std::min(1.0f, backAlpha) * 255.0f + 0.5f);
-        const uint32_t p = (a << 24) | ((GetRValue(back) * a / 255) << 16) | ((GetGValue(back) * a / 255) << 8) | (GetBValue(back) * a / 255);
-        for (int y = pad; y < pad + h; ++y)
-            std::fill(out.px.begin() + static_cast<size_t>(y) * W + pad, out.px.begin() + static_cast<size_t>(y) * W + pad + w, p);
-    }
     ::SetBkMode(mask.dc, TRANSPARENT);
     ::SetTextColor(mask.dc, RGB(255, 255, 255));
     ::SetTextAlign(mask.dc, TA_BASELINE | TA_LEFT);

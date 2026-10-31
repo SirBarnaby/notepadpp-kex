@@ -1,4 +1,4 @@
-From 677fc7999a6fb145c1ea459865b9444df70d69c1 Mon Sep 17 00:00:00 2001
+From b9ddb25f98438f9a81f532731c1b06f7f290cf72 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -32,8 +32,15 @@ name); the window class stays "Notepad++". The Settings menu and the
 Preferences dialog are as upstream has them; NPPM_KEX_SHOWPREFPAGE
 opens the KEX Settings window on a given page.
 
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01NeGWydHc96dkQB7zaM6URT
+Scintilla draws the suite's motion itself, from pictures of the view:
+the tab slide (SCI_KEX_SLIDE) and the close-up after a cut or delete
+(SCI_KEX_COLLAPSE). For a close-up the view is pictured just before the
+text goes; each frame then shows the new text, with the removed text
+fading where it was and the text after it gliding into its place. Any
+key, other edit, scroll or new size ends it at once.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01KLNHuTvRwta8ebaSJBmh3h
 ---
  PowerEditor/gcc/makefile                      |     1 +
  PowerEditor/src/KexViews.cpp                  |  1311 ++
@@ -72,16 +79,16 @@ Claude-Session: https://claude.ai/code/session_01NeGWydHc96dkQB7zaM6URT
  PowerEditor/src/menuCmdID.h                   |    21 +
  PowerEditor/src/resource.h                    |     7 +-
  PowerEditor/src/winmain.cpp                   |    11 +
- scintilla/include/KexScintilla.h              |    92 +
+ scintilla/include/KexScintilla.h              |   112 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 18817 ++++++++--------
- scintilla/src/Editor.h                        |  1579 +-
+ scintilla/src/Editor.cxx                      | 18973 ++++++++--------
+ scintilla/src/Editor.h                        |  1595 +-
  scintilla/src/KexSurface.h                    |    21 +
- scintilla/win32/ScintillaWin.cxx              |  8781 +++----
+ scintilla/win32/ScintillaWin.cxx              |  8782 +++----
  scintilla/win32/SurfaceD2D.cxx                |    59 +-
  scintilla/win32/SurfaceGDI.cxx                |    18 +-
- 46 files changed, 17915 insertions(+), 14673 deletions(-)
+ 46 files changed, 18108 insertions(+), 14673 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
@@ -5392,11 +5399,12 @@ index a675012..77021db 100644
  			// First of all, destroy static object NppParameters
 diff --git a/scintilla/include/KexScintilla.h b/scintilla/include/KexScintilla.h
 new file mode 100644
-index 0000000..0ae4bb7
+index 0000000..3ac4ee7
 --- /dev/null
 +++ b/scintilla/include/KexScintilla.h
-@@ -0,0 +1,92 @@
-+// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret and the tab slide.
+@@ -0,0 +1,112 @@
++// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret, the tab slide, the close-up
++// after a cut or delete, and glass.
 +//
 +// Scintilla draws the caret itself, as usual, but glides it to each new position with an ease-out
 +// curve and fades it in and out instead of blinking hard. The caret is drawn after the text in the
@@ -5449,6 +5457,11 @@ index 0000000..0ae4bb7
 +	int stopReason;      // why the last slide stopped early: 1 the view had no size, 2 or 3 no picture could be made,
 +	                     // 4 stopped (SCI_KEX_SLIDE 0), 5 the drawing target was dropped, 6 nothing was painted
 +	int held;            // the slide is set up to stay where SCI_KEX_SLIDEPOS puts it
++	int collapses;       // close-ups started (SCI_KEX_COLLAPSE)
++	int collapseFrames;  // close-up frames painted
++	int collapseEnded;   // close-ups ended early (the text changed again, the view scrolled or changed size)
++	int collapseKind;    // the last close-up: 1 the text was on one line (the rest of the line glided left), 2 several
++	float gap;           // the last close-up frame: how far the text after the removal still was from its place, 0..1
 +};
 +// Self-test only: wParam = fraction in thousandths to stop the slide at (-1 = run normally).
 +#define SCI_KEX_SLIDETEST 0x4B48
@@ -5456,6 +5469,20 @@ index 0000000..0ae4bb7
 +// view's width (0 = only the old picture, 10000 = only the new document). lParam 1 ends the slide there:
 +// the view paints as usual again. LRESULT: 1 when there was a slide to move.
 +#define SCI_KEX_SLIDEPOS 0x4B49
++
++// Close-up (Notepad++ KEX cut and delete). Sent while the text [start, end) is about to be removed (from the
++// SCN_MODIFIED notification with SC_MOD_BEFOREDELETE): the view paints what it shows now into a picture at once.
++// Once the text is gone, the removed text fades where it was while the text after it glides into its place on a
++// critically damped spring (no bounce): the rest of a line slides left, the lines below move up. Typing, any
++// other change to the text, scrolling or a new size ends it at once. wParam: KexCollapse*. LRESULT: 1 when set
++// up, 0 when the view can't (hidden, the range not on screen). SCI_KEX_GETSLIDEINFO counts it; SCI_KEX_SLIDETEST
++// freezes it like a slide.
++#define SCI_KEX_COLLAPSE 0x4B4D
++struct KexCollapse {
++	intptr_t start, end;   // the text about to be removed (one range)
++	int ms;                // how long it takes
++	int tint;              // 0xAABBGGRR: the removed text lights up in this colour first (a cut); alpha 0 = no light
++};
 +
 +// Glass (Notepad++ KEX's see-through editor). wParam: KEXGLASS_* flags (0 = off); lParam: the colour (0xBBGGRR) that is to
 +// show as nothing. The view then draws into a DirectComposition layer on top of its window, where that colour is
@@ -5569,10 +5596,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..bfa50a4 100644
+index 1465bac..efa7884 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,9638 @@
+@@ -1,9179 +1,9794 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -16982,6 +17009,26 @@ index 1465bac..bfa50a4 100644
 +		++kexSlideStats.captures;
 +		return;
 +	}
++	if (kexSlideDir == 3) {
++		// close-up: only while the view shows the same lines at the same size as in the old picture, after the
++		// one removal it was set up for
++		double f = kexSlideMs > 0 ? (KexNowMs() - kexSlideStart) / kexSlideMs : 1.0;
++		if (kexSlideFreeze >= 0 && f > kexSlideFreeze)
++			f = kexSlideFreeze;
++		f = std::clamp(f, 0.0, 1.0);
++		kexSlideStats.lastFraction = static_cast<float>(f);
++		if (kexCollapse.pending || topLine != kexCollapse.topLine || xOffset != kexCollapse.xOffset ||
++			kexNewWidth != kexOldWidth || kexNewHeight != kexOldHeight) {
++			surfaceWindow->Copy(PRectangle(rcClient.left, rcClient.top, std::min<XYPOSITION>(rcClient.right, kexNewWidth),
++				std::min<XYPOSITION>(rcClient.bottom, kexNewHeight)), Point(0, 0), *kexSlideNew);
++			KexEndSlide(true, 7);
++			return;
++		}
++		KexPresentCollapse(surfaceWindow, rcClient, f);
++		if (f >= 1.0)
++			KexEndSlide(false);
++		return;
++	}
 +	// slide: the old picture moves out, the new one follows it in
 +	const bool held = kexSlideHeld >= 0;
 +	double f = held ? kexSlideHeld : kexSlideMs > 0 ? (KexNowMs() - kexSlideStart) / kexSlideMs : 1.0;
@@ -17054,11 +17101,128 @@ index 1465bac..bfa50a4 100644
 +	return true;
 +}
 +
++// SCI_KEX_COLLAPSE: where the text about to go is, then the picture of what the view shows now (painted at once)
++bool Editor::KexStartCollapse(Sci::Position start, Sci::Position end, int ms, int tint) {
++	KexEndSlide(false);
++	const PRectangle rcClient = GetClientRectangle();
++	if (!wMain.GetID() || rcClient.Width() < 1 || rcClient.Height() < 1)
++		return false;
++	if (start < 0 || end <= start || end > pdoc->Length())
++		return false;
++	const Point ps = LocationFromPosition(start), pe = LocationFromPosition(end);
++	// the start has to be on screen; the end may be below it (the text after it then comes up from the bottom)
++	if (ps.y < 0 || ps.y >= rcClient.bottom || pe.y < ps.y || ps.x >= rcClient.right)
++		return false;
++	const XYPOSITION left = vs.textStart;
++	kexCollapse.xs = std::round(std::max(ps.x, left));
++	kexCollapse.ys = std::round(ps.y);
++	kexCollapse.xe = std::round(std::max(pe.x, left));
++	kexCollapse.ye = std::round(pe.y);
++	kexCollapse.lineHeight = vs.lineHeight;
++	kexCollapse.textLeft = left;
++	kexCollapse.topLine = topLine;
++	kexCollapse.xOffset = xOffset;
++	kexCollapse.start = start;
++	kexCollapse.length = end - start;
++	kexCollapse.pending = true;
++	kexCollapse.tint = ColourRGBA(tint);
++	kexSlideDir = 3;
++	kexSlideMs = std::clamp(ms, 1, 2000);
++	kexSlideHeld = -1;
++	kexSlideCapture = true;
++	kexSlideStart = -1;
++	++kexCollapseStats.collapses;
++	kexCollapseStats.kind = kexCollapse.ye > kexCollapse.ys ? 2 : 1;
++	Redraw();
++	return true;
++}
++
++// One close-up frame at f (0..1): the new picture; over the place of the text after the removal, the removed
++// text from the old picture fading (lit up first for a cut), then that text from the new picture drawn back
++// towards where it was. Whole pixels, so text never blurs.
++void Editor::KexPresentCollapse(Surface *surfaceWindow, PRectangle rcClient, double f) {
++	const XYPOSITION W = std::min<XYPOSITION>(rcClient.right, kexNewWidth), H = std::min<XYPOSITION>(rcClient.bottom, kexNewHeight);
++	surfaceWindow->Copy(PRectangle(rcClient.left, rcClient.top, W, H), Point(0, 0), *kexSlideNew);
++	++kexCollapseStats.frames;
++	if (f >= 1.0) {
++		kexCollapseStats.gap = 0;
++		return;
++	}
++	const XYPOSITION lh = kexCollapse.lineHeight, left = kexCollapse.textLeft;
++	const XYPOSITION xs = kexCollapse.xs, ys = kexCollapse.ys, xe = kexCollapse.xe, ye = kexCollapse.ye;
++	// the removed text fades out within the first 45 % (fast at first); the text after it starts gliding at
++	// 12 % on a critically damped spring that has settled (to 0.5 %) at the end
++	const double fu = std::clamp(f / 0.45, 0.0, 1.0);
++	const float opacity = static_cast<float>((1.0 - fu) * (1.0 - fu));
++	const double u = std::clamp((f - 0.12) / 0.88, 0.0, 1.0);
++	const double closed = u >= 1.0 ? 1.0 : 1.0 - (1.0 + 7.43 * u) * std::exp(-7.43 * u);
++	kexCollapseStats.gap = static_cast<float>(1.0 - closed);
++	const XYPOSITION dx = std::round((1.0 - closed) * (xe - xs));
++	const XYPOSITION dy = std::round((1.0 - closed) * (ye - ys));
++	auto clip = [&](PRectangle rc) noexcept {
++		rc.left = std::max(rc.left, left);
++		rc.right = std::min(rc.right, W);
++		rc.top = std::max<XYPOSITION>(rc.top, 0);
++		rc.bottom = std::min(rc.bottom, H);
++		return rc;
++	};
++	auto shows = [](const PRectangle &rc) noexcept { return rc.Width() > 0 && rc.Height() > 0; };
++	// where the text after the removal ends up starts empty: the rest of the joined line, the lines below
++	const ColourRGBA back = vs.styles[StyleDefault].back;
++	const PRectangle tailPlace = clip(PRectangle(xs, ys, W, ys + lh)), belowPlace = clip(PRectangle(left, ys + lh, W, H));
++	if (shows(tailPlace))
++		surfaceWindow->FillRectangle(tailPlace, back);
++	if (shows(belowPlace))
++		surfaceWindow->FillRectangle(belowPlace, back);
++	// the removed text where it was
++	PRectangle gone[3];
++	int nGone = 0;
++	if (ye <= ys) {
++		gone[nGone++] = PRectangle(xs, ys, xe, ys + lh);
++	} else {
++		gone[nGone++] = PRectangle(xs, ys, W, ys + lh);
++		if (ye > ys + lh)
++			gone[nGone++] = PRectangle(left, ys + lh, W, ye);
++		gone[nGone++] = PRectangle(left, ye, xe, ye + lh);
++	}
++	IKexSurface *kex = dynamic_cast<IKexSurface *>(surfaceWindow);
++	const int tintAlpha = kexCollapse.tint.GetAlpha();
++	const double light = f < 0.06 ? f / 0.06 : std::max(0.0, 1.0 - (f - 0.06) / 0.3);
++	for (int i = 0; i < nGone; ++i) {
++		PRectangle rc = clip(gone[i]);
++		rc.right = std::min<XYPOSITION>(rc.right, kexOldWidth);
++		rc.bottom = std::min<XYPOSITION>(rc.bottom, kexOldHeight);
++		if (!shows(rc))
++			continue;
++		if (opacity > 0.004f) {
++			if (kex)
++				kex->KexDrawPicture(rc, *kexSlideOld, rc, opacity);
++			else if (opacity > 0.5f)
++				surfaceWindow->Copy(rc, Point(rc.left, rc.top), *kexSlideOld);
++		}
++		const int a = static_cast<int>(tintAlpha * light * opacity + 0.5);
++		if (a > 0)
++			surfaceWindow->AlphaRectangle(rc, 0, FillStroke(ColourRGBA(kexCollapse.tint.GetRed(),
++				kexCollapse.tint.GetGreen(), kexCollapse.tint.GetBlue(), a)));
++	}
++	// the text after the removal, from the new picture, drawn back towards where it was
++	auto put = [&](PRectangle src, XYPOSITION ox, XYPOSITION oy) {
++		const PRectangle dst = clip(PRectangle(src.left + ox, src.top + oy, src.right + ox, src.bottom + oy));
++		if (shows(dst))
++			surfaceWindow->Copy(dst, Point(dst.left - ox, dst.top - oy), *kexSlideNew);
++	};
++	put(PRectangle(xs, ys, W, ys + lh), dx, dy);
++	put(PRectangle(left, ys + lh, W, H), 0, dy);
++}
++
 +void Editor::KexEndSlide(bool cancelled, int why) noexcept {
 +	if (cancelled && (kexSlideOld || kexSlideCapture)) {
 +		++kexSlideStats.cancelled;
 +		kexSlideStats.stopReason = why;
++		if (kexSlideDir == 3)
++			++kexCollapseStats.ended;
 +	}
++	kexCollapse.pending = false;
 +	kexSlideOld.reset();
 +	kexSlideNew.reset();
 +	kexSlideCapture = false;
@@ -17919,6 +18083,16 @@ index 1465bac..bfa50a4 100644
 +}
 +
 +void Editor::NotifyModified(Document *, DocModification mh, void *) {
++	if (kexSlideDir == 3 && FlagSet(mh.modificationType, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {
++		// KEX close-up: the removal it waits for lets it run; any other change to the text ends it
++		if (kexCollapse.pending && FlagSet(mh.modificationType, ModificationFlags::DeleteText) &&
++			mh.position == kexCollapse.start && mh.length == kexCollapse.length) {
++			kexCollapse.pending = false;
++		} else {
++			KexEndSlide(true, 7);
++			Redraw();
++		}
++	}
 +	ContainerNeedsUpdate(Update::Content);
 +	if (FlagSet(mh.modificationType, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {
 +		ContainerNeedsUpdate(Update::Text);
@@ -21457,6 +21631,10 @@ index 1465bac..bfa50a4 100644
 +			return 0;
 +		}
 +		return KexStartSlide(wParam == 2 ? 2 : static_cast<intptr_t>(wParam) > 0 ? 1 : -1, static_cast<int>(lParam)) ? 1 : 0;
++	case SCI_KEX_COLLAPSE:
++		if (const KexCollapse *c = reinterpret_cast<const KexCollapse *>(wParam))
++			return KexStartCollapse(c->start, c->end, c->ms, c->tint) ? 1 : 0;
++		return 0;
 +	case SCI_KEX_GETSLIDEINFO:
 +		if (KexSlideInfo *info = static_cast<KexSlideInfo *>(PtrFromSPtr(lParam))) {
 +			info->active = (kexSlideOld || kexSlideCapture) ? 1 : 0;
@@ -21467,6 +21645,11 @@ index 1465bac..bfa50a4 100644
 +			info->fraction = kexSlideStats.lastFraction;
 +			info->stopReason = kexSlideStats.stopReason;
 +			info->held = kexSlideHeld >= 0 ? 1 : 0;
++			info->collapses = kexCollapseStats.collapses;
++			info->collapseFrames = kexCollapseStats.frames;
++			info->collapseEnded = kexCollapseStats.ended;
++			info->collapseKind = kexCollapseStats.kind;
++			info->gap = kexCollapseStats.gap;
 +		}
 +		return (kexSlideOld || kexSlideCapture) ? 1 : 0;
 +	case SCI_KEX_SLIDEPOS:
@@ -24391,10 +24574,10 @@ index 1465bac..bfa50a4 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..08f88d6 100644
+index 85c1410..e620b8b 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
-@@ -1,762 +1,817 @@
+@@ -1,762 +1,833 @@
 -// Scintilla source code edit control
 -/** @file Editor.h
 - ** Defines the main editor class.
@@ -25385,7 +25568,7 @@ index 85c1410..08f88d6 100644
 +	// the window and put on screen side by side.
 +	std::unique_ptr<Surface> kexSlideOld, kexSlideNew;
 +	std::unique_ptr<Surface> kexFrame;	// GDI with the smooth caret: the paint is put together here first
-+	int kexSlideDir = 0;		// 1: the new document comes in from the right, -1: from the left, 2: the old picture fades out
++	int kexSlideDir = 0;		// 1: the new document comes in from the right, -1: from the left, 2: the old picture fades out, 3: close-up
 +	int kexSlideMs = 200;
 +	double kexSlideStart = -1;	// < 0: the old picture is taken, the slide starts at the next paint
 +	bool kexSlideCapture = false;	// the next paint takes the old picture
@@ -25402,6 +25585,22 @@ index 85c1410..08f88d6 100644
 +	bool KexStartSlide(int direction, int ms);
 +	void KexEndSlide(bool cancelled, int why = 0) noexcept;
 +	void KexDropPixmaps() noexcept;
++
++	// KEX close-up (SCI_KEX_COLLAPSE, slide kind 3): after a cut or delete, the removed text fades where it was
++	// while the text after it glides into its place. The old picture is the view before the removal; each frame
++	// shows the new picture with the text after the removal drawn back towards where it was.
++	struct {
++		XYPOSITION xs = 0, ys = 0, xe = 0, ye = 0;	// where the removed text started and ended (client, line tops)
++		XYPOSITION lineHeight = 0, textLeft = 0;
++		Sci::Line topLine = 0;
++		int xOffset = 0;
++		Sci::Position start = 0, length = 0;	// the removal it waits for
++		bool pending = false;			// that removal hasn't happened yet
++		ColourRGBA tint;			// a cut: the removed text lights up first (alpha 0 for a delete)
++	} kexCollapse;
++	struct { int collapses = 0, frames = 0, ended = 0, kind = 0; float gap = 0; } kexCollapseStats;
++	bool KexStartCollapse(Sci::Position start, Sci::Position end, int ms, int tint);
++	void KexPresentCollapse(Surface *surfaceWindow, PRectangle rcClient, double f);
 +
 +	/** On GTK+, Scintilla is a container widget holding two scroll bars
 +	 * whereas on Windows there is just one window with both scroll bars turned on. */
@@ -26002,10 +26201,10 @@ index 0000000..fb5c99f
 +
 +#endif
 diff --git a/scintilla/win32/ScintillaWin.cxx b/scintilla/win32/ScintillaWin.cxx
-index 1da0dcc..611dbdc 100644
+index 1da0dcc..d2a0a46 100644
 --- a/scintilla/win32/ScintillaWin.cxx
 +++ b/scintilla/win32/ScintillaWin.cxx
-@@ -1,4202 +1,4579 @@
+@@ -1,4202 +1,4580 @@
 -// Scintilla source code edit control
 -/** @file ScintillaWin.cxx
 - ** Windows specific subclass of ScintillaBase.
@@ -32920,6 +33119,7 @@ index 1da0dcc..611dbdc 100644
 +		case WM_PAINT:
 +			return WndPaint();
 +
++		case 0x4B4D:	// SCI_KEX_COLLAPSE (KexScintilla.h): the same, before the text goes
 +		case 0x4B46: {	// SCI_KEX_SLIDE (KexScintilla.h)
 +				// KEX tab slide: the picture of what the view shows is taken now, before the document changes
 +				sptr_t started = Editor::WndProc(iMessage, wParam, lParam);

@@ -36,7 +36,7 @@ const IntField kInts[] = {
     { IDC_W_MS, M_SLIDE, L"DurationMs", 200 },
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
     { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
-    { IDC_F_MS, M_TABFOLD, L"DurationMs", 180 },
+    { IDC_F_MS, M_TABFOLD, L"DurationMs", 240 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -61,8 +61,8 @@ const BoolField kBools[] = {
     { IDC_H_LETTERS, M_LETTERS, L"InQuickNote", 1 },
     { IDC_H_FLASH, M_FLASH, L"InQuickNote", 1 },
     { IDC_E_COPY, M_FLASH, L"Copy", 1 },
-    { IDC_E_CUT, M_FLASH, L"CutLift", 1 },
-    { IDC_E_DEL, M_FLASH, L"DeleteFade", 1 },
+    { IDC_E_CUT, M_FLASH, L"CutClose", 1 },
+    { IDC_E_DEL, M_FLASH, L"DeleteClose", 1 },
     { IDC_SW_REVERSE, M_SWIPE, L"Reverse", 0 },
 };
 // one box on the Effects page for all of its animations: "Not when Windows animation effects are off"
@@ -70,7 +70,7 @@ const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT }
 // options the feature reads again at once: no restart (which would close the quick note, or take the token styles away)
 bool liveOption(int id, int module)
 {
-    return module == M_TOKENS || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY ||
+    return module == M_TOKENS || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE ||
            id == IDC_E_COPY || id == IDC_E_CUT || id == IDC_E_DEL || id == IDC_E_STRENGTH ||
            id == IDC_W_MS || id == IDC_P_DROPS || id == IDC_C_BLINK || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT;
 }

@@ -3,17 +3,20 @@
 // Tab close and open: Notepad++ adds and removes tabs with TCM_INSERTITEM and TCM_DELETEITEM. Just before
 // one of them the tab bar is copied, and a layered window showing that copy is put over the bar at once,
 // so the bar changing underneath can't be seen. Once Notepad++ has finished (a posted message), the bar
-// is copied again, and the window plays the change the way Chrome and Firefox do: a closed tab collapses
-// (its picture is never squeezed: its right edge moves in over it while it fades out quickly) and the tabs
-// on its right slide over to close the gap; a new tab opens out the same way, fading in. Then the window
-// goes and the real bar shows. Several tabs at once (Close All, opening a session) just change.
+// is copied again, and the window plays the change: a closed tab sinks below the bar's lower edge, whole
+// and upright (never squeezed, never faded), like a folder pushed down into its drawer, and a beat later
+// the tabs on its right glide over to close the gap; a new tab's gap opens first and the tab rises into it.
+// The glide is a critically damped spring (Apple's default: no bounce), the sink accelerates away as
+// leaving things do. Then the window goes and the real bar shows. Several tabs at once (Close All,
+// opening a session) just change.
 // The document area changes at once, as in every editor; with Tab slide on, the document that takes a
 // closed one's place slides in from the side its tab came from (TabSlide.cpp).
 //
 // Save glint: a soft diagonal band of light sweeps once across the tab of the file just saved, in a
 // click-through layered window over the bar, wherever the tab is (one row or several, scroll arrows or
-// not). Only when the file's tab can't be seen at all (the tab bar hidden, or scrolled away from it) does
-// the band run along the top of the view instead. Save All staggers the glints along the tabs.
+// not), and at the same moment a thin line of light runs along the top of the view showing that file.
+// With the tab out of sight (the tab bar hidden, or scrolled away from it) only the line runs. Save All
+// staggers the glints along the tabs.
 #include "Overlay.h"
 #include "KexScintilla.h"
 #include <cmath>
@@ -37,7 +40,15 @@ TabMotionStats s_stats;
 double s_freeze = -1;   // self-test: animations stop at this fraction
 
 double easeOutCubic(double t) { t = std::clamp(t, 0.0, 1.0); return 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t); }
-double easeOutQuad(double t) { t = std::clamp(t, 0.0, 1.0); return 1.0 - (1.0 - t) * (1.0 - t); }
+double easeInQuad(double t) { t = std::clamp(t, 0.0, 1.0); return t * t; }
+// a critically damped spring from rest, settled (to 0.5 %) at u = 1
+double springOut(double u)
+{
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    const double k = 7.43;
+    return 1.0 - (1.0 + k * u) * std::exp(-k * u);
+}
 double easeInOutCubic(double t)
 {
     t = std::clamp(t, 0.0, 1.0);
@@ -165,20 +176,6 @@ inline void over(uint32_t& d, uint32_t s, uint32_t k)
     d = s + (rb | (ag << 8));
 }
 
-// the first `width` columns from sx of src drawn unscaled at dx with opacity k (0..256); the last column
-// partly, so an edge that moves by fractions of a pixel moves smoothly
-void copyFaded(Surface& dst, Surface& src, int sx, int dx, double width, double k)
-{
-    if (width <= 0.01 || k <= 0) return;
-    const int n = std::min(static_cast<int>(std::ceil(width)), std::min(src.w - sx, dst.w - dx));
-    for (int i = 0; i < n; ++i)
-    {
-        const uint32_t kk = static_cast<uint32_t>(std::clamp(k * std::min(1.0, width - i), 0.0, 256.0));
-        if (!kk || dx + i < 0) continue;
-        for (int y = 0; y < dst.h && y < src.h; ++y) over(rowOf(dst, y)[dx + i], rowOf(src, y)[sx + i], kk);
-    }
-}
-
 // columns [sx, sx + sw) of src copied straight to dx
 void copyColumns(Surface& dst, Surface& src, int sx, int sw, int dx, int h)
 {
@@ -204,6 +201,8 @@ struct BarFx {
     int ops = 0;                    // tab changes since the overlay went up
     bool closing = true;
     int index = -1, x0 = 0, dx = 0, backX = -1;
+    int tabW = 0, tabTop = 0;       // the tab itself: its width, and where it starts from the bar's top
+    bool tail = false;              // tabs on its right, which glide (without any, the room is only background)
     double holdStart = 0, start = 0;
     bool folding = false;
     // glints
@@ -212,6 +211,17 @@ struct BarFx {
 };
 
 std::map<HWND, BarFx> s_bars;
+
+// A column of the bar's own background: halfway between the last tab and the bar's end, clear of the
+// selected tab's raised edge (drawn wider than its rectangle) and of the control's border. -1: no room.
+int backgroundColumn(HWND bar, int w)
+{
+    const int n = static_cast<int>(::SendMessageW(bar, TCM_GETITEMCOUNT, 0, 0));
+    if (n == 0) return w / 2;
+    RECT last{};
+    if (!::SendMessageW(bar, TCM_GETITEMRECT, n - 1, reinterpret_cast<LPARAM>(&last)) || last.right + 12 >= w) return -1;
+    return (last.right + w) / 2;
+}
 
 void hideOverlay(BarFx& b)
 {
@@ -301,7 +311,7 @@ public:
 
     void loadOptions() override
     {
-        _ms = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 180)));
+        _ms = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 240)));
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
     }
 
@@ -360,14 +370,10 @@ public:
             b.x0 = it.left;
             b.dx = (index + 1 < n && ::SendMessageW(bar, TCM_GETITEMRECT, index + 1, reinterpret_cast<LPARAM>(&next)) && next.left > it.left)
                    ? next.left - it.left : it.right - it.left;
+            b.tabW = it.right - it.left;
+            b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
         }
-        else
-        {
-            // the bar's background: right of the last tab, before the new one comes
-            RECT last{};
-            if (n > 0 && ::SendMessageW(bar, TCM_GETITEMRECT, n - 1, reinterpret_cast<LPARAM>(&last)) && last.right + 3 < b.w) b.backX = last.right + 2;
-            else if (n == 0) b.backX = b.w - 2;
-        }
+        else b.backX = backgroundColumn(bar, b.w);   // before the new tab comes
         // the bar as it was, over the bar, at once: the change underneath can't be seen
         present(b, b.before);
         b.holding = true;
@@ -394,9 +400,8 @@ public:
         const int n = static_cast<int>(::SendMessageW(bar, TCM_GETITEMCOUNT, 0, 0));
         if (b.closing)
         {
-            RECT last{};
-            if (n > 0 && ::SendMessageW(bar, TCM_GETITEMRECT, n - 1, reinterpret_cast<LPARAM>(&last)) && last.right + 3 < b.w) b.backX = last.right + 2;
-            else if (n == 0) b.backX = b.w - 2;
+            b.backX = backgroundColumn(bar, b.w);
+            b.tail = b.index < n;
         }
         else
         {
@@ -405,6 +410,9 @@ public:
             b.x0 = it.left;
             b.dx = (b.index + 1 < n && ::SendMessageW(bar, TCM_GETITEMRECT, b.index + 1, reinterpret_cast<LPARAM>(&next)) && next.left > it.left)
                    ? next.left - it.left : it.right - it.left;
+            b.tabW = it.right - it.left;
+            b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
+            b.tail = b.index + 1 < n;
         }
         if (b.dx <= 0 || b.x0 < 0 || b.x0 >= b.w || b.backX < 0) { ++s_stats.foldSkipped; hideOverlay(b); return; }
         b.folding = true;
@@ -432,17 +440,32 @@ public:
             uint32_t* row = rowOf(b.frame, y);
             for (int x = b.x0; x < b.w; ++x) row[x] = c;
         }
-        // the room the tab takes: shrinking to nothing, or growing from it (fast first, settling softly)
-        const double e = easeOutCubic(t);
-        const double width = b.closing ? b.dx * (1.0 - e) : b.dx * e;
+        // the room the tab takes: closing, it starts to close once the tab is on its way down; opening, it
+        // opens first and the tab rises into it
+        const double room = b.closing ? 1.0 - springOut((t - 0.2) / 0.8) : springOut(t / 0.7);
+        const double width = b.dx * room;
         s_stats.lastWidth = static_cast<float>(width);
-        // the tab itself, upright and whole, cut off where its room ends: a closing one fades out within the
-        // first half, a new one fades in once it has some room
-        const double alpha = b.closing ? 1.0 - easeOutQuad(t / 0.5) : easeOutQuad((t - 0.15) / 0.6);
-        copyFaded(b.frame, b.closing ? b.before : b.after, b.x0, b.x0, std::min<double>(width, b.w - b.x0), alpha * 256.0);
-        // the tabs on its right, sliding (whole pixels: text never blurs)
-        const int from = b.closing ? b.x0 : b.x0 + b.dx;
-        copyColumns(b.frame, b.after, from, b.w - from, b.x0 + static_cast<int>(std::lround(width)), b.h);
+        // the tab, whole and upright, moved down: sinking below the bar's edge (accelerating away), or rising
+        // from below it (settling softly)
+        const double down = b.closing ? easeInQuad(t / 0.55) : 1.0 - easeOutCubic((t - 0.15) / 0.85);
+        const int travel = b.h - b.tabTop + 1;
+        const int drop = static_cast<int>(std::lround(down * travel));
+        s_stats.lastDrop = drop;
+        if (drop < travel)
+        {
+            Surface& pic = b.closing ? b.before : b.after;
+            // a new tab is cut off where its room ends; a closing one goes under its neighbours as they come
+            const int w = b.closing ? std::min(b.tabW, b.w - b.x0) : std::min(static_cast<int>(std::lround(width)), std::min(b.tabW, b.w - b.x0));
+            for (int y = b.tabTop + drop; y < b.h && w > 0; ++y)
+                memcpy(rowOf(b.frame, y) + b.x0, rowOf(pic, y - drop) + b.x0, static_cast<size_t>(w) * 4);
+        }
+        // the tabs on its right, gliding (whole pixels: text never blurs); with none there, the background is
+        // already in place (copying it would slide the selected tab's edge along)
+        if (b.tail)
+        {
+            const int from = b.closing ? b.x0 : b.x0 + b.dx;
+            copyColumns(b.frame, b.after, from, b.w - from, b.x0 + static_cast<int>(std::lround(width)), b.h);
+        }
         ++s_stats.foldFrames;
         return true;
     }
@@ -532,36 +555,39 @@ public:
             for (int i = 0, n = views.nbFiles(v); i < n; ++i) if (views.bufferId(v, i) == buffer) { idx = i; break; }
             if (idx < 0) continue;
             HWND bar = views.tabBar(v);
-            Glint g{};
-            g.start = start;
-            HWND target = nullptr;
+            auto add = [&](HWND target, const Glint& g) {
+                BarFx& b = s_bars[target];
+                b.target = target;
+                b.glints.push_back(g);
+                any = true;
+                ++s_stats.glints;
+                if (target != bar) ++s_stats.glintLines;
+            };
+            // its tab, wherever it can be seen (one row or several, scroll arrows or not)
             const RECT vis = barVisible(bar);
             const RECT tab = ::IsRectEmpty(&vis) ? RECT{} : tabShows(bar, idx, vis);
             if (!::IsRectEmpty(&tab))
             {
-                target = bar;
+                Glint g{};
+                g.start = start;
                 g.r = tab;
                 g.colour = dark ? RGB(255, 255, 255) : mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), 0.35);
                 g.peak = dark ? 0.30f : 0.42f;
+                add(bar, g);
             }
-            else
+            // and, at the same moment, a thin line of light along the top of the view, when the view shows
+            // that document: the two read as one answer, whichever the eye is on
+            HWND s = views.sci(v);
+            if (s && ::IsWindowVisible(s) && views.bufferId(v, views.currentIndex(v)) == buffer)
             {
-                // its tab can't be seen (the bar hidden, or scrolled away from it): a thin line of light along the
-                // top of the view, for the document it shows
-                HWND s = views.sci(v);
-                if (!s || !::IsWindowVisible(s) || views.bufferId(v, views.currentIndex(v)) != buffer) continue;
                 RECT cr; ::GetClientRect(s, &cr);
-                target = s;
+                Glint g{};
+                g.start = start;
                 g.r = RECT{ 0, 0, cr.right, std::min<LONG>(3, cr.bottom) };
                 g.colour = mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), dark ? 0.5 : 0.1);
                 g.peak = 0.9f;
+                add(s, g);
             }
-            BarFx& b = s_bars[target];
-            b.target = target;
-            b.glints.push_back(g);
-            any = true;
-            ++s_stats.glints;
-            if (target != bar) ++s_stats.glintLines;
         }
         if (any) { _lastStart = start; s_motion.tick(); }
     }

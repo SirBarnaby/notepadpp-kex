@@ -29,15 +29,15 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Snap-out windows**: drag a tab out of Notepad++ and its view gets its own window.
 - **Smooth caret**: the caret glides instead of jumping. It can fade, blink, or stay on.
 - **Falling letters**: deleted text falls off the screen. Their opacity can be set.
-- **Copy, cut and delete**: copied text flashes, cut text lifts off the page, deleted text shrinks away.
+- **Copy, cut and delete**: copied text flashes. Cut or deleted text fades where it was while the rest of the line glides in to close the gap.
 - **Tab slide**: switching tabs slides the next document in, like switching desktops in Windows 10.
-- **Tab close**: a closed tab collapses and the tabs beside it slide over, as in Chrome and Firefox. New tabs open out.
-- **Save glint**: a glint runs across a tab when its file is saved.
+- **Tab close**: a closed tab sinks below the tab bar and the tabs beside it glide into its place. New tabs rise into a gap that opens for them.
+- **Save glint**: a glint runs across the tab and the top edge of the editor when a file is saved.
 - **Touchpad tab swipe**: swipe two fingers left or right to move to the next tab. The tab follows your fingers, and you can stop half way.
 - **Paint splash**: giving a word a colour splashes paint off it.
 - **JetBrains keys**: <kbd>Alt</kbd>+<kbd>J</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>/</kbd>, <kbd>Ctrl</kbd>+<kbd>D</kbd>, <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> and more. Rebind any of them in *Shortcut Mapper*.
 - **Live token styles**: styled words stay styled as you type. Bold and italic too, for every occurrence or just one.
-- **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app. It can keep its text in a file you choose.
+- **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app, on whichever virtual desktop you are on. Pin it to keep it where you put it. It can keep its text in a file you choose.
 - **Per-desktop windows**: each virtual desktop gets its own Notepad++ with the same tabs and token styles, its own session and crash backup.
 - **F12 hover tabs**: in F12 mode, the tab bar appears when you touch the top of a view.
 - **Glass**: Windows' live blur behind the text, with clean letter edges. Off by default.
@@ -64,7 +64,7 @@ Right-click > *Style all occurrences of token*. New occurrences pick up the styl
 
 ### Quick note
 
-<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> shows and hides the note from any app. The text is saved automatically.
+<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> shows and hides the note from any app. The text is saved automatically, and <kbd>Enter</kbd> keeps the indentation of the line above. Drag the top edge to move it; the pin at its top right keeps it in that spot, and clicking the pin again sends it back to the middle of the screen.
 
 <p align="center"><img src="assets/quick-note.gif" alt="A small dark note fading in over a web browser with Ctrl+Alt+M, receiving text, and fading out again" width="100%" /></p>
 

@@ -65,7 +65,7 @@ public:
     {
         if (!_thread || b.items.empty()) return;
         ::EnterCriticalSection(&_lock);
-        _spawned[std::max(0, std::min(K_COUNT - 1, b.kind))] += static_cast<int>(b.items.size());
+        _spawned[K_LETTER] += static_cast<int>(b.items.size());
         _letters.push_back(std::move(b));
         ::LeaveCriticalSection(&_lock);
         ::SetEvent(_event);
@@ -136,36 +136,11 @@ private:
                 runs.push_back(t);
             }
             auto sp = std::make_shared<Sprite>();
-            if (!renderRuns(*sp, runs, std::max(1, ci.w), std::max(1, ci.h), baseline, 3, b.back, b.backAlpha)) continue;
+            if (!renderRuns(*sp, runs, std::max(1, ci.w), std::max(1, ci.h), baseline, 3)) continue;
             Item it;
             it.sprite = sp;
             it.x0 = ci.x + ci.w * 0.5f;
             it.y0 = ci.y + ci.h * 0.5f;
-            if (b.motion != MOTION_FALL)
-            {
-                // a ghost of the text where it was: cut text lifts away (easing out), deleted text shrinks into its left edge
-                const float T = std::max(0.05f, b.duration);
-                it.life = T;
-                it.opacity = b.opacity;
-                it.monitor = b.monitor;
-                it.kind = b.kind;
-                if (b.motion == MOTION_LIFT)
-                {
-                    it.vy = -2.0f * b.lift / T;
-                    it.g = 2.0f * b.lift / (T * T);
-                    it.sx1 = it.sy1 = 1.04f;
-                    it.keys = { { 0, 1 }, { T * 0.2f, 1 }, { T, 0 } };
-                }
-                else
-                {
-                    it.sx1 = 0.86f;
-                    it.sy1 = 0.86f;
-                    it.anchorX = static_cast<float>(3) / static_cast<float>(sp->w);   // the text's left edge, inside the padding
-                    it.keys = { { 0, 1 }, { T * 0.15f, 1 }, { T, 0 } };
-                }
-                add(std::move(it));
-                continue;
-            }
             const float r1 = rnd(), r2 = rnd(), r3 = rnd();
             it.vx = (r1 * 2 - 1) * b.drift;
             it.vy = -(0.25f + 0.75f * r2) * b.pop;

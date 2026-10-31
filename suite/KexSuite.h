@@ -210,12 +210,13 @@ void lettersFreezeAfter(int ms);   // <0 = run normally
 void lettersFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);   // the quick note's deletes
 void flashFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);
 struct FlashStats { int copies = 0, cuts = 0, deletes = 0, lastRects = 0, live = 0, spawned = 0;
-                    int ghosts = 0, ghostsLive = 0, ghostChars = 0; };   // cut and delete: ghost pieces made, on screen, characters in the last
+                    int closeUps = 0, closeUpsRefused = 0; HWND lastCloseUp = nullptr; };   // cut and delete: close-ups Scintilla took on, refused, the view of the last
 FlashStats flashStats();
 struct SplashStats { int splashes = 0, lastTokens = 0, live = 0, spawned = 0; };
 SplashStats splashStats();
 struct SlideStats { int seen = 0, started = 0, skipped = 0, lastDir = 0, afterClose = 0; bool active = false;
-                    int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0; float fraction = 0; };
+                    int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0; float fraction = 0;
+                    int collapses = 0, collapseFrames = 0, collapseEnded = 0, collapseKind = 0; float gap = 0; };   // the close-up after cut and delete
 SlideStats slideStats(HWND view);
 void slideTestFreeze(double fraction);   // <0 = run normally
 // Touchpad tab swipe (TabSwipe.cpp). swipeSwitching: a view is about to show another document; true when the
@@ -228,7 +229,7 @@ SwipeStats swipeStats();
 void swipeTestFingers(int n);   // self-test: pretend this many fingers are on a precision touchpad (-1 = the real one)
 std::wstring effectsInfo();       // the line on the KEX Effects page
 // Tab close and open, save glint (TabMotion.cpp)
-struct TabMotionStats { int folds = 0, unfolds = 0, foldBulk = 0, foldSkipped = 0, foldFrames = 0, lastDx = 0; float lastFraction = 0, lastWidth = 0;
+struct TabMotionStats { int folds = 0, unfolds = 0, foldBulk = 0, foldSkipped = 0, foldFrames = 0, lastDx = 0, lastDrop = 0; float lastFraction = 0, lastWidth = 0;
                         int saves = 0, glints = 0, glintLines = 0, glintSkipped = 0, glintFrames = 0; bool overlayShown = false; };
 TabMotionStats tabMotionStats();
 void tabMotionTestFreeze(double fraction);   // <0 = run normally
@@ -244,7 +245,12 @@ CaretStats caretStats();
 void caretTestFreeze(double glideFraction, bool solidBlink);   // fraction <0 = off
 bool smoothCaretOn(HWND sciHwnd);   // the smooth caret is on in this view
 void smoothCaretApply(HWND sciHwnd, bool on);   // another editor (the quick note) follows the feature when on
-struct HotkeyStats { bool registered = false; bool byOtherNpp = false; DWORD lastError = 0; UINT mods = 0, vk = 0; int presses = 0; std::wstring text; bool noteOpen = false; };
+struct HotkeyStats { bool registered = false; bool byOtherNpp = false; DWORD lastError = 0; UINT mods = 0, vk = 0; int presses = 0; std::wstring text; bool noteOpen = false;
+                     int indents = 0;            // Enter kept the line above's indentation
+                     int pins = 0, resets = 0;   // the pin: pinned where it was, sent back to the middle
+                     int otherDesktopFg = 0;     // opened while the foreground window was on another desktop (not given the focus back)
+                     int focusFallbacks = 0;     // hidden with the focus going to another window of this desktop than the one it came from
+                     HWND lastFocusTo = nullptr; };
 HotkeyStats hotkeyStats();
 void hotkeyPress();              // run the same code path as WM_HOTKEY
 bool hotkeyApply(UINT mods, UINT vk);   // store + re-register; true when registered
@@ -255,6 +261,9 @@ std::wstring quickNoteFile();
 std::wstring quickNoteFileError();   // why the chosen note file couldn't be read ("" when fine)
 void quickNoteOpenFile();            // Settings > KEX Quick Note > Open Note File in Notepad++
 void quickNoteOptionsChanged();      // the Preferences page changed an option of the open note
+void quickNoteTogglePin();           // the pin on the note's top strip: pin it there, or back to the middle
+RECT quickNotePinRect();             // that button, on screen (empty without a note)
+bool quickNoteGliding();             // the note is gliding back to the middle
 void addNoteCommands(HMENU parent, int position);
 struct TabsStats { bool stripVisible = false; RECT strip{}; int tabCount = 0; int activeIndex = -1; int view = 0; std::vector<RECT> tabRects; std::vector<int> dirty; };
 TabsStats tabsStats();

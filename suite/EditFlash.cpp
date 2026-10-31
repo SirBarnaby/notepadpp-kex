@@ -1,18 +1,20 @@
-// EditFlash.cpp - small answers to copy, cut and delete: the selection box flashes faintly when it is
-// copied; cut text lifts off the page and fades, as if picked up; deleted text shrinks into the caret's
-// side and fades.
+// EditFlash.cpp - small answers to copy, cut and delete. Copy: the selection box flashes faintly. Cut and
+// delete: the text closes up. The removed text fades where it was while the text after it glides into its
+// place (the rest of the line slides left, the lines below move up), so nothing vanishes in one frame and
+// nothing floats over other text. A cut (Ctrl+X, and Shift+Delete, the old Windows key for Cut) also lights
+// the removed text up for a moment in the selection's colour, the way a copy flashes: it went somewhere.
 //
-// Copy: Scintilla puts text on the clipboard with its own window as the clipboard owner, so a
-// clipboard listener (WM_CLIPBOARDUPDATE) knows which editor copied. Cut: the text is copied and then
-// removed in the same command, so the removal (SC_MOD_BEFOREDELETE) comes while the clipboard still
-// names that editor as the owner of a change the listener has not seen yet. Delete: a selection removed
-// with Delete, Backspace or Edit > Delete. Cut and delete take a "ghost" of the text at that moment (its
-// characters where they are, in their fonts and colours, on the selection's colour), so the text seems
-// to leave rather than vanish. Everything is drawn by the shared effects renderer (Effects.h). With the
-// falling letters on, the ghost is only the selection's box: the letters already fall out of it.
+// Copy: Scintilla puts text on the clipboard with its own window as the clipboard owner, so a clipboard
+// listener (WM_CLIPBOARDUPDATE) knows which editor copied. Cut: the text is copied and then removed in the
+// same command, so the removal (SC_MOD_BEFOREDELETE) comes while the clipboard still names that editor as
+// the owner of a change the listener has not seen yet. Delete: a selection removed with Delete, Backspace or
+// Edit > Delete. The close-up itself is drawn by Scintilla (SCI_KEX_COLLAPSE in the KEX core): it paints the
+// view before the text goes, then each frame from the new text, so it is crisp, works on glass and in the
+// quick note, and any keystroke, scroll or other change ends it at once. Following Apple's guidance for
+// motion on frequent actions, it is short (220 ms by default), with no bounce, and never holds up typing.
 #include "Effects.h"
+#include "KexScintilla.h"
 #include <cmath>
-#include <map>
 
 namespace kex {
 
@@ -33,9 +35,10 @@ public:
     void loadOptions() override
     {
         _on[F_COPY] = settings.getInt(key(), L"Copy", 1) != 0;
-        // the lift and the shrink replaced the old cut and delete flashes, so they have switches of their own
-        _on[F_CUT] = settings.getInt(key(), L"CutLift", 1) != 0;
-        _on[F_DELETE] = settings.getInt(key(), L"DeleteFade", 1) != 0;
+        // the close-up replaced the lift and shrink (which replaced the first flashes): switches of its own
+        _on[F_CUT] = settings.getInt(key(), L"CutClose", 1) != 0;
+        _on[F_DELETE] = settings.getInt(key(), L"DeleteClose", 1) != 0;
+        _closeMs = std::max(80, std::min(800, settings.getInt(key(), L"CloseUpMs", 220)));
         _strength = std::max(10, std::min(200, settings.getInt(key(), L"Strength", 100)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
@@ -67,7 +70,6 @@ public:
         if (s_self == this)
         {
             fx::clear(fx::K_FLASH);
-            fx::clear(fx::K_GHOST);
             fx::release();
             s_self = nullptr;
         }
@@ -93,16 +95,17 @@ public:
         bool cut = false;
         if (seq != _seenSeq && ::GetClipboardOwner() == s) { cut = true; _seenSeq = seq; _cutSeq = seq; _cutAt = now; }
         else if (seq == _cutSeq && now - _cutAt < 60) cut = true;   // a rectangular cut removes line by line
-        if (cut) { ++_counts[F_CUT]; ghost(F_CUT, s, pos, pos + len); return; }
+        if (cut) { ++_counts[F_CUT]; closeUp(F_CUT, s, pos, pos + len); return; }
         const bool keyDelete = ::GetKeyState(VK_DELETE) < 0 || ::GetKeyState(VK_BACK) < 0 || _menuDelete;
         if (!keyDelete || sci(s, SCI_GETSELECTIONEMPTY)) return;   // typing over a selection replaces it: nothing
         ++_counts[F_DELETE];
-        ghost(F_DELETE, s, pos, pos + len);
+        closeUp(F_DELETE, s, pos, pos + len);
     }
 
     int _counts[3] = {};
     int _lastRects = 0;
-    int _lastGhostChars = 0;
+    int _closeUps = 0, _closeUpsRefused = 0;
+    HWND _lastCloseUp = nullptr;
 
 protected:
     LRESULT onMessage(UINT m, WPARAM w, LPARAM l) override
@@ -149,142 +152,30 @@ private:
         spawn(kind, s, rangeRects(s, a, b, true));
     }
 
-    static int utf8Len(unsigned char c)
+    // Cut and delete: Scintilla closes the text up (SCI_KEX_COLLAPSE), set up now, while the text is still there.
+    // One range only (a rectangular or multiple selection removes several, which just go).
+    void closeUp(int kind, HWND s, Sci_Position a, Sci_Position b)
     {
-        if (c < 0x80) return 1;
-        if ((c & 0xE0) == 0xC0) return 2;
-        if ((c & 0xF0) == 0xE0) return 3;
-        if ((c & 0xF8) == 0xF0) return 4;
-        return 1;
-    }
-
-    static fx::FontSpec fontFor(HWND s, int style, int zoom, int dpi)
-    {
-        fx::FontSpec f;
-        char name[128] = {};
-        sci(s, SCI_STYLEGETFONT, style, reinterpret_cast<LPARAM>(name));
-        wchar_t wname[128] = {};
-        ::MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 127);
-        f.face = wname[0] ? wname : L"Courier New";
-        double pts = static_cast<double>(sci(s, SCI_STYLEGETSIZEFRACTIONAL, style)) / SC_FONT_SIZE_MULTIPLIER + zoom;
-        if (pts < 2) pts = 2;
-        f.height = static_cast<int>(pts * dpi / 72.0 + 0.5);
-        f.weight = static_cast<int>(sci(s, SCI_STYLEGETWEIGHT, style));
-        f.italic = sci(s, SCI_STYLEGETITALIC, style) != 0;
-        return f;
-    }
-
-    // Cut and delete: a picture of [a, b) as it is on screen now (one piece per visual line, the text in its
-    // own fonts and colours on the selection's colour), which lifts away (cut) or shrinks away (delete).
-    void ghost(int kind, HWND s, Sci_Position a, Sci_Position b)
-    {
-        const std::vector<RECT> rects = rangeRects(s, a, b, true);
-        _lastRects = static_cast<int>(rects.size());
-        _lastGhostChars = 0;
-        if (!_on[kind] || rects.empty()) return;
+        _lastRects = static_cast<int>(rangeRects(s, a, b, true).size());
+        if (!_on[kind] || b <= a) return;
         if (_respectAnim && !fx::animationsOn()) return;
-        fx::LetterBatch batch;
-        batch.motion = kind == F_CUT ? fx::MOTION_LIFT : fx::MOTION_SHRINK;
-        batch.kind = fx::K_GHOST;
-        batch.duration = kind == F_CUT ? 0.32f : 0.22f;
-        const int dpi = dpiOf(s);
-        batch.lift = 12.0f * dpi / 96.0f;
-        batch.opacity = std::min(1.0f, _strength / 100.0f);
-        batch.extraAscent = static_cast<int>(sci(s, SCI_GETEXTRAASCENT));
-        HMONITOR mon = ::MonitorFromWindow(s, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi{ sizeof(mi) }; ::GetMonitorInfoW(mon, &mi);
-        batch.monitor = mi.rcMonitor;
-        // the selection as it looks: translucent over the glass, otherwise mixed into the background as Scintilla draws it
-        COLORREF sel = ::GetSysColor(COLOR_HIGHLIGHT);
-        int selAlpha = 255;
-        const LRESULT ca = sci(s, SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK);
-        if (sci(s, SCI_GETELEMENTISSET, SC_ELEMENT_SELECTION_BACK) || (ca & 0xFF000000))
+        if (sci(s, SCI_GETSELECTIONS) > 1 || sci(s, SCI_SELECTIONISRECTANGLE)) return;
+        KexCollapse c{};
+        c.start = a;
+        c.end = b;
+        c.ms = _closeMs;
+        if (kind == F_CUT)
         {
-            sel = static_cast<COLORREF>(ca & 0xFFFFFF);
-            selAlpha = static_cast<int>((static_cast<unsigned long>(ca) >> 24) & 0xFF);
-            if (selAlpha == 0) selAlpha = 255;
+            // the selection's colour, lit: what a copy flashes in
+            COLORREF sel = ::GetSysColor(COLOR_HIGHLIGHT);
+            const LRESULT ca = sci(s, SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK);
+            if (ca & 0xFF000000) sel = static_cast<COLORREF>(ca & 0xFFFFFF);
+            const COLORREF lit = mixColour(sel, RGB(255, 255, 255), 0.45);
+            const int alpha = std::min(255, static_cast<int>(0.42 * 255 * _strength / 100.0));
+            c.tint = static_cast<int>((static_cast<unsigned>(alpha) << 24) | (lit & 0xFFFFFF));
         }
-        if (glassStats().active) { batch.back = sel; batch.backAlpha = std::max(0.35f, selAlpha / 255.0f); }
-        else
-        {
-            const COLORREF bg = static_cast<COLORREF>(sci(s, SCI_STYLEGETBACK, STYLE_DEFAULT));
-            batch.back = mixColour(bg, sel, selAlpha / 255.0);
-            batch.backAlpha = 1;
-        }
-        POINT org{ 0, 0 };
-        ::ClientToScreen(s, &org);
-        for (const RECT& r : rects)
-        {
-            fx::CapItem it;
-            it.x = r.left; it.y = r.top; it.w = r.right - r.left; it.h = r.bottom - r.top;
-            batch.items.push_back(it);
-        }
-        const int zoom = static_cast<int>(sci(s, SCI_GETZOOM));
-        batch.fonts.push_back(fontFor(s, STYLE_DEFAULT, zoom, dpi));   // fonts[0]: the baseline
-        // the text, unless the falling letters take it
-        if (!(modules[M_LETTERS] && modules[M_LETTERS]->isEnabled())) captureText(s, a, b, org, zoom, dpi, batch);
-        fx::submitLetters(std::move(batch));
-    }
-
-    void captureText(HWND s, Sci_Position a, Sci_Position b, POINT org, int zoom, int dpi, fx::LetterBatch& batch)
-    {
-        const SciDirect ds(s);
-        const Sci_Position firstVis = ds(SCI_GETFIRSTVISIBLELINE);
-        const Sci_Position firstDoc = ds(SCI_DOCLINEFROMVISIBLE, firstVis);
-        const Sci_Position lastDoc = ds(SCI_DOCLINEFROMVISIBLE, firstVis + ds(SCI_LINESONSCREEN) + 1);
-        a = std::max(a, static_cast<Sci_Position>(ds(SCI_POSITIONFROMLINE, firstDoc)));
-        b = std::min(b, static_cast<Sci_Position>(ds(SCI_GETLINEENDPOSITION, lastDoc)));
-        if (a >= b) return;
-        b = std::min(b, a + 20000);
-        std::string text(static_cast<size_t>(b - a) + 1, '\0');
-        Sci_TextRangeFull tr{ { a, b }, &text[0] };
-        ds(SCI_GETTEXTRANGEFULL, 0, reinterpret_cast<LPARAM>(&tr));
-        text.resize(static_cast<size_t>(b - a));
-        const int cp = static_cast<int>(ds(SCI_GETCODEPAGE));
-        const UINT winCp = cp == SC_CP_UTF8 ? CP_UTF8 : (cp == 0 ? CP_ACP : static_cast<UINT>(cp));
-        // selected text keeps its colours unless the theme gives selected text a colour of its own
-        const bool selFore = ds(SCI_GETELEMENTISSET, SC_ELEMENT_SELECTION_TEXT) != 0;
-        const COLORREF selForeColour = static_cast<COLORREF>(ds(SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_TEXT) & 0xFFFFFF);
-        std::map<int, std::pair<int, COLORREF>> styles;
-        std::map<fx::FontSpec, int> fontIdx{ { batch.fonts[0], 0 } };
-        auto styleInfo = [&](int style) {
-            auto it = styles.find(style);
-            if (it != styles.end()) return it->second;
-            const fx::FontSpec f = fontFor(s, style, zoom, dpi);
-            auto fi = fontIdx.find(f);
-            int idx;
-            if (fi == fontIdx.end()) { idx = static_cast<int>(batch.fonts.size()); batch.fonts.push_back(f); fontIdx[f] = idx; }
-            else idx = fi->second;
-            const COLORREF fore = selFore ? selForeColour : static_cast<COLORREF>(ds(SCI_STYLEGETFORE, style));
-            return styles[style] = std::make_pair(idx, fore);
-        };
-        // each visual line's piece, by its top on screen
-        std::map<int, size_t> byTop;
-        for (size_t i = 0; i < batch.items.size(); ++i) byTop[batch.items[i].y] = i;
-        int chars = 0;
-        for (size_t i = 0; i < text.size() && chars < 8000;)
-        {
-            const unsigned char c = static_cast<unsigned char>(text[i]);
-            int n = winCp == CP_UTF8 ? utf8Len(c) : (c >= 0x80 && ::IsDBCSLeadByteEx(winCp, c) ? 2 : 1);
-            if (i + n > text.size()) n = static_cast<int>(text.size() - i);
-            const Sci_Position p = a + static_cast<Sci_Position>(i);
-            i += n;
-            if (c <= ' ') continue;   // blanks, tabs, line ends: nothing to draw
-            const int x = static_cast<int>(ds(SCI_POINTXFROMPOSITION, 0, p)) + org.x;
-            const int y = static_cast<int>(ds(SCI_POINTYFROMPOSITION, 0, p)) + org.y;
-            auto line = byTop.find(y);
-            if (line == byTop.end()) continue;
-            fx::CapItem& item = batch.items[line->second];
-            if (x < item.x - 1 || x >= item.x + item.w) continue;   // scrolled out of sight sideways
-            wchar_t w[4] = {};
-            const int wn = ::MultiByteToWideChar(winCp, 0, &text[static_cast<size_t>(p - a)], n, w, 4);
-            if (wn <= 0) continue;
-            const auto si = styleInfo(static_cast<int>(ds(SCI_GETSTYLEINDEXAT, p)));
-            fx::CapRun r; r.text.assign(w, static_cast<size_t>(wn)); r.dx = x - item.x; r.color = si.second; r.font = si.first;
-            item.runs.push_back(r);
-            ++chars;
-        }
-        _lastGhostChars = chars;
+        if (sci(s, SCI_KEX_COLLAPSE, reinterpret_cast<WPARAM>(&c))) { ++_closeUps; _lastCloseUp = s; }
+        else ++_closeUpsRefused;
     }
 
     void spawn(int kind, HWND s, const std::vector<RECT>& rects)
@@ -333,7 +224,7 @@ private:
     }
 
     bool _on[3] = { true, true, true };
-    int _strength = 100;
+    int _strength = 100, _closeMs = 220;
     bool _respectAnim = true, _inNote = true, _subclassed = false, _menuDelete = false;
     DWORD _seenSeq = 0, _cutSeq = 0;
     double _cutAt = 0;
@@ -351,12 +242,14 @@ void flashFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType
 FlashStats flashStats()
 {
     FlashStats st;
-    if (s_self) { st.copies = s_self->_counts[F_COPY]; st.cuts = s_self->_counts[F_CUT]; st.deletes = s_self->_counts[F_DELETE]; st.lastRects = s_self->_lastRects; st.ghostChars = s_self->_lastGhostChars; }
+    if (s_self)
+    {
+        st.copies = s_self->_counts[F_COPY]; st.cuts = s_self->_counts[F_CUT]; st.deletes = s_self->_counts[F_DELETE]; st.lastRects = s_self->_lastRects;
+        st.closeUps = s_self->_closeUps; st.closeUpsRefused = s_self->_closeUpsRefused; st.lastCloseUp = s_self->_lastCloseUp;
+    }
     const fx::Stats fs = fx::stats();
-    st.live = fs.live[fx::K_FLASH] + fs.live[fx::K_GHOST];
+    st.live = fs.live[fx::K_FLASH];
     st.spawned = fs.spawned[fx::K_FLASH];
-    st.ghostsLive = fs.live[fx::K_GHOST];
-    st.ghosts = fs.spawned[fx::K_GHOST];
     return st;
 }
 

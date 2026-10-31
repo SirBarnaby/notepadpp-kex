@@ -3,11 +3,20 @@
 // program is in front and whether or not Notepad++ is minimised. Pressing it again fades the note out
 // and gives the focus back; if you had clicked away from it, the window you clicked keeps the focus.
 // The text is saved as you type, to kex-quicknote.txt in Notepad++'s settings folder or to a file of
-// the user's choosing (kept in its own encoding and line endings). The note has no title bar: its top
-// edge moves it, the other edges and corners resize it. Its editor gets the smooth caret, the falling
-// letters and the copy/cut/delete flashes, as the views do.
+// the user's choosing (kept in its own encoding and line endings). The note has no title bar: a thin
+// strip along its top moves it, the other edges and corners resize it. A small pin at the right of that
+// strip keeps the note where it is (it opens there next time); pinned, the same button sends it back to
+// the middle of the screen. Its editor gets the smooth caret, the falling letters and the copy/cut/delete
+// effects, as the views do, and keeps the indentation of the line above when Enter is pressed.
+//
+// Virtual desktops: the note is a tool window, and Windows shows tool windows on every desktop, so it
+// stays in front when the user switches desktops. Hiding it never hands the focus to a window on another
+// desktop (that would make Windows switch back to that desktop): the focus goes back to the window it came
+// from only when that window is on the desktop being shown, otherwise to the next window down on this
+// desktop, or to the desktop itself.
 #include "KexSuite.h"
 #include "KexScintilla.h"
+#include "Effects.h"
 #include <dwmapi.h>
 #include <cmath>
 #include <climits>
@@ -18,11 +27,23 @@ namespace kex {
 namespace {
 
 const int HOTKEY_ID = 0x4B45;
-const UINT_PTR TIMER_FADE = 1, TIMER_SAVE = 2, TIMER_TAKEOVER = 3;
+const UINT_PTR TIMER_FADE = 1, TIMER_SAVE = 2, TIMER_TAKEOVER = 3, TIMER_GLIDE = 4;
 const double FADE_MS = 150.0;
-const int FRAME96 = 7;                 // the edge around the text: move (top) and resize (the rest)
+const int FRAME96 = 7;                 // the edge around the text: the sides and bottom resize it
+const int TOP96 = 16;                  // the strip along the top: moves it, holds the grip and the pin
+const int PIN96 = 22;                  // the pin button's width
+const double GLIDE_RESPONSE_S = 0.32;  // the glide back to the middle: a spring without bounce
 const wchar_t* NOTE_CLASS = L"KexQuickNote";
 HotkeyStats s_stats;
+
+// A window the focus can go to without Windows switching to another virtual desktop: shown, not
+// minimised, and on the desktop the user is looking at (a window on another desktop is cloaked).
+bool focusableHere(HWND h)
+{
+    if (!h || !::IsWindow(h) || !::IsWindowVisible(h) || ::IsIconic(h) || isCloaked(h)) return false;
+    DesktopProvider* p = desktopProvider();
+    return !p || !p->ok() || p->isOnCurrent(h);
+}
 
 std::wstring keyName(UINT vk)
 {
@@ -71,6 +92,7 @@ public:
             if (_sci && !_closing) load();
         }
         if (_sci && !_closing) applyEffects();
+        if (_note && !_closing) ::InvalidateRect(_note, nullptr, FALSE);   // the pin shows the setting
     }
 
     // the file the note keeps its text in: the chosen one (environment variables expanded) or ours
@@ -113,6 +135,7 @@ public:
         s_stats.registered = false;
         destroyNote(true);
         destroyMsgWindow();
+        if (_glyphFont) { ::DeleteObject(_glyphFont); _glyphFont = nullptr; _glyphPx = 0; }
     }
 
     bool registerKey()
@@ -208,7 +231,10 @@ private:
     {
         if (!registerClass()) return;
         HWND fg = ::GetForegroundWindow();
-        _prevFg = (fg && fg != _note) ? fg : nullptr;
+        // only a window on this desktop gets the focus back later (right after a switch to an empty desktop
+        // Windows can still name a window of the desktop that was left)
+        _prevFg = (fg && fg != _note && focusableHere(fg)) ? fg : nullptr;
+        if (fg && fg != _note && !_prevFg) ++s_stats.otherDesktopFg;
 
         POINT pt{}; ::GetCursorPos(&pt);
         MONITORINFO mi{ sizeof(mi) };
@@ -250,6 +276,7 @@ private:
                                  _note, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (!_sci) { log(L"quick note: Scintilla failed (%lu)", ::GetLastError()); destroyNote(false); return; }
         ::SetWindowSubclass(_sci, editorSubclass, 1, reinterpret_cast<DWORD_PTR>(this));
+        makeTooltip();
         styleLike(views.sci(views.current()));
         _closing = false;
         load();
@@ -305,20 +332,52 @@ private:
         settings.setInt(key(), L"Y", r.top);
         if (_sci) settings.setInt(key(), L"Zoom", static_cast<int>(sci(_sci, SCI_GETZOOM)));
         loadOptions();
+        stopGlide();
         _closing = true;
         s_stats.noteOpen = false;
-        if (giveFocusBack && _prevFg && ::IsWindow(_prevFg) && ::IsWindowVisible(_prevFg) && !::IsIconic(_prevFg)) ::SetForegroundWindow(_prevFg);
-        log(L"quick note: closed, focus back to %p", giveFocusBack ? _prevFg : nullptr);
+        HWND to = nullptr;
+        if (giveFocusBack) to = handFocusOn();
+        log(L"quick note: closed, focus to %p (came from %p)", to, _prevFg);
         if (_layered && _fade) fadeTo(0);
         else destroyNote(false);
+    }
+
+    // The note is about to go while it has the focus: give the focus to a window on this desktop (the one
+    // it came from when it is here), so Windows doesn't pick one itself, maybe on another desktop.
+    HWND handFocusOn()
+    {
+        HWND to = focusableHere(_prevFg) ? _prevFg : focusFallback();
+        if (to != _prevFg) ++s_stats.focusFallbacks;
+        if (to) ::SetForegroundWindow(to);
+        s_stats.lastFocusTo = to;
+        return to;
+    }
+
+    // the first ordinary window below the note on this desktop, or the desktop itself
+    HWND focusFallback() const
+    {
+        for (HWND h = _note ? ::GetWindow(_note, GW_HWNDNEXT) : ::GetTopWindow(nullptr); h; h = ::GetWindow(h, GW_HWNDNEXT))
+        {
+            if (h == _note || !focusableHere(h)) continue;
+            const LONG_PTR ex = ::GetWindowLongPtrW(h, GWL_EXSTYLE), st = ::GetWindowLongPtrW(h, GWL_STYLE);
+            if ((ex & WS_EX_TOOLWINDOW) && !(ex & WS_EX_APPWINDOW)) continue;   // the taskbar, overlays, palettes
+            if ((ex & WS_EX_NOACTIVATE) || (st & WS_DISABLED)) continue;
+            RECT r{};
+            if (!::GetWindowRect(h, &r) || r.right - r.left < 2 || r.bottom - r.top < 2) continue;
+            return h;
+        }
+        return ::GetShellWindow();   // the desktop: on every virtual desktop
     }
 
     void destroyNote(bool saveFirst)
     {
         if (!_note) return;
         if (saveFirst && !_closing) save();
+        stopGlide();
         HWND n = _note;
-        _note = nullptr; _sci = nullptr; _closing = false;
+        if (!_closing && ::GetForegroundWindow() == n) handFocusOn();
+        _note = nullptr; _sci = nullptr; _closing = false; _tip = nullptr;
+        _hover = _pressed = false;
         s_stats.noteOpen = false;
         ::DestroyWindow(n);
     }
@@ -342,13 +401,205 @@ private:
     }
 
     int frame() const { return ::MulDiv(FRAME96, dpiOf(_note), 96); }
+    int topStrip() const { return ::MulDiv(TOP96, dpiOf(_note), 96); }
 
     void layout()
     {
         if (!_note || !_sci) return;
         RECT rc{}; ::GetClientRect(_note, &rc);
-        const int f = frame();
-        ::MoveWindow(_sci, f, f, std::max(0L, rc.right - 2 * f), std::max(0L, rc.bottom - 2 * f), TRUE);
+        const int f = frame(), t = topStrip();
+        ::MoveWindow(_sci, f, t, std::max(0L, rc.right - 2 * f), std::max(0L, rc.bottom - t - f), TRUE);
+        if (_tip)
+        {
+            TOOLINFOW ti{ sizeof(ti) };
+            ti.hwnd = _note; ti.uId = 1; ti.rect = pinRect();
+            ::SendMessageW(_tip, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&ti));
+        }
+    }
+
+    // ---- the pin: keep the note here / back to the middle ------------------------------------------
+
+    // its place: the right end of the top strip, short of the corner that resizes the note
+    RECT pinRect() const
+    {
+        RECT rc{}; ::GetClientRect(_note, &rc);
+        const int f = frame(), w = ::MulDiv(PIN96, dpiOf(_note), 96), right = rc.right - 2 * f - ::MulDiv(2, dpiOf(_note), 96);
+        return RECT{ right - w, 0, right, topStrip() };
+    }
+
+    bool inPin(POINT clientPt) const { const RECT r = pinRect(); return ::PtInRect(&r, clientPt) != FALSE; }
+
+    void makeTooltip()
+    {
+        _tip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                                 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, _note, nullptr, hInst, nullptr);
+        if (!_tip) return;
+        TOOLINFOW ti{ sizeof(ti) };
+        ti.uFlags = TTF_SUBCLASS;
+        ti.hwnd = _note; ti.uId = 1; ti.rect = pinRect();
+        _tipText = pinTip();
+        ti.lpszText = const_cast<wchar_t*>(_tipText.c_str());
+        ::SendMessageW(_tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+    }
+
+    std::wstring pinTip() const
+    {
+        return _remember ? L"Back to the middle of the screen (the note stops opening here)"
+                         : L"Keep the note here: it opens in this spot next time";
+    }
+
+    void updateTip()
+    {
+        if (!_tip) return;
+        _tipText = pinTip();
+        TOOLINFOW ti{ sizeof(ti) };
+        ti.hwnd = _note; ti.uId = 1;
+        ti.lpszText = const_cast<wchar_t*>(_tipText.c_str());
+        ::SendMessageW(_tip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&ti));
+    }
+
+public:
+    // the pin's click: pin the note where it is, or (pinned) send it back to the middle and unpin it
+    void togglePin()
+    {
+        if (!_note || _closing) return;
+        if (!_remember)
+        {
+            RECT r{}; ::GetWindowRect(_note, &r);
+            settings.setInt(key(), L"RememberPlace", 1);
+            settings.setInt(key(), L"X", r.left);
+            settings.setInt(key(), L"Y", r.top);
+            ++s_stats.pins;
+            log(L"quick note: pinned at %d,%d", r.left, r.top);
+        }
+        else
+        {
+            settings.setInt(key(), L"RememberPlace", 0);
+            ++s_stats.resets;
+            glideTo(middleSpot());
+            log(L"quick note: back to the middle, unpinned");
+        }
+        loadOptions();
+        updateTip();
+        ::InvalidateRect(_note, nullptr, FALSE);
+        refreshPrefPages();
+        if (_sci) ::SetFocus(_sci);
+    }
+
+    bool pinned() const { return _remember; }
+    RECT pinScreenRect() const
+    {
+        RECT r = _note ? pinRect() : RECT{};
+        if (_note) ::MapWindowPoints(_note, nullptr, reinterpret_cast<POINT*>(&r), 2);
+        return r;
+    }
+    bool gliding() const { return _glideT0 >= 0; }
+
+private:
+    // where an unpinned note opens: the middle of the work area of the screen it is on
+    POINT middleSpot() const
+    {
+        RECT r{}; ::GetWindowRect(_note, &r);
+        MONITORINFO mi{ sizeof(mi) };
+        ::GetMonitorInfoW(::MonitorFromWindow(_note, MONITOR_DEFAULTTONEAREST), &mi);
+        const RECT& wa = mi.rcWork;
+        return POINT{ wa.left + (wa.right - wa.left - (r.right - r.left)) / 2, wa.top + (wa.bottom - wa.top - (r.bottom - r.top)) / 2 };
+    }
+
+    // a critically damped spring (no bounce, as Apple's default) from where the note is to `to`
+    void glideTo(POINT to)
+    {
+        RECT r{}; ::GetWindowRect(_note, &r);
+        _glideFrom = POINT{ r.left, r.top };
+        _glideTarget = to;
+        _glideT0 = nowMs();
+        if (!fx::animationsOn()) { glideStep(true); return; }   // Windows' "Show animations" off: straight there
+        ::SetTimer(_note, TIMER_GLIDE, 10, nullptr);
+        glideStep(false);
+    }
+
+    void glideStep(bool finish)
+    {
+        if (_glideT0 < 0 || !_note) return;
+        const double t = (nowMs() - _glideT0) / 1000.0, w = 2.0 * 3.14159265358979 / GLIDE_RESPONSE_S;
+        double p = 1.0 - (1.0 + w * t) * std::exp(-w * t);
+        if (finish || p > 0.998) p = 1.0;
+        const int x = static_cast<int>(std::lround(_glideFrom.x + (_glideTarget.x - _glideFrom.x) * p));
+        const int y = static_cast<int>(std::lround(_glideFrom.y + (_glideTarget.y - _glideFrom.y) * p));
+        ::SetWindowPos(_note, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (p >= 1.0) stopGlide();
+    }
+
+    void stopGlide()
+    {
+        if (_note) ::KillTimer(_note, TIMER_GLIDE);
+        _glideT0 = -1;
+    }
+
+    // the glyph fonts Windows has for its own pins (Windows 11, then Windows 10); none under Wine
+    HFONT glyphFont(int px)
+    {
+        if (_glyphFont && _glyphPx == px) return _glyphFont;
+        if (_glyphFont) ::DeleteObject(_glyphFont);
+        _glyphFont = nullptr;
+        _glyphPx = px;
+        for (const wchar_t* face : { L"Segoe Fluent Icons", L"Segoe MDL2 Assets" })
+        {
+            HFONT f = ::CreateFontW(-px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                    CLEARTYPE_QUALITY, DEFAULT_PITCH, face);
+            if (!f) continue;
+            HDC dc = ::GetDC(nullptr);
+            HGDIOBJ old = ::SelectObject(dc, f);
+            wchar_t got[LF_FACESIZE] = {};
+            ::GetTextFaceW(dc, LF_FACESIZE, got);
+            ::SelectObject(dc, old);
+            ::ReleaseDC(nullptr, dc);
+            if (!_wcsicmp(got, face)) { _glyphFont = f; break; }
+            ::DeleteObject(f);
+        }
+        return _glyphFont;
+    }
+
+    void paintPin(HDC dc, COLORREF back, COLORREF fore)
+    {
+        const RECT r = pinRect();
+        const int dpi = dpiOf(_note);
+        if (_hover || _pressed)
+        {
+            // a soft rounded plate under the pointer, as Windows' own small title-bar buttons have
+            HBRUSH hb = ::CreateSolidBrush(mixColour(back, fore, _pressed ? 0.18 : 0.10));
+            HPEN np = static_cast<HPEN>(::GetStockObject(NULL_PEN));
+            HGDIOBJ ob = ::SelectObject(dc, hb), op = ::SelectObject(dc, np);
+            const int rr = ::MulDiv(6, dpi, 96);
+            ::RoundRect(dc, r.left, r.top + ::MulDiv(1, dpi, 96), r.right + 1, r.bottom, rr, rr);
+            ::SelectObject(dc, ob); ::SelectObject(dc, op);
+            ::DeleteObject(hb);
+        }
+        const COLORREF accent = mixColour(::GetSysColor(COLOR_HIGHLIGHT), fore, 0.15);
+        const COLORREF ink = _remember ? (_hover ? fore : accent) : mixColour(back, fore, _hover ? 0.85 : 0.45);
+        // pinned: a filled pin, which turns into "unpin" under the pointer; not pinned: an outline pin
+        const wchar_t glyph = _remember ? (_hover ? 0xE77A : 0xE841) : 0xE718;
+        if (HFONT f = glyphFont(::MulDiv(10, dpi, 96)))
+        {
+            HGDIOBJ of = ::SelectObject(dc, f);
+            ::SetBkMode(dc, TRANSPARENT);
+            ::SetTextColor(dc, ink);
+            RECT tr = r;
+            ::DrawTextW(dc, &glyph, 1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            ::SelectObject(dc, of);
+            return;
+        }
+        // no glyph font: a small pin drawn by hand (head, needle; filled when pinned; struck through to unpin)
+        const int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, u = std::max(1, ::MulDiv(1, dpi, 96));
+        HPEN pen = ::CreatePen(PS_SOLID, u, ink);
+        HBRUSH fill = _remember && !_hover ? ::CreateSolidBrush(ink) : static_cast<HBRUSH>(::GetStockObject(NULL_BRUSH));
+        HGDIOBJ op = ::SelectObject(dc, pen), ob = ::SelectObject(dc, fill);
+        ::Ellipse(dc, cx - 3 * u, cy - 5 * u, cx + 3 * u + 1, cy + u + 1);
+        ::MoveToEx(dc, cx, cy + u, nullptr); ::LineTo(dc, cx, cy + 5 * u);
+        if (_remember && _hover) { ::MoveToEx(dc, cx - 5 * u, cy - 5 * u, nullptr); ::LineTo(dc, cx + 5 * u, cy + 5 * u); }
+        ::SelectObject(dc, op); ::SelectObject(dc, ob);
+        ::DeleteObject(pen);
+        if (_remember && !_hover) ::DeleteObject(fill);
     }
 
     // the edge around the text, in the editor's background with a hairline in a quieter text colour
@@ -357,22 +608,27 @@ private:
         RECT rc{}; ::GetClientRect(_note, &rc);
         const COLORREF back = _sci ? static_cast<COLORREF>(sci(_sci, SCI_STYLEGETBACK, STYLE_DEFAULT)) : RGB(255, 255, 255);
         const COLORREF fore = _sci ? static_cast<COLORREF>(sci(_sci, SCI_STYLEGETFORE, STYLE_DEFAULT)) : RGB(0, 0, 0);
-        auto mix = [](COLORREF a, COLORREF b, int pct) {
-            return RGB((GetRValue(a) * (100 - pct) + GetRValue(b) * pct) / 100, (GetGValue(a) * (100 - pct) + GetGValue(b) * pct) / 100,
-                       (GetBValue(a) * (100 - pct) + GetBValue(b) * pct) / 100);
-        };
+        // drawn off screen and put up in one go, so the pin's hover doesn't flicker
+        HDC mem = ::CreateCompatibleDC(dc);
+        HBITMAP bmp = ::CreateCompatibleBitmap(dc, std::max(1L, rc.right), std::max(1L, rc.bottom));
+        HGDIOBJ oldBmp = ::SelectObject(mem, bmp);
         HBRUSH bb = ::CreateSolidBrush(back);
-        ::FillRect(dc, &rc, bb);
+        ::FillRect(mem, &rc, bb);
         ::DeleteObject(bb);
-        HBRUSH lb = ::CreateSolidBrush(mix(back, fore, 35));
-        ::FrameRect(dc, &rc, lb);
+        HBRUSH lb = ::CreateSolidBrush(mixColour(back, fore, 0.35));
+        ::FrameRect(mem, &rc, lb);
         ::DeleteObject(lb);
-        // a short grip in the middle of the top edge says "drag here"
-        const int f = frame(), gw = ::MulDiv(36, dpiOf(_note), 96);
-        RECT g{ (rc.right - gw) / 2, f / 2 - 1, (rc.right + gw) / 2, f / 2 + 1 };
-        HBRUSH gb = ::CreateSolidBrush(mix(back, fore, 30));
-        ::FillRect(dc, &g, gb);
+        // a short grip in the middle of the top strip says "drag here"
+        const int t = topStrip(), gw = ::MulDiv(36, dpiOf(_note), 96);
+        RECT g{ (rc.right - gw) / 2, t / 2 - 1, (rc.right + gw) / 2, t / 2 + 1 };
+        HBRUSH gb = ::CreateSolidBrush(mixColour(back, fore, 0.30));
+        ::FillRect(mem, &g, gb);
         ::DeleteObject(gb);
+        paintPin(mem, back, fore);
+        ::BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        ::SelectObject(mem, oldBmp);
+        ::DeleteObject(bmp);
+        ::DeleteDC(mem);
     }
 
     LRESULT hitTest(HWND h, LPARAM l)
@@ -380,17 +636,17 @@ private:
         POINT pt{ static_cast<short>(LOWORD(l)), static_cast<short>(HIWORD(l)) };
         ::ScreenToClient(h, &pt);
         RECT rc{}; ::GetClientRect(h, &rc);
-        const int f = frame(), c = f * 2;
+        const int f = frame(), c = f * 2, t = topStrip();
         const bool left = pt.x < f, right = pt.x >= rc.right - f, top = pt.y < f, bottom = pt.y >= rc.bottom - f;
         const bool nearLeft = pt.x < c, nearRight = pt.x >= rc.right - c, nearTop = pt.y < c, nearBottom = pt.y >= rc.bottom - c;
         if ((top && nearLeft) || (left && nearTop)) return HTTOPLEFT;
         if ((top && nearRight) || (right && nearTop)) return HTTOPRIGHT;
         if ((bottom && nearLeft) || (left && nearBottom)) return HTBOTTOMLEFT;
         if ((bottom && nearRight) || (right && nearBottom)) return HTBOTTOMRIGHT;
-        if (top) return HTCAPTION;
         if (left) return HTLEFT;
         if (right) return HTRIGHT;
         if (bottom) return HTBOTTOM;
+        if (pt.y < t) return inPin(pt) ? HTCLIENT : HTCAPTION;
         return HTCLIENT;
     }
 
@@ -404,6 +660,32 @@ private:
         std::string sample = "_" + std::string(static_cast<size_t>(std::max(2, digits)), '9');
         const LRESULT w = sci(_sci, SCI_TEXTWIDTH, STYLE_LINENUMBER, reinterpret_cast<LPARAM>(sample.c_str()));
         if (w != _marginWidth) { _marginWidth = w; sci(_sci, SCI_SETMARGINWIDTHN, 0, w + 4); }
+    }
+
+    // Enter keeps the indentation of the line above, as Notepad++ does with auto-indent on (the same
+    // whitespace, so tabs stay tabs)
+    void keepIndent(int ch)
+    {
+        if (!_sci || _loading) return;
+        const LRESULT eol = sci(_sci, SCI_GETEOLMODE);
+        if (!(((eol == SC_EOL_CRLF || eol == SC_EOL_LF) && ch == '\n') || (eol == SC_EOL_CR && ch == '\r'))) return;
+        if (!nppMsg(NPPM_ISAUTOINDENTON, 0, 0) && !selfTestMode) return;
+        if (sci(_sci, SCI_GETSELECTIONS) != 1) return;
+        const LRESULT caret = sci(_sci, SCI_GETCURRENTPOS);
+        const LRESULT line = sci(_sci, SCI_LINEFROMPOSITION, caret);
+        if (line < 1 || caret != sci(_sci, SCI_POSITIONFROMLINE, line)) return;
+        const LRESULT from = sci(_sci, SCI_POSITIONFROMLINE, line - 1), to = sci(_sci, SCI_GETLINEINDENTPOSITION, line - 1);
+        if (to <= from) return;
+        std::string ws(static_cast<size_t>(to - from) + 1, '\0');
+        Sci_TextRangeFull tr{ { from, to }, &ws[0] };
+        sci(_sci, SCI_GETTEXTRANGEFULL, 0, reinterpret_cast<LPARAM>(&tr));
+        ws.resize(static_cast<size_t>(to - from));
+        // the new line's own leading blanks (Enter in the middle of indentation) give way to the copy
+        const LRESULT ownEnd = sci(_sci, SCI_GETLINEINDENTPOSITION, line);
+        sci(_sci, SCI_SETTARGETRANGE, caret, ownEnd);
+        sci(_sci, SCI_REPLACETARGET, ws.size(), reinterpret_cast<LPARAM>(ws.c_str()));
+        sci(_sci, SCI_GOTOPOS, caret + static_cast<LRESULT>(ws.size()));
+        ++s_stats.indents;
     }
 
     // Look like the editor the user is in: font, colours, caret, selection, rendering, zoom.
@@ -430,6 +712,12 @@ private:
             sci(s, SCI_SETZOOM, _zoom != INT_MIN ? _zoom : sci(src, SCI_GETZOOM));
             sci(s, SCI_STYLESETFORE, STYLE_LINENUMBER, sci(src, SCI_STYLEGETFORE, STYLE_LINENUMBER));
             sci(s, SCI_STYLESETBACK, STYLE_LINENUMBER, sci(src, SCI_STYLEGETBACK, STYLE_LINENUMBER));
+            // Tab and indentation as in the editor: tab width, tabs or spaces, Tab/Backspace on indentation
+            sci(s, SCI_SETTABWIDTH, std::max<LRESULT>(1, sci(src, SCI_GETTABWIDTH)));
+            sci(s, SCI_SETUSETABS, sci(src, SCI_GETUSETABS));
+            sci(s, SCI_SETINDENT, sci(src, SCI_GETINDENT));
+            sci(s, SCI_SETTABINDENTS, sci(src, SCI_GETTABINDENTS));
+            sci(s, SCI_SETBACKSPACEUNINDENTS, sci(src, SCI_GETBACKSPACEUNINDENTS));
             if (_caretLine)
             {
                 LRESULT back = sci(src, SCI_GETELEMENTCOLOUR, SC_ELEMENT_CARET_LINE_BACK);
@@ -619,8 +907,57 @@ private:
         if (!self || self->_note != h) return ::DefWindowProcW(h, m, w, l);
         switch (m)
         {
-        case WM_SIZE: self->layout(); return 0;
+        case WM_SIZE: self->layout(); ::InvalidateRect(h, nullptr, FALSE); return 0;
         case WM_NCHITTEST: return self->hitTest(h, l);
+        case WM_MOUSEMOVE:
+        {
+            const POINT pt{ static_cast<short>(LOWORD(l)), static_cast<short>(HIWORD(l)) };
+            const bool over = self->inPin(pt);
+            if (over != self->_hover)
+            {
+                self->_hover = over;
+                const RECT r = self->pinRect();
+                ::InvalidateRect(h, &r, FALSE);
+            }
+            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, h, 0 };
+            ::TrackMouseEvent(&tme);
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            if (self->_hover && !self->_pressed) { self->_hover = false; const RECT r = self->pinRect(); ::InvalidateRect(h, &r, FALSE); }
+            return 0;
+        case WM_LBUTTONDOWN:
+        {
+            const POINT pt{ static_cast<short>(LOWORD(l)), static_cast<short>(HIWORD(l)) };
+            if (self->inPin(pt)) { self->_pressed = true; ::SetCapture(h); const RECT r = self->pinRect(); ::InvalidateRect(h, &r, FALSE); }
+            return 0;
+        }
+        case WM_LBUTTONUP:
+        {
+            const POINT pt{ static_cast<short>(LOWORD(l)), static_cast<short>(HIWORD(l)) };
+            if (!self->_pressed) return 0;
+            self->_pressed = false;
+            ::ReleaseCapture();
+            const bool over = self->inPin(pt);
+            self->_hover = over;
+            if (over) self->togglePin();
+            const RECT r = self->pinRect(); ::InvalidateRect(h, &r, FALSE);
+            return 0;
+        }
+        case WM_CAPTURECHANGED:
+            if (self->_pressed && reinterpret_cast<HWND>(l) != h) { self->_pressed = false; ::InvalidateRect(h, nullptr, FALSE); }
+            return 0;
+        case WM_ENTERSIZEMOVE: self->stopGlide(); return 0;
+        case WM_EXITSIZEMOVE:
+            // pinned: the new spot is the one it opens at
+            if (self->_remember)
+            {
+                RECT r{}; ::GetWindowRect(h, &r);
+                settings.setInt(self->key(), L"X", r.left);
+                settings.setInt(self->key(), L"Y", r.top);
+                self->_x = r.left; self->_y = r.top;
+            }
+            return 0;
         case WM_SETCURSOR:
             if (LOWORD(l) == HTCAPTION) { ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL)); return TRUE; }
             break;
@@ -659,6 +996,7 @@ private:
         case WM_TIMER:
             if (w == TIMER_FADE) self->fadeStep();
             else if (w == TIMER_SAVE) self->save();
+            else if (w == TIMER_GLIDE) self->glideStep(false);
             return 0;
         case WM_NOTIFY:
         {
@@ -669,6 +1007,7 @@ private:
                 lettersFromNote(self->_sci, n->position, n->length, n->modificationType);
                 flashFromNote(self->_sci, n->position, n->length, n->modificationType);
             }
+            if (n->nmhdr.hwndFrom == self->_sci && n->nmhdr.code == SCN_CHARADDED) self->keepIndent(n->ch);
             if (n->nmhdr.hwndFrom == self->_sci && n->nmhdr.code == SCN_MODIFIED && !self->_loading
                 && (n->modificationType & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)))
             {
@@ -699,9 +1038,15 @@ private:
     FILETIME _fileTime{};
     int _w96 = 640, _h96 = 420, _x = INT_MIN, _y = INT_MIN, _zoom = INT_MIN;
     LRESULT _marginWidth = -1;
-    HWND _note = nullptr, _sci = nullptr, _prevFg = nullptr;
+    HWND _note = nullptr, _sci = nullptr, _prevFg = nullptr, _tip = nullptr;
     int _alpha = 255, _alphaFrom = 0, _alphaTo = 255;
     double _fadeT0 = 0;
+    bool _hover = false, _pressed = false;
+    std::wstring _tipText;
+    POINT _glideFrom{}, _glideTarget{};
+    double _glideT0 = -1;
+    HFONT _glyphFont = nullptr;
+    int _glyphPx = 0;
 };
 
 QuickNote* s_mod = nullptr;
@@ -718,6 +1063,9 @@ std::wstring quickNoteFile() { return s_mod ? s_mod->file() : std::wstring(); }
 std::wstring quickNoteFileError() { return s_mod ? s_mod->fileError() : std::wstring(); }
 void quickNoteOpenFile() { if (s_mod) s_mod->openFileInNpp(); }
 void quickNoteOptionsChanged() { if (s_mod) s_mod->loadOptions(); }
+void quickNoteTogglePin() { if (s_mod) s_mod->togglePin(); }
+RECT quickNotePinRect() { return s_mod ? s_mod->pinScreenRect() : RECT{}; }
+bool quickNoteGliding() { return s_mod && s_mod->gliding(); }
 
 // KEX > Quick Note > Open Note File in Notepad++ (Shortcut Mapper can give it a key)
 void addNoteCommands(HMENU parent, int position)

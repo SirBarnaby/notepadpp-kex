@@ -34,6 +34,28 @@ int g_globalModified = 0;
 HWND g_testWnd = nullptr;        // helper window: "another program" hotkey owner, menu tracking
 PROCESS_INFORMATION g_other{};    // Wine's notepad.exe, the "previously active window"
 HWND g_otherWnd = nullptr;
+std::string g_noteText;           // the quick note's text, put back after the indentation test
+RECT g_noteGlideMid{};             // where the note was partway through its glide back to the middle
+bool g_noteGlided = false;
+HWND g_testShell = nullptr;        // a stand-in for Explorer's desktop window under Wine
+
+// A plain window registered as the shell's desktop window, at the bottom of the windows, as Progman is.
+HWND makeTestShell()
+{
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = ::DefWindowProcW;
+    wc.hInstance = ::GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"KexTestShell";
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BACKGROUND + 1);
+    ::RegisterClassW(&wc);
+    HWND h = ::CreateWindowExW(0, wc.lpszClassName, L"Program Manager", WS_POPUP, 0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+                               ::GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+    using SetShell = BOOL(WINAPI*)(HWND);
+    auto setShell = reinterpret_cast<SetShell>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "SetShellWindow")));
+    if (!h || !setShell || !setShell(h)) { if (h) ::DestroyWindow(h); return nullptr; }
+    ::SetWindowPos(h, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return h;
+}
 PROCESS_INFORMATION g_second{};   // second notepad++.exe
 const UINT WM_TEST_TRACKMENU = WM_APP + 501;
 int g_origCaretWidth = 1;
@@ -475,7 +497,6 @@ std::vector<intptr_t> recentOrder()
     return out;
 }
 std::string g_flashText;   // a.cpp before the flash steps edit it
-bool g_lettersWereOn = true;   // the cut ghost step turns the falling letters off for a moment
 bool g_flashModified = false;
 
 // the text of the second window's tab that holds `want` ("" when none does)
@@ -1938,6 +1959,184 @@ void buildSteps()
         focusEditor();
         return until([] { return lettersStats().live == 0; }, 6000);
     });
+    add([] {
+        // Enter keeps the indentation of the line above, tabs as tabs and spaces as spaces
+        tlog(L"INFO Notepad++ auto-indent on: %d", static_cast<int>(nppMsg(NPPM_ISAUTOINDENTON, 0, 0)));
+        pressHotkey();
+        pump(250);
+        HWND ed = quickNoteEditor();
+        if (!ed) { check(false, L"Q17", L"the note opens for the indentation test"); return 100; }
+        g_noteText = docText(ed);
+        sci(ed, SCI_SETEOLMODE, SC_EOL_LF);
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>("\tabc"));
+        sci(ed, SCI_DOCUMENTEND);
+        const int before = hotkeyStats().indents;
+        tap(VK_RETURN);
+        tap('X');
+        pump(100);
+        sci(ed, SCI_NEWLINE);   // the path Notepad++'s own Enter takes, as a second way in
+        pump(100);
+        const std::string tabs = docText(ed);
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>("    def f():"));
+        sci(ed, SCI_DOCUMENTEND);
+        tap(VK_RETURN);
+        pump(100);
+        const std::string spaces = docText(ed);
+        // Enter in the middle of the blanks: the new line gets the line above's indentation, not more
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>("\t\tx"));
+        sci(ed, SCI_GOTOPOS, 1);
+        tap(VK_RETURN);
+        pump(100);
+        const std::string middle = docText(ed);
+        check(tabs == "\tabc\n\tx\n\t" && spaces == "    def f():\n    " && middle == "\t\n\tx" && hotkeyStats().indents - before == 4, L"Q17",
+              L"Enter in the note keeps the line above's indentation: tabs %ls, spaces %ls, from inside the blanks %ls (%d kept)",
+              tabs == "\tabc\n\tx\n\t" ? L"ok" : L"WRONG", spaces == "    def f():\n    " ? L"ok" : L"WRONG", middle == "\t\n\tx" ? L"ok" : L"WRONG",
+              hotkeyStats().indents - before);
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(g_noteText.c_str()));
+        return 100;
+    });
+    add([] {
+        // the pin on the top strip: pins the note where it is; pinned, it sends it back to the middle
+        const wchar_t* k = modules[M_HOTKEY]->key();
+        HWND q = quickNoteWindow();
+        if (!q) { check(false, L"Q18", L"the note is open for the pin test"); return 100; }
+        ::SetWindowPos(q, nullptr, 80, 70, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        pump(50);
+        const RECT pin = quickNotePinRect();
+        RECT r{}; ::GetWindowRect(q, &r);
+        const POINT pc{ (pin.left + pin.right) / 2, (pin.top + pin.bottom) / 2 };
+        const int onPin = static_cast<int>(::SendMessageW(q, WM_NCHITTEST, 0, MAKELPARAM(pc.x, pc.y)));
+        const int strip = static_cast<int>(::SendMessageW(q, WM_NCHITTEST, 0, MAKELPARAM(pin.left - 20, pc.y)));
+        check(pin.right > pin.left && pin.right <= r.right && pin.top >= r.top && pin.bottom - r.top <= 30 && onPin == HTCLIENT && strip == HTCAPTION, L"Q18",
+              L"the pin sits on the top strip at the right %ls: a button there (%d), the strip beside it still moves the note (%d)",
+              rectStr(pin).c_str(), onPin, strip);
+        const int pins = hotkeyStats().pins;
+        clickAt(pc.x, pc.y);
+        pump(150);
+        check(hotkeyStats().pins == pins + 1 && settings.getInt(k, L"RememberPlace", 0) == 1 && settings.getInt(k, L"X", 0) == 80 &&
+              settings.getInt(k, L"Y", 0) == 70 && ::GetFocus() == quickNoteEditor(), L"Q19",
+              L"clicking the pin pins the note at 80,70 (\"Open where I left it\" on), the typing focus stays in the note");
+        return shot(L"quick-note-pinned");
+    });
+    add([] {
+        pressHotkey();
+        pump(250);
+        pressHotkey();
+        pump(250);
+        HWND q = quickNoteWindow();
+        RECT r{}; if (q) ::GetWindowRect(q, &r);
+        check(q && r.left == 80 && r.top == 70, L"Q20", L"pinned: hidden and shown again, it comes back at %ls", rectStr(r).c_str());
+        const int resets = hotkeyStats().resets;
+        const RECT pin = quickNotePinRect();
+        clickAt((pin.left + pin.right) / 2, (pin.top + pin.bottom) / 2);
+        pump(80);
+        RECT mid{}; if (q) ::GetWindowRect(q, &mid);
+        g_noteGlideMid = mid;
+        g_noteGlided = quickNoteGliding();
+        return until([] { return !quickNoteGliding(); }, 2000);
+    });
+    add([] {
+        const wchar_t* k = modules[M_HOTKEY]->key();
+        HWND q = quickNoteWindow();
+        RECT r{}; if (q) ::GetWindowRect(q, &r);
+        MONITORINFO mi{ sizeof(mi) }; ::GetMonitorInfoW(::MonitorFromWindow(q, MONITOR_DEFAULTTONEAREST), &mi);
+        const int cx = (mi.rcWork.left + mi.rcWork.right) / 2 - (r.left + r.right) / 2, cy = (mi.rcWork.top + mi.rcWork.bottom) / 2 - (r.top + r.bottom) / 2;
+        const bool between = g_noteGlideMid.left > 80 && g_noteGlideMid.left < r.left;
+        check(q && g_untilOk && g_noteGlided && between && std::abs(cx) <= 1 && std::abs(cy) <= 1 && hotkeyStats().resets >= 1 &&
+              settings.getInt(k, L"RememberPlace", 1) == 0, L"Q21",
+              L"clicking it again: the note glides back to the middle (at %d px partway, off by %d,%d at the end) and is unpinned",
+              g_noteGlideMid.left, cx, cy);
+        pressHotkey();
+        pump(250);
+        pressHotkey();
+        pump(250);
+        RECT r2{}; if (quickNoteWindow()) ::GetWindowRect(quickNoteWindow(), &r2);
+        check(quickNoteWindow() && r2.left == r.left && r2.top == r.top, L"Q22", L"unpinned: it opens in the middle again, %ls", rectStr(r2).c_str());
+        pressHotkey();
+        pump(250);
+        return 100;
+    });
+    add([] {
+        // Virtual desktops (fake ones here). The note is a tool window, shown on every desktop, so handing
+        // the focus to a window of another desktop would make Windows switch there. Every window open now
+        // is on desktop 1 (index 0); the user goes to desktop 2, where nothing is open.
+        EnumWindows([](HWND h, LPARAM) -> BOOL { if (::IsWindowVisible(h)) fakeWindowDesktop(h); return TRUE; }, 0);
+        ::ShowWindow(npp._nppHandle, SW_RESTORE);
+        std::wstring report;
+        bool ok = true;
+        // Windows' desktop window (Explorer's Progman) is on every desktop; Wine's virtual desktop has none,
+        // so a stand-in is made here, at the bottom of the windows
+        if (!::GetShellWindow()) g_testShell = makeTestShell();
+        const HWND shell = ::GetShellWindow();
+        tlog(L"INFO shell window %p (%ls)", shell, g_testShell ? L"a stand-in for Explorer's" : L"Explorer's");
+        for (HWND stale : { g_otherWnd, npp._nppHandle })
+        {
+            fakeSwitchTo(0);
+            ::SetForegroundWindow(stale);
+            pump(200);
+            fakeSwitchTo(1);   // Windows can still name the window of the desktop that was left as the foreground
+            const HotkeyStats a = hotkeyStats();
+            pressHotkey();
+            pump(250);
+            const bool opened = quickNoteWindow() && ::GetForegroundWindow() == quickNoteWindow();
+            pressHotkey();
+            pump(300);
+            const HotkeyStats b = hotkeyStats();
+            const HWND fg = ::GetForegroundWindow();
+            const bool good = opened && !quickNoteWindow() && b.otherDesktopFg == a.otherDesktopFg + 1 && b.focusFallbacks == a.focusFallbacks + 1 &&
+                              b.lastFocusTo != g_otherWnd && b.lastFocusTo != npp._nppHandle && shell && b.lastFocusTo == shell &&
+                              fg != g_otherWnd && fg != npp._nppHandle;
+            ok = ok && good;
+            wchar_t line[160];
+            swprintf(line, 160, L"%ls %ls on desktop 1, focus then to %p (%ls); ", good ? L"ok" : L"WRONG",
+                     stale == g_otherWnd ? L"another program" : L"Notepad++", b.lastFocusTo, b.lastFocusTo == shell ? L"the desktop" : L"a window");
+            report += line;
+        }
+        check(ok, L"Q23", L"on an empty desktop 2 with the last window of desktop 1 still named the foreground: the note opens here and, hidden, "
+                          L"hands the focus to the desktop, never to desktop 1: %ls", report.c_str());
+        return 100;
+    });
+    add([] {
+        // the window you were in is on this desktop: the focus goes back to it, as on one desktop
+        DesktopProvider* p = desktopProvider();
+        if (p) p->moveWindow(g_otherWnd, fakeDesktopGuid(1));
+        ::SetForegroundWindow(g_otherWnd);
+        pump(200);
+        const HotkeyStats a = hotkeyStats();
+        pressHotkey();
+        pump(250);
+        pressHotkey();
+        pump(300);
+        const HotkeyStats b = hotkeyStats();
+        check(b.otherDesktopFg == a.otherDesktopFg && b.focusFallbacks == a.focusFallbacks && b.lastFocusTo == g_otherWnd && ::GetForegroundWindow() == g_otherWnd,
+              L"Q24", L"a program open on desktop 2 too: hidden, the note gives the focus back to it");
+        // the user moves to desktop 3 while the note is open, then hides it (the hotkey, then Esc)
+        std::wstring how;
+        bool ok = true;
+        for (int esc = 0; esc < 2; ++esc)
+        {
+            fakeSwitchTo(1);
+            ::SetForegroundWindow(g_otherWnd);
+            pump(150);
+            pressHotkey();
+            pump(250);
+            fakeSwitchTo(2);
+            const HotkeyStats c = hotkeyStats();
+            if (esc) tap(VK_ESCAPE); else pressHotkey();
+            pump(300);
+            const HotkeyStats d = hotkeyStats();
+            const bool good = !quickNoteWindow() && d.focusFallbacks == c.focusFallbacks + 1 && d.lastFocusTo != g_otherWnd && ::GetForegroundWindow() != g_otherWnd;
+            ok = ok && good;
+            how += esc ? (good ? L"Esc ok" : L"Esc WRONG") : (good ? L"hotkey ok, " : L"hotkey WRONG, ");
+        }
+        check(ok, L"Q25", L"opened on desktop 2, hidden after a move to desktop 3: the focus stays on desktop 3 (%ls)", how.c_str());
+        fakeSwitchTo(0);
+        if (p) p->moveWindow(g_otherWnd, fakeDesktopGuid(0));
+        if (g_testShell) { ::DestroyWindow(g_testShell); g_testShell = nullptr; }
+        ::ShowWindow(npp._nppHandle, SW_RESTORE);
+        focusEditor();
+        return 200;
+    });
 
     // ---- F12 hover tabs --------------------------------------------------------------------------
     add([] {
@@ -2092,9 +2291,9 @@ void buildSteps()
     add([] {
         const TabMotionStats st = tabMotionStats();
         check(curName() == L"f1.txt" && st.unfolds == g_motion.unfolds + 1 && st.overlayShown && std::fabs(st.lastFraction - 0.5f) < 0.01f && st.lastDx > 0
-              && st.foldFrames > g_motion.foldFrames, L"TF1",
-              L"opening f1.txt unfolds its tab: the tabs on its right make room (%d px, held at %.2f, skipped %d)", st.lastDx, st.lastFraction,
-              st.foldSkipped - g_motion.foldSkipped);
+              && st.foldFrames > g_motion.foldFrames && st.lastDrop > 0 && st.lastWidth > st.lastDx * 0.9f, L"TF1",
+              L"opening f1.txt: the tabs on its right have made room (%.1f of %d px) and the tab rises into it (%d px still to go; held at %.2f, skipped %d)",
+              st.lastWidth, st.lastDx, st.lastDrop, st.lastFraction, st.foldSkipped - g_motion.foldSkipped);
         for (int k = 1; k <= 9; k += 2)   // the motion at 10, 30, 50, 70 and 90%, for a look at it
         {
             tabMotionTestFreeze(k / 10.0);
@@ -2127,9 +2326,12 @@ void buildSteps()
     add([] {
         const TabMotionStats st = tabMotionStats();
         const SlideStats sl = slideStats(curSci());
-        const float expect = st.lastDx * 0.125f;   // ease-out at half time: 7/8 of the way closed
-        check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && std::fabs(st.lastWidth - expect) < 1.0f, L"TF3",
-              L"closing f1.txt collapses its tab: %.1f of %d px left half-way (ease-out), the tabs on its right sliding over", st.lastWidth, st.lastDx);
+        // half-way: the gap has been closing on a spring since 20 % of the time; the tab has sunk most of the way
+        const double u = (0.5 - 0.2) / 0.8;
+        const float expect = static_cast<float>(st.lastDx * (1.0 + 7.43 * u) * std::exp(-7.43 * u));
+        check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && std::fabs(st.lastWidth - expect) < 1.0f && st.lastDrop > 0, L"TF3",
+              L"closing f1.txt: its tab sinks into the bar (%d px down, no fade), the tabs on its right gliding over (%.1f of %d px left half-way)",
+              st.lastDrop, st.lastWidth, st.lastDx);
         const int now = views.currentIndex(views.viewOf(curSci()));
         const int dir = now >= g_closedIdx ? 1 : -1;
         check(sl.active && sl.slides == g_fadeSlides + 1 && sl.afterClose == g_slideCloses + 1 && sl.lastDir == dir && std::fabs(sl.fraction - 0.5f) < 0.01f, L"TF3b",
@@ -2188,9 +2390,11 @@ void buildSteps()
     });
     add([] {
         const TabMotionStats st = tabMotionStats();
-        check(st.saves == g_motion.saves + 1 && st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines && st.overlayShown
-              && st.glintFrames > g_motion.glintFrames && sci(curSci(), SCI_GETMODIFY) == 0, L"TF6", L"saving sv.txt sends a glint across its tab");
+        check(st.saves == g_motion.saves + 1 && st.glints == g_motion.glints + 2 && st.glintLines == g_motion.glintLines + 1 && st.overlayShown
+              && st.glintFrames > g_motion.glintFrames && sci(curSci(), SCI_GETMODIFY) == 0, L"TF6",
+              L"saving sv.txt sends a glint across its tab and, at the same moment, along the top of its view");
         tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(L"frame-glint-half.bmp"));
+        tabMotionTestSave(curSci(), path(L"frame-glint-half-line.bmp"));
         return shot(L"save-glint-half-way");
     });
     add([] {
@@ -2223,8 +2427,9 @@ void buildSteps()
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
         pump(150);
         const TabMotionStats st = tabMotionStats();
-        check(arrows && st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines && st.overlayShown, L"TF7b",
-              L"a bar with scroll arrows (%ls): saving %ls sends the glint across its tab, as everywhere else", arrows ? L"shown" : L"NOT shown", curName().c_str());
+        check(arrows && st.glints == g_motion.glints + 2 && st.glintLines == g_motion.glintLines + 1 && st.overlayShown, L"TF7b",
+              L"a bar with scroll arrows (%ls): saving %ls sends the glint across its tab and the top of the view, as everywhere else",
+              arrows ? L"shown" : L"NOT shown", curName().c_str());
         pump(250);   // to half way
         tabMotionTestSave(bar, path(L"frame-glint-scroll-arrows.bmp"));
         return shot(L"save-glint-scroll-arrows");
@@ -2453,38 +2658,77 @@ void buildSteps()
         return 100;
     });
     add([] {
-        // cut: the text lifts away, not also counted as a copy
+        // cut: the text closes up (Scintilla's close-up), not also counted as a copy
         HWND s = curSci();
         lettersFreezeAfter(-1);
         waitFor([] { return flashStats().live == 0; }, 3000);
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        const FlashStats before = flashStats();
-        tokCommand(IDM_EDIT_CUT);
-        waitFor([before] { return flashStats().ghosts > before.ghosts; }, 1500);
-        pump(250);   // the clipboard listener hears of the cut, so the next removal isn't taken for one
-        const FlashStats st = flashStats();
-        check(st.cuts == before.cuts + 1 && st.copies == before.copies && st.deletes == before.deletes && st.ghosts == before.ghosts + 1 && st.spawned == before.spawned,
-              L"X3", L"Edit > Cut: the cut text lifts away, one piece (cuts %d, copies %d, flashes %d)", st.cuts - before.cuts, st.copies - before.copies,
-              st.spawned - before.spawned);
-        sci(s, SCI_UNDO);
-        // delete: the text shrinks away
         focusEditor();
         sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        lettersFreezeAfter(60);
-        tap(VK_DELETE);
-        waitFor([st] { return flashStats().ghosts > st.ghosts; }, 1500);
-        pump(100);
-        const FlashStats st2 = flashStats();
-        check(st2.deletes == st.deletes + 1 && st2.cuts == st.cuts && st2.lastRects == 1 && st2.ghosts == st.ghosts + 1 && st2.ghostsLive >= 1, L"X4",
-              L"Delete on a selection: the text shrinks away (deletes %d, %d piece on screen)", st2.deletes - st.deletes, st2.ghostsLive);
-        return shot(L"delete-shrink");
+        const FlashStats before = flashStats();
+        const SlideStats sb = slideStats(s);
+        slideTestFreeze(0.35);   // hold it a third of the way: the text fading, the rest of the line on its way left
+        tokCommand(IDM_EDIT_CUT);
+        waitFor([before] { return flashStats().closeUps > before.closeUps; }, 1500);
+        pump(150);
+        const FlashStats st = flashStats();
+        const SlideStats ss = slideStats(s);
+        check(st.cuts == before.cuts + 1 && st.copies == before.copies && st.deletes == before.deletes && st.closeUps == before.closeUps + 1 && st.spawned == before.spawned
+              && st.lastCloseUp == s, L"X3", L"Edit > Cut: the text closes up (cuts %d, copies %d, flashes %d, close-ups %d)", st.cuts - before.cuts,
+              st.copies - before.copies, st.spawned - before.spawned, st.closeUps - before.closeUps);
+        check(ss.active && ss.collapses == sb.collapses + 1 && ss.collapseKind == 1 && ss.collapseFrames > sb.collapseFrames && ss.gap > 0.2f && ss.gap < 1.0f,
+              L"X3b", L"... drawn by Scintilla: one line, the rest of it %.0f %% of the way from its place (%d frames)", ss.gap * 100.0, ss.collapseFrames - sb.collapseFrames);
+        return shot(L"cut-close-up-third");
     });
     add([] {
         HWND s = curSci();
+        const SlideStats sb = slideStats(s);
+        slideTestFreeze(-1);
+        waitFor([s] { return !slideStats(s).active; }, 2000);
+        const SlideStats ss = slideStats(s);
+        check(!ss.active && ss.collapseEnded == sb.collapseEnded && ss.gap < 0.01f, L"X3c", L"... and it settles by itself (gap %.3f, ended early: %d)",
+              ss.gap, ss.collapseEnded - sb.collapseEnded);
         sci(s, SCI_UNDO);
-        lettersFreezeAfter(-1);
-        // typing over a selection, or deleting single characters, flashes nothing
+        // delete: the same close-up, without the light
         focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
+        const FlashStats st = flashStats();
+        tap(VK_DELETE);
+        waitFor([st] { return flashStats().closeUps > st.closeUps; }, 1500);
+        const FlashStats st2 = flashStats();
+        check(st2.deletes == st.deletes + 1 && st2.cuts == st.cuts && st2.lastRects == 1 && st2.closeUps == st.closeUps + 1, L"X4",
+              L"Delete on a selection: the text closes up (deletes %d, close-ups %d)", st2.deletes - st.deletes, st2.closeUps - st.closeUps);
+        waitFor([s] { return !slideStats(s).active; }, 2000);
+        sci(s, SCI_UNDO);
+        return 100;
+    });
+    add([] {
+        HWND s = curSci();
+        // over three lines: the lines below move up while the end of the last line joins the first
+        focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 0, 3), posOf(s, 2, 2));
+        const SlideStats sb = slideStats(s);
+        slideTestFreeze(0.5);
+        tokCommand(IDM_EDIT_CUT);
+        pump(200);
+        const SlideStats ss = slideStats(s);
+        check(ss.active && ss.collapses == sb.collapses + 1 && ss.collapseKind == 2 && ss.gap > 0.0f && ss.gap < 0.9f, L"X5",
+              L"cutting across three lines: the text below glides up (%.0f %% of the way to go)", ss.gap * 100.0);
+        return shot(L"cut-close-up-lines-half-way");
+    });
+    add([] {
+        HWND s = curSci();
+        // typing during a close-up ends it at once: the editor never waits for an animation
+        const SlideStats sb = slideStats(s);
+        focusEditor();
+        tap('Q');
+        pump(100);
+        const SlideStats ss = slideStats(s);
+        check(!ss.active && ss.collapseEnded == sb.collapseEnded + 1, L"X6", L"a key pressed during the close-up ends it at once (ended %d)",
+              ss.collapseEnded - sb.collapseEnded);
+        slideTestFreeze(-1);
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        // typing over a selection, or deleting single characters, shows nothing
         const FlashStats before = flashStats();
         sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
         tap('X');
@@ -2494,53 +2738,17 @@ void buildSteps()
         tap(VK_BACK);
         pump(100);
         const FlashStats st = flashStats();
-        check(st.deletes == before.deletes && st.cuts == before.cuts && st.copies == before.copies, L"X5",
-              L"typing over a selection and deleting single characters: no flash");
-        // its own switch: copies stay quiet
+        check(st.deletes == before.deletes && st.cuts == before.cuts && st.copies == before.copies && st.closeUps == before.closeUps, L"X7",
+              L"typing over a selection and deleting single characters: nothing");
+        // their own switches
         settings.setInt(modules[M_FLASH]->key(), L"Copy", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"CutClose", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"DeleteClose", 0);
         modules[M_FLASH]->loadOptions();
+        const FlashStats b4 = flashStats();
         sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 1, 4));
-        const FlashStats b2 = flashStats();
         tokCommand(IDM_EDIT_COPY);
         pump(200);
-        check(flashStats().spawned == b2.spawned, L"X6", L"\"Copy\" unticked: copying flashes nothing");
-        settings.setInt(modules[M_FLASH]->key(), L"Copy", 1);
-        modules[M_FLASH]->loadOptions();
-        // the falling letters off: the ghost carries the text itself, in its own fonts and colours
-        const bool letters = modules[M_LETTERS]->isEnabled();
-        setModuleEnabled(M_LETTERS, false, false);
-        waitFor([] { return flashStats().live == 0; }, 3000);
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        const std::string all = docText(s);
-        int expect = 0;
-        std::string cutText;
-        for (intptr_t i = posOf(s, 2, 0); i < posOf(s, 2, 5) && i < static_cast<intptr_t>(all.size()); ++i)
-        {
-            cutText += all[static_cast<size_t>(i)];
-            if (static_cast<unsigned char>(all[static_cast<size_t>(i)]) > ' ') ++expect;
-        }
-        const FlashStats b3 = flashStats();
-        lettersFreezeAfter(110);
-        tokCommand(IDM_EDIT_CUT);
-        waitFor([b3] { return flashStats().ghosts > b3.ghosts; }, 1500);
-        pump(150);
-        const FlashStats st3 = flashStats();
-        check(expect > 0 && st3.ghosts == b3.ghosts + 1 && st3.ghostChars == expect && st3.ghostsLive >= 1, L"X7",
-              L"falling letters off: the cut ghost carries the text (%d of the %d characters to draw in \"%hs\")", st3.ghostChars, expect, cutText.c_str());
-        g_lettersWereOn = letters;
-        return shot(L"cut-lift");
-    });
-    add([] {
-        HWND s = curSci();
-        if (g_lettersWereOn) setModuleEnabled(M_LETTERS, true, false);
-        lettersFreezeAfter(-1);
-        sci(s, SCI_UNDO);
-        // their own switches
-        settings.setInt(modules[M_FLASH]->key(), L"CutLift", 0);
-        settings.setInt(modules[M_FLASH]->key(), L"DeleteFade", 0);
-        modules[M_FLASH]->loadOptions();
-        waitFor([] { return flashStats().live == 0; }, 3000);
-        const FlashStats b4 = flashStats();
         sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
         tokCommand(IDM_EDIT_CUT);
         pump(250);
@@ -2550,11 +2758,12 @@ void buildSteps()
         tap(VK_DELETE);
         pump(200);
         const FlashStats st4 = flashStats();
-        check(st4.cuts == b4.cuts + 1 && st4.deletes == b4.deletes + 1 && st4.ghosts == b4.ghosts, L"X8",
-              L"\"Cut\" and \"Delete\" unticked: cutting and deleting show nothing");
+        check(st4.cuts == b4.cuts + 1 && st4.deletes == b4.deletes + 1 && st4.closeUps == b4.closeUps && st4.spawned == b4.spawned, L"X8",
+              L"\"Copy\", \"Cut\" and \"Delete\" unticked: copying, cutting and deleting show nothing");
         sci(s, SCI_UNDO);
-        settings.setInt(modules[M_FLASH]->key(), L"CutLift", 1);
-        settings.setInt(modules[M_FLASH]->key(), L"DeleteFade", 1);
+        settings.setInt(modules[M_FLASH]->key(), L"Copy", 1);
+        settings.setInt(modules[M_FLASH]->key(), L"CutClose", 1);
+        settings.setInt(modules[M_FLASH]->key(), L"DeleteClose", 1);
         modules[M_FLASH]->loadOptions();
         // a.cpp as it was
         if (docText(s) != g_flashText)
@@ -2564,7 +2773,7 @@ void buildSteps()
         }
         if (!g_flashModified) sci(s, SCI_SETSAVEPOINT);
         sci(s, SCI_SETEMPTYSELECTION, posOf(s, 0, 0));
-        return until([] { return flashStats().live == 0; }, 3000);
+        return until([s] { return flashStats().live == 0 && !slideStats(s).active; }, 3000);
     });
     add([] {
         // paint splash: Style All Occurrences of Token splashes every new occurrence

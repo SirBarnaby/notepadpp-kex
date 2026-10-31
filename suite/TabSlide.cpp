@@ -117,6 +117,7 @@ SlideStats slideStats(HWND view)
     KexSlideInfo info{};
     if (view) st.active = ::SendMessageW(view, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&info)) != 0;
     st.slides = info.slides; st.frames = info.frames; st.captures = info.captures; st.cancelled = info.cancelled; st.stopReason = info.stopReason; st.fraction = info.fraction;
+    st.collapses = info.collapses; st.collapseFrames = info.collapseFrames; st.collapseEnded = info.collapseEnded; st.collapseKind = info.collapseKind; st.gap = info.gap;
     return st;
 }
 
