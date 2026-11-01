@@ -6,8 +6,11 @@
 // the user's choosing (kept in its own encoding and line endings). The note has no title bar: a thin
 // strip along its top moves it, the other edges and corners resize it. A small pin at the right of that
 // strip keeps the note where it is (it opens there next time); pinned, the same button sends it back to
-// the middle of the screen. Its editor gets the smooth caret, the falling letters and the copy/cut/delete
-// effects, as the views do, and keeps the indentation of the line above when Enter is pressed.
+// the middle of the screen. Its editor gets the smooth caret, the falling letters, the copy flash and the
+// editing motion, as the views do, and keeps the indentation of the line above when Enter is pressed.
+// With "Zoom in as it opens" on (off by default) the note grows from 94 % to its size as it fades in, on a
+// spring without bounce, and shrinks a little as it fades out: a picture of it on a click-through layered
+// window plays that, the note itself shows once it is in place, and typing ends it at once.
 //
 // Virtual desktops: the note is a tool window, and Windows shows tool windows on every desktop, so it
 // stays in front when the user switches desktops. Hiding it never hands the focus to a window on another
@@ -27,7 +30,7 @@ namespace kex {
 namespace {
 
 const int HOTKEY_ID = 0x4B45;
-const UINT_PTR TIMER_FADE = 1, TIMER_SAVE = 2, TIMER_TAKEOVER = 3, TIMER_GLIDE = 4;
+const UINT_PTR TIMER_FADE = 1, TIMER_SAVE = 2, TIMER_TAKEOVER = 3, TIMER_GLIDE = 4, TIMER_ZOOM = 5;
 const double FADE_MS = 150.0;
 const int FRAME96 = 7;                 // the edge around the text: the sides and bottom resize it
 const int TOP96 = 16;                  // the strip along the top: moves it, holds the grip and the pin
@@ -35,6 +38,15 @@ const int PIN96 = 22;                  // the pin button's width
 const double GLIDE_RESPONSE_S = 0.32;  // the glide back to the middle: a spring without bounce
 const wchar_t* NOTE_CLASS = L"KexQuickNote";
 HotkeyStats s_stats;
+double s_zoomFreeze = -1;              // self-test: the zoom stops at this fraction
+
+// a critically damped spring from rest, settled (to 0.5 %) at u = 1
+double springTo(double u)
+{
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    return 1.0 - (1.0 + 7.43 * u) * std::exp(-7.43 * u);
+}
 
 // A window the focus can go to without Windows switching to another virtual desktop: shown, not
 // minimised, and on the desktop the user is looking at (a window on another desktop is cloaked).
@@ -81,6 +93,8 @@ public:
         _y = settings.getInt(key(), L"Y", INT_MIN);
         _zoom = settings.getInt(key(), L"Zoom", INT_MIN);
         _smoothCaret = settings.getInt(key(), L"SmoothCaret", 1) != 0;
+        _zoomOpen = settings.getInt(key(), L"ZoomOpen", 0) != 0;
+        _zoomOpenMs = std::max(80, std::min(1500, settings.getInt(key(), L"ZoomOpenMs", 320)));
         _autoHide = settings.getInt(key(), L"HideWhenInactive", 0) != 0;
         _opacity = std::max(30, std::min(100, settings.getInt(key(), L"Opacity", 100)));
         const std::wstring f = noteFileSetting();
@@ -134,6 +148,7 @@ public:
         if (hwnd() && s_stats.registered) ::UnregisterHotKey(hwnd(), HOTKEY_ID);
         s_stats.registered = false;
         destroyNote(true);
+        zoomEnd();
         destroyMsgWindow();
         if (_glyphFont) { ::DeleteObject(_glyphFont); _glyphFont = nullptr; _glyphPx = 0; }
     }
@@ -217,6 +232,7 @@ protected:
     LRESULT onMessage(UINT m, WPARAM w, LPARAM l) override
     {
         if (m == WM_HOTKEY && w == HOTKEY_ID) { log(L"WM_HOTKEY received"); press(); return 0; }
+        if (m == WM_TIMER && w == TIMER_ZOOM) { zoomStep(); return 0; }
         if (m == WM_TIMER && w == TIMER_TAKEOVER)
         {
             if (registerKey() || !s_stats.byOtherNpp) { ::KillTimer(hwnd(), TIMER_TAKEOVER); refreshPrefPages(); }
@@ -259,8 +275,9 @@ private:
 
         std::wstring caption = L"Quick note  (" + s_stats.text + L" or Esc to hide)";
         // Layered for its whole life when it fades: switching the style on a shown window is what made
-        // the fade skip now and then.
-        _layered = (_fade || _opacity < 100) && !binaryAlpha();
+        // the fade skip now and then. (The self-test runs the zoom under Wine too, which has no partial alpha.)
+        zoomEnd();
+        _layered = (_fade || _opacity < 100 || _zoomOpen) && (!binaryAlpha() || (selfTestMode && _zoomOpen));
         DWORD ex = WS_EX_TOOLWINDOW | (_onTop ? WS_EX_TOPMOST : 0) | (_layered ? WS_EX_LAYERED : 0);
         // Unowned, so it shows even while Notepad++ is minimised; created fresh each time, so it opens on
         // the desktop you are looking at. No title bar: the edge around the text moves and sizes it.
@@ -283,13 +300,15 @@ private:
         applyEffects();
         layout();
 
-        if (_layered) { _alpha = _fade ? 0 : maxAlpha(); ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA); }
+        const bool appear = _fade || _zoomOpen;
+        if (_layered) { _alpha = appear ? 0 : maxAlpha(); ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA); }
         else _alpha = 255;
         ::ShowWindow(_note, SW_SHOWNA);
         // paint the text before the first visible frame, so the fade shows the note and not a blank box
         ::RedrawWindow(_note, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
         front();
-        if (_layered && _fade) fadeTo(maxAlpha());
+        if (_layered && _zoomOpen && zoomBegin(true)) {}
+        else if (_layered && appear) fadeTo(maxAlpha());
         s_stats.noteOpen = true;
         log(L"quick note: opened at %d,%d %dx%d, previous window %p", x, y, w, h, _prevFg);
     }
@@ -338,7 +357,8 @@ private:
         HWND to = nullptr;
         if (giveFocusBack) to = handFocusOn();
         log(L"quick note: closed, focus to %p (came from %p)", to, _prevFg);
-        if (_layered && _fade) fadeTo(0);
+        if (_layered && _zoomOpen && zoomBegin(false)) destroyNote(false);   // the picture of it zooms out
+        else if (_layered && _fade) fadeTo(0);
         else destroyNote(false);
     }
 
@@ -398,6 +418,94 @@ private:
         if (t < 1.0) return;
         ::KillTimer(_note, TIMER_FADE);
         if (_alphaTo == 0) destroyNote(false);
+    }
+
+    // ---- zoom: a picture of the note grows into place (opening) or shrinks away (closing) ----
+    bool zoomBegin(bool opening)
+    {
+        zoomEnd();
+        if (!_note || !hwnd()) return false;
+        RECT r{};
+        ::GetWindowRect(_note, &r);
+        const int w = r.right - r.left, h = r.bottom - r.top;
+        if (w < 8 || h < 8) return false;
+        // what the note shows, as Windows composes it (the editor draws with Direct2D)
+        Surface shot;
+        if (!shot.ensure(w, h)) return false;
+        shot.clear();
+        if (!::PrintWindow(_note, shot.dc, 2 /* PW_RENDERFULLCONTENT */) && !::PrintWindow(_note, shot.dc, 0)) return false;
+        ::GdiFlush();
+        _zoomPic.w = w;
+        _zoomPic.h = h;
+        _zoomPic.px.resize(static_cast<size_t>(w) * h);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) _zoomPic.px[static_cast<size_t>(y) * w + x] = shot.px[static_cast<size_t>(y) * shot.stride + x] | 0xFF000000u;
+        _zoomOverlay = createOverlayWindow(nullptr, _onTop, L"KEX quick note zoom");
+        if (!_zoomOverlay) { _zoomPic.px.clear(); return false; }
+        _zoomAt = POINT{ r.left, r.top };
+        _zoomOpening = opening;
+        _zoomT0 = nowMs();
+        _zoomPeak = maxAlpha() / 255.0;
+        ++s_stats.zooms;
+        s_stats.zoomOpening = opening;
+        s_stats.zoomLive = true;
+        zoomStep();
+        ::SetWindowPos(_zoomOverlay, _onTop ? HWND_TOPMOST : HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        ::SetTimer(hwnd(), TIMER_ZOOM, 10, nullptr);
+        return true;
+    }
+
+    void zoomStep()
+    {
+        if (!_zoomOverlay) { if (hwnd()) ::KillTimer(hwnd(), TIMER_ZOOM); return; }
+        // going is a little quicker than coming, as Apple's sheets are
+        const double ms = _zoomOpening ? _zoomOpenMs : _zoomOpenMs * 0.75;
+        double t = (nowMs() - _zoomT0) / ms;
+        if (s_zoomFreeze >= 0) t = std::min(t, s_zoomFreeze);
+        t = std::max(0.0, std::min(1.0, t));
+        double scale, alpha;
+        if (_zoomOpening)
+        {
+            scale = 0.94 + 0.06 * springTo(t);
+            const double f = std::min(1.0, t / 0.6);
+            alpha = 1.0 - (1.0 - f) * (1.0 - f) * (1.0 - f);
+        }
+        else
+        {
+            scale = 1.0 - 0.04 * t * t;
+            alpha = (1.0 - t) * (1.0 - t);
+        }
+        alpha *= _zoomPeak;
+        const int w = _zoomPic.w, h = _zoomPic.h;
+        if (_zoomFrame.ensure(w, h))
+        {
+            _zoomFrame.clear();
+            drawSprite(_zoomFrame, _zoomPic, w * 0.5f, h * 0.5f, 0.0f, static_cast<float>(alpha), static_cast<float>(scale), static_cast<float>(scale));
+            pushLayered(_zoomOverlay, _zoomFrame, _zoomAt, SIZE{ w, h });
+        }
+        ++s_stats.zoomFrames;
+        s_stats.zoomScale = static_cast<float>(scale);
+        s_stats.zoomAlpha = static_cast<float>(alpha);
+        if (t >= 1.0) zoomEnd();
+    }
+
+    // the picture goes; an opening note shows itself (at once when typing cut the zoom short)
+    void zoomEnd()
+    {
+        if (hwnd()) ::KillTimer(hwnd(), TIMER_ZOOM);
+        if (!_zoomOverlay) return;
+        if (_zoomOpening && _note && !_closing && _layered)
+        {
+            ::KillTimer(_note, TIMER_FADE);
+            _alpha = maxAlpha();
+            ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA);
+        }
+        ::DestroyWindow(_zoomOverlay);
+        _zoomOverlay = nullptr;
+        _zoomPic.px.clear();
+        _zoomPic.px.shrink_to_fit();
+        _zoomFrame.release();
+        s_stats.zoomLive = false;
     }
 
     int frame() const { return ::MulDiv(FRAME96, dpiOf(_note), 96); }
@@ -743,7 +851,7 @@ private:
     // the smooth caret, as the views have it (when that feature is on)
     void applyEffects()
     {
-        if (_sci) smoothCaretApply(_sci, _smoothCaret);
+        if (_sci) { smoothCaretApply(_sci, _smoothCaret); applyMotions(_sci); }
     }
 
     int maxAlpha() const { return _opacity * 255 / 100; }
@@ -1025,6 +1133,9 @@ private:
     {
         auto* self = reinterpret_cast<QuickNote*>(ref);
         if (m == WM_KEYDOWN && w == VK_ESCAPE) { self->close(); return 0; }
+        // typing (or a click) while it zooms in: the note is there at once
+        if (self->_zoomOverlay && self->_zoomOpening && (m == WM_KEYDOWN || m == WM_CHAR || m == WM_LBUTTONDOWN || m == WM_MOUSEWHEEL))
+            self->zoomEnd();
         if (m == WM_NCDESTROY) ::RemoveWindowSubclass(h, editorSubclass, 1);
         return ::DefSubclassProc(h, m, w, l);
     }
@@ -1032,7 +1143,13 @@ private:
     UINT _mods = MOD_CONTROL | MOD_ALT, _vk = 'M';
     bool _keepText = true, _fade = true, _closing = false, _dirty = false, _loading = false, _layered = false;
     bool _lineNumbers = false, _wrap = true, _caretLine = false, _onTop = true, _remember = false;
-    bool _smoothCaret = true, _autoHide = false;
+    bool _smoothCaret = true, _autoHide = false, _zoomOpen = false, _zoomOpening = false;
+    int _zoomOpenMs = 320;
+    HWND _zoomOverlay = nullptr;
+    Sprite _zoomPic;
+    Surface _zoomFrame;
+    POINT _zoomAt{};
+    double _zoomT0 = 0, _zoomPeak = 1;
     int _opacity = 100, _encoding = ENC_UTF8;
     std::wstring _file, _fileError;
     FILETIME _fileTime{};
@@ -1055,6 +1172,7 @@ QuickNote* s_mod = nullptr;
 
 Module* createHotkeyDrop() { s_mod = new QuickNote(); return s_mod; }
 HotkeyStats hotkeyStats() { return s_stats; }
+void quickNoteZoomFreeze(double fraction) { s_zoomFreeze = fraction; }
 void hotkeyPress() { if (s_mod && s_mod->isEnabled()) s_mod->press(); }
 std::wstring hotkeyText(UINT mods, UINT vk) { return QuickNote::text(mods, vk); }
 HWND quickNoteWindow() { return s_mod ? s_mod->noteWindow() : nullptr; }

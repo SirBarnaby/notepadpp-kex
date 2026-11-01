@@ -29,19 +29,20 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Snap-out windows**: drag a tab out of Notepad++ and its view gets its own window.
 - **Smooth caret**: the caret glides instead of jumping. It can fade, blink, or stay on.
 - **Falling letters**: deleted text falls off the screen. Their opacity can be set.
-- **Copy, cut and delete**: copied text flashes. Cut or deleted text fades where it was while the rest of the line glides in to close the gap.
+- **Editing motion**: edits move into place instead of jumping. Cut text lifts and goes, deleted text wipes away, pasted text makes room and lights up, moved lines slide past each other, folds open like drawers, sorted lines glide to their new places, and a far jump slides the page there. Each motion has its own switch and speed, and typing stops one at once.
+- **Copy flash**: copied text lights up for a moment.
 - **Tab slide**: switching tabs slides the next document in, like switching desktops in Windows 10.
 - **Tab close**: a closed tab sinks below the tab bar and the tabs beside it glide into its place. New tabs rise into a gap that opens for them.
-- **Save glint**: a glint runs across the tab and the top edge of the editor when a file is saved.
+- **Save glint**: one glint of light runs across the tab and along the top edge of the editor when a file is saved.
 - **Touchpad tab swipe**: swipe two fingers left or right to move to the next tab. The tab follows your fingers, and you can stop half way.
 - **Paint splash**: giving a word a colour splashes paint off it.
 - **JetBrains keys**: <kbd>Alt</kbd>+<kbd>J</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>/</kbd>, <kbd>Ctrl</kbd>+<kbd>D</kbd>, <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> and more. Rebind any of them in *Shortcut Mapper*.
 - **Live token styles**: styled words stay styled as you type. Bold and italic too, for every occurrence or just one.
-- **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app, on whichever virtual desktop you are on. Pin it to keep it where you put it. It can keep its text in a file you choose.
+- **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app, on whichever virtual desktop you are on. Pin it to keep it where you put it. It can keep its text in a file you choose, and zoom in as it opens.
 - **Per-desktop windows**: each virtual desktop gets its own Notepad++ with the same tabs and token styles, its own session and crash backup.
 - **F12 hover tabs**: in F12 mode, the tab bar appears when you touch the top of a view.
 - **Glass**: Windows' live blur behind the text, with clean letter edges. Off by default.
-- **On/off switches**: one per feature, in the KEX submenus at the bottom of the *Settings* menu.
+- **On/off switches**: one per feature and one per motion, in the *KEX* menu.
 - **Automatic updates**: a KEX build follows every Notepad++ release. Builds are signed, and the updater refuses unsigned ones.
 
 ## See it in action

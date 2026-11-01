@@ -6,8 +6,9 @@
 // picture at once, and its next paints move both pictures with an ease-out curve. Under DirectWrite
 // (Notepad++'s default) that is Direct2D on the graphics card; the window itself never moves.
 //
-// Closing a tab is a switch too: the document that takes the closed one's place comes in from the side its
-// tab came from, the way the tabs on the right slide over to close the gap (TabMotion.cpp).
+// Closing a tab is a switch too, but nothing slides then: only the closed tab moves (it sinks into the bar,
+// TabMotion.cpp) and the document that takes its place is simply there. (SlideOnClose=1 in kex.ini brings back
+// the slide from the side the tab came from.)
 #include "KexSuite.h"
 #include "KexScintilla.h"
 
@@ -27,6 +28,7 @@ public:
     {
         _ms = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 200)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
+        _onClose = settings.getInt(key(), L"SlideOnClose", 0) != 0;
     }
 
     bool selfCheck(std::wstring& why) override
@@ -88,7 +90,7 @@ public:
             closed = true;
         }
         const int dir = closed ? (newIdx >= oldIdx ? 1 : -1) : (newIdx < 0 || newIdx > oldIdx) ? 1 : -1;
-        if (closed) ++_afterClose;
+        if (closed) { ++_afterClose; if (!_onClose) return; }
         if (::SendMessageW(view, SCI_KEX_SLIDE, static_cast<WPARAM>(dir), _ms)) ++_started;
         _lastDir = dir;
     }
@@ -100,7 +102,7 @@ public:
     }
 
     int _ms = 200;
-    bool _respectAnim = true;
+    bool _respectAnim = true, _onClose = false;
     int _seen = 0, _started = 0, _skipped = 0, _lastDir = 0, _afterClose = 0;
     intptr_t _closing = 0;
     int _closingIdx[4] = { -1, -1, -1, -1 };
@@ -117,7 +119,6 @@ SlideStats slideStats(HWND view)
     KexSlideInfo info{};
     if (view) st.active = ::SendMessageW(view, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&info)) != 0;
     st.slides = info.slides; st.frames = info.frames; st.captures = info.captures; st.cancelled = info.cancelled; st.stopReason = info.stopReason; st.fraction = info.fraction;
-    st.collapses = info.collapses; st.collapseFrames = info.collapseFrames; st.collapseEnded = info.collapseEnded; st.collapseKind = info.collapseKind; st.gap = info.gap;
     return st;
 }
 

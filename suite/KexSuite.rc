@@ -157,10 +157,13 @@ BEGIN
     LTEXT           "In the note:", -1, 12, 132, 42, 8
     AUTOCHECKBOX    "Smooth caret", IDC_H_CARET, 56, 131, 62, 10
     AUTOCHECKBOX    "Falling letters", IDC_H_LETTERS, 122, 131, 64, 10
-    AUTOCHECKBOX    "Copy, cut and delete effects", IDC_H_FLASH, 190, 131, 116, 10
+    AUTOCHECKBOX    "Copy flash", IDC_H_FLASH, 190, 131, 116, 10
     LTEXT           "Opacity (%):", -1, 314, 132, 44, 8
     EDITTEXT        IDC_H_OPACITY, 360, 130, 28, 12, ES_NUMBER
-    LTEXT           "The note has no title bar: drag the strip along its top to move it, the other edges and corners to resize it. The pin on that strip keeps it where it is; pinned, the pin sends it back to the middle. Esc or the hotkey hides it and gives the focus back (never to a window on another desktop); Ctrl+mouse wheel zooms. Enter keeps the indentation. KEX > Quick Note > Open Note File in Notepad++ opens its text as a tab.", -1, 12, 147, 436, 36
+    AUTOCHECKBOX    "Zoom in as it opens, out as it goes", IDC_H_ZOOM, 12, 146, 150, 10
+    LTEXT           "Zoom (ms):", -1, 170, 147, 40, 8
+    EDITTEXT        IDC_H_ZOOMMS, 212, 145, 28, 12, ES_NUMBER
+    LTEXT           "No title bar: drag the top strip to move it, the edges to resize it. The pin keeps it in place; pinned, it sends it back to the middle. Esc or the hotkey hides it and never hands the focus to another desktop. Ctrl+wheel zooms; Enter keeps the indentation.", -1, 12, 161, 436, 24
 
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END
@@ -169,35 +172,75 @@ IDD_KEX_PAGE_EFFECTS DIALOGEX 115, 10, 460, 205
 STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    GROUPBOX        "Copy, cut and delete", -1, 4, 2, 452, 44
-    AUTOCHECKBOX    "The selection reacts when it is copied, cut or deleted", IDC_E_EN, 12, 14, 214, 10
-    LTEXT           "", IDC_E_STATUS, 232, 15, 216, 9
-    AUTOCHECKBOX    "Copy: a flash", IDC_E_COPY, 12, 29, 62, 10
-    AUTOCHECKBOX    "Cut: it lights up, the text closes up", IDC_E_CUT, 78, 29, 128, 10
-    AUTOCHECKBOX    "Delete: the text closes up", IDC_E_DEL, 210, 29, 98, 10
-    LTEXT           "Light (%):", -1, 330, 30, 44, 8
-    EDITTEXT        IDC_E_STRENGTH, 376, 28, 28, 12, ES_NUMBER
+    GROUPBOX        "Copy flash", -1, 4, 2, 452, 30
+    AUTOCHECKBOX    "Copying lights the copied text up for a moment", IDC_E_EN, 12, 15, 196, 10
+    LTEXT           "Light (%):", -1, 214, 16, 36, 8
+    EDITTEXT        IDC_E_STRENGTH, 252, 14, 28, 12, ES_NUMBER
+    LTEXT           "", IDC_E_STATUS, 290, 16, 158, 9
 
-    GROUPBOX        "Tabs", -1, 4, 50, 452, 72
-    AUTOCHECKBOX    "Switching tabs slides the new document in, like switching desktops", IDC_W_EN, 12, 62, 246, 10
-    LTEXT           "", IDC_W_STATUS, 264, 63, 184, 9
-    AUTOCHECKBOX    "A closed tab sinks into the bar and the tabs beside it close the gap", IDC_F_EN, 12, 75, 246, 10
-    LTEXT           "", IDC_F_STATUS, 264, 76, 184, 9
-    AUTOCHECKBOX    "Saving a file sends a glint across its tab and the top of the page", IDC_GL_EN, 12, 88, 246, 10
-    LTEXT           "", IDC_GL_STATUS, 264, 89, 184, 9
-    LTEXT           "Slide (ms):", -1, 12, 105, 38, 8
-    EDITTEXT        IDC_W_MS, 52, 103, 30, 12, ES_NUMBER
-    LTEXT           "Close and open (ms):", -1, 96, 105, 72, 8
-    EDITTEXT        IDC_F_MS, 170, 103, 30, 12, ES_NUMBER
-    LTEXT           "With the slide on, a closed tab's neighbour slides in too", -1, 210, 105, 238, 8
+    GROUPBOX        "Tabs", -1, 4, 36, 452, 72
+    AUTOCHECKBOX    "Switching tabs slides the new document in, like switching desktops", IDC_W_EN, 12, 48, 246, 10
+    LTEXT           "", IDC_W_STATUS, 264, 49, 184, 9
+    AUTOCHECKBOX    "A closed tab sinks into the bar and the tabs beside it close the gap", IDC_F_EN, 12, 61, 246, 10
+    LTEXT           "", IDC_F_STATUS, 264, 62, 184, 9
+    AUTOCHECKBOX    "Saving a file sends a glint across its tab and the top of the page", IDC_GL_EN, 12, 74, 246, 10
+    LTEXT           "", IDC_GL_STATUS, 264, 75, 184, 9
+    LTEXT           "Slide (ms):", -1, 12, 91, 38, 8
+    EDITTEXT        IDC_W_MS, 52, 89, 30, 12, ES_NUMBER
+    LTEXT           "Close and open (ms):", -1, 96, 91, 72, 8
+    EDITTEXT        IDC_F_MS, 170, 89, 30, 12, ES_NUMBER
+    LTEXT           "Glint (ms):", -1, 214, 91, 38, 8
+    EDITTEXT        IDC_GL_MS, 254, 89, 30, 12, ES_NUMBER
 
-    GROUPBOX        "Paint splash", -1, 4, 126, 452, 30
-    AUTOCHECKBOX    "Giving a token a colour splashes paint", IDC_P_EN, 12, 139, 160, 10
-    LTEXT           "Drops:", -1, 178, 140, 24, 8
-    EDITTEXT        IDC_P_DROPS, 204, 138, 26, 12, ES_NUMBER
-    LTEXT           "", IDC_P_STATUS, 240, 140, 208, 9
+    GROUPBOX        "Paint splash", -1, 4, 112, 452, 30
+    AUTOCHECKBOX    "Giving a token a colour splashes paint", IDC_P_EN, 12, 125, 160, 10
+    LTEXT           "Drops:", -1, 178, 126, 24, 8
+    EDITTEXT        IDC_P_DROPS, 204, 124, 26, 12, ES_NUMBER
+    LTEXT           "", IDC_P_STATUS, 240, 126, 208, 9
 
-    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_FX_RESPECT, 8, 160, 200, 10
-    LTEXT           "", IDC_E_INFO, 4, 173, 452, 18
+    AUTOCHECKBOX    "Not when Windows animation effects are off (here and on the Motion page)", IDC_FX_RESPECT, 8, 148, 280, 10
+    LTEXT           "", IDC_E_INFO, 4, 163, 452, 26
+    LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
+END
+
+IDD_KEX_PAGE_MOTION DIALOGEX 115, 10, 460, 205
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    GROUPBOX        "Editing motion", -1, 4, 2, 452, 186
+    AUTOCHECKBOX    "Edits move into place instead of jumping", IDC_M_EN, 12, 14, 200, 10
+    LTEXT           "", IDC_M_STATUS, 220, 15, 228, 9
+    LTEXT           "Each one on or off, and how long it takes (ms):", -1, 12, 29, 300, 8
+    AUTOCHECKBOX    "Cut: picked up, then gone", 2710, 12, 43, 168, 10
+    EDITTEXT        2730, 184, 42, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Move lines (Ctrl+Shift+Up/Down)", 2715, 232, 43, 168, 10
+    EDITTEXT        2735, 404, 42, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Delete in a line: wiped away", 2711, 12, 57, 168, 10
+    EDITTEXT        2731, 184, 56, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Indent several lines (Tab)", 2717, 232, 57, 168, 10
+    EDITTEXT        2737, 404, 56, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Delete across lines: fades out", 2712, 12, 71, 168, 10
+    EDITTEXT        2732, 184, 70, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Fold and unfold", 2720, 232, 71, 168, 10
+    EDITTEXT        2740, 404, 70, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Paste: makes room, lights up", 2713, 12, 85, 168, 10
+    EDITTEXT        2733, 184, 84, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Sort lines", 2721, 232, 85, 168, 10
+    EDITTEXT        2741, 404, 84, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Undo and redo", 2714, 12, 99, 168, 10
+    EDITTEXT        2734, 184, 98, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Find: a ring on the match", 2716, 232, 99, 168, 10
+    EDITTEXT        2736, 404, 98, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Duplicate a line (Ctrl+D)", 2718, 12, 113, 168, 10
+    EDITTEXT        2738, 184, 112, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Go to a far line: the page slides", 2719, 232, 113, 168, 10
+    EDITTEXT        2739, 404, 112, 28, 12, ES_NUMBER
+    LTEXT           "New text stays lit for (ms):", -1, 12, 130, 96, 8
+    EDITTEXT        IDC_M_GLOW, 110, 128, 28, 12, ES_NUMBER
+    LTEXT           "Editing fast: no motion within (ms):", -1, 160, 130, 124, 8
+    EDITTEXT        IDC_M_RAPID, 286, 128, 28, 12, ES_NUMBER
+    LTEXT           "of the last one", -1, 318, 130, 80, 8
+    AUTOCHECKBOX    "In the quick note too", IDC_M_NOTE, 12, 146, 150, 10
+    LTEXT           "Short, with no bounce, after Apple's guidance on motion. A motion stops the moment you type, edit or scroll, so it never holds you up, and edits that come quickly one after another show without one. 0 ms switches one off too.", -1, 12, 162, 436, 24
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END

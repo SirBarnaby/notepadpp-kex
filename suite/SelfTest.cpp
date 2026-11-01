@@ -496,6 +496,8 @@ std::vector<intptr_t> recentOrder()
     for (const auto& a : all) out.push_back(a.second);
     return out;
 }
+MotionStats g_motionBefore;   // the editor's motion counts before a step
+HotkeyStats g_zoomBefore;     // the quick note's zoom counts before a step
 std::string g_flashText;   // a.cpp before the flash steps edit it
 bool g_flashModified = false;
 
@@ -674,7 +676,7 @@ int pressHotkey()
 
 // The on/off tick of a feature on its KEX Settings page, clicked the way the user does it.
 const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
-                                  IDC_F_EN, IDC_GL_EN };
+                                  IDC_F_EN, IDC_GL_EN, IDC_M_EN };
 HWND enableBox(int module)
 {
     if (!prefPage(pageOfModule(module))) { openSettings(); pump(300); }
@@ -2012,7 +2014,8 @@ void buildSteps()
               rectStr(pin).c_str(), onPin, strip);
         const int pins = hotkeyStats().pins;
         clickAt(pc.x, pc.y);
-        pump(150);
+        waitFor([pins] { return hotkeyStats().pins != pins; }, 1500);   // letters may still be falling from Q14: the click can take a while
+        pump(50);
         check(hotkeyStats().pins == pins + 1 && settings.getInt(k, L"RememberPlace", 0) == 1 && settings.getInt(k, L"X", 0) == 80 &&
               settings.getInt(k, L"Y", 0) == 70 && ::GetFocus() == quickNoteEditor(), L"Q19",
               L"clicking the pin pins the note at 80,70 (\"Open where I left it\" on), the typing focus stays in the note");
@@ -2136,6 +2139,46 @@ void buildSteps()
         ::ShowWindow(npp._nppHandle, SW_RESTORE);
         focusEditor();
         return 200;
+    });
+    add([] {
+        // "Zoom in as it opens" (off by default): a picture of the note grows from 94 % into place as it fades in
+        check(settings.getInt(modules[M_HOTKEY]->key(), L"ZoomOpen", 0) == 0, L"Q26", L"the quick note's zoom is off by default");
+        settings.setInt(modules[M_HOTKEY]->key(), L"ZoomOpen", 1);
+        modules[M_HOTKEY]->loadOptions();
+        g_zoomBefore = hotkeyStats();
+        quickNoteZoomFreeze(0.3);
+        hotkeyPress();
+        pump(250);
+        const HotkeyStats h = hotkeyStats();
+        HWND ov = ::FindWindowW(L"KexSuiteOverlay", L"KEX quick note zoom");
+        check(h.noteOpen && h.zooms == g_zoomBefore.zooms + 1 && h.zoomLive && h.zoomOpening && h.zoomScale > 0.94f && h.zoomScale < 1.0f
+              && h.zoomAlpha > 0.0f && h.zoomAlpha < 1.0f && ov && ::IsWindowVisible(ov), L"Q27",
+              L"switched on: the note zooms in (held at %.1f %% of its size, %.0f %% opaque)", h.zoomScale * 100.0, h.zoomAlpha * 100.0);
+        return shot(L"quick-note-zoom-in");
+    });
+    add([] {
+        // typing ends it: the note is there at once
+        HWND e = quickNoteEditor();
+        if (e) ::SendMessageW(e, WM_KEYDOWN, VK_RIGHT, 0);
+        pump(80);
+        const HotkeyStats h = hotkeyStats();
+        check(!h.zoomLive && !::FindWindowW(L"KexSuiteOverlay", L"KEX quick note zoom"), L"Q28", L"a key pressed while it zooms: the note is there at once");
+        // hiding it: the picture shrinks a little as it fades out
+        g_zoomBefore = h;
+        hotkeyPress();
+        pump(150);
+        const HotkeyStats c = hotkeyStats();
+        check(!c.noteOpen && c.zooms == g_zoomBefore.zooms + 1 && c.zoomLive && !c.zoomOpening && c.zoomScale < 1.0f && c.zoomScale > 0.95f, L"Q29",
+              L"hidden: it zooms out (%.1f %%) as it fades", c.zoomScale * 100.0);
+        quickNoteZoomFreeze(-1);
+        return until([] { return !hotkeyStats().zoomLive; }, 2000);
+    });
+    add([] {
+        check(g_untilOk && !::FindWindowW(L"KexSuiteOverlay", L"KEX quick note zoom"), L"Q30", L"the zoom's picture goes when it is done");
+        settings.setInt(modules[M_HOTKEY]->key(), L"ZoomOpen", 0);
+        modules[M_HOTKEY]->loadOptions();
+        focusEditor();
+        return 100;
     });
 
     // ---- F12 hover tabs --------------------------------------------------------------------------
@@ -2312,8 +2355,8 @@ void buildSteps()
     });
     add([] {
         check(g_untilOk, L"TF2", L"the unfold ends and its window goes: the real tab bar shows again");
-        // closing it: the tab collapses (never squeezed), the tabs on its right close the gap, and the document that
-        // takes its place slides in from the right, the side its tab comes from
+        // closing it: the tab sinks (never squeezed, never faded), the tabs on its right close the gap; the document
+        // that takes its place is simply there (only the tab moves)
         g_motion = tabMotionStats();
         g_fadeSlides = slideStats(curSci()).slides;
         g_slideCloses = slideStats(curSci()).afterClose;
@@ -2332,11 +2375,8 @@ void buildSteps()
         check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && std::fabs(st.lastWidth - expect) < 1.0f && st.lastDrop > 0, L"TF3",
               L"closing f1.txt: its tab sinks into the bar (%d px down, no fade), the tabs on its right gliding over (%.1f of %d px left half-way)",
               st.lastDrop, st.lastWidth, st.lastDx);
-        const int now = views.currentIndex(views.viewOf(curSci()));
-        const int dir = now >= g_closedIdx ? 1 : -1;
-        check(sl.active && sl.slides == g_fadeSlides + 1 && sl.afterClose == g_slideCloses + 1 && sl.lastDir == dir && std::fabs(sl.fraction - 0.5f) < 0.01f, L"TF3b",
-              L"%ls, which takes its place (tab %d, the closed one was %d), slides in from the %ls with the tab slide (held at %.2f)", curName().c_str(),
-              now + 1, g_closedIdx + 1, dir > 0 ? L"right" : L"left", sl.fraction);
+        check(!sl.active && sl.slides == g_fadeSlides && sl.afterClose == g_slideCloses + 1, L"TF3b",
+              L"%ls takes the closed tab's place at once: the document neither slides nor fades, only the tab moves", curName().c_str());
         for (int k = 1; k <= 9; k += 2)   // the motion at 10, 30, 50, 70 and 90%, for a look at it
         {
             tabMotionTestFreeze(k / 10.0);
@@ -2392,7 +2432,10 @@ void buildSteps()
         const TabMotionStats st = tabMotionStats();
         check(st.saves == g_motion.saves + 1 && st.glints == g_motion.glints + 2 && st.glintLines == g_motion.glintLines + 1 && st.overlayShown
               && st.glintFrames > g_motion.glintFrames && sci(curSci(), SCI_GETMODIFY) == 0, L"TF6",
-              L"saving sv.txt sends a glint across its tab and, at the same moment, along the top of its view");
+              L"saving sv.txt sends a glint across its tab and along the top of its view");
+        check(std::fabs(st.lineAtCross - st.tabMiddle) < 3.0f && (st.tabGlintDelay < 1.0 || st.lineGlintDelay < 1.0) && st.tabGlintDelay >= 0 && st.lineGlintDelay >= 0,
+              L"TF6b", L"... as one light: the line's band is under the tab (x %.0f, the tab's middle %.0f) just as the tab's band crosses it (tab starts %.0f ms, line %.0f ms after the save)",
+              st.lineAtCross, st.tabMiddle, st.tabGlintDelay, st.lineGlintDelay);
         tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(L"frame-glint-half.bmp"));
         tabMotionTestSave(curSci(), path(L"frame-glint-half-line.bmp"));
         return shot(L"save-glint-half-way");
@@ -2648,7 +2691,7 @@ void buildSteps()
         pump(120);
         const FlashStats st = flashStats();
         HWND ov = ::FindWindowW(L"KexSuiteOverlay", L"KEX effects");
-        check(st.copies == before.copies + 1 && st.cuts == before.cuts && st.lastRects == 1 && st.spawned == before.spawned + 1 && st.live >= 1
+        check(st.copies == before.copies + 1 && st.lastRects == 1 && st.spawned == before.spawned + 1 && st.live >= 1
               && ov && ::IsWindowVisible(ov), L"X1", L"Edit > Copy: the selection flashes (%d rectangle, %d live)", st.lastRects, st.live);
         // over three lines: a rectangle per line, as the selection is drawn
         sci(s, SCI_SETSEL, posOf(s, 0, 2), posOf(s, 2, 3));
@@ -2658,122 +2701,385 @@ void buildSteps()
         return 100;
     });
     add([] {
-        // cut: the text closes up (Scintilla's close-up), not also counted as a copy
-        HWND s = curSci();
+        // ---- editing motion (EditMotion.cpp, drawn by Scintilla: SCI_KEX_SETMOTIONS) ----
+        // a.cpp as it was after the copies; the motions get a file of their own
         lettersFreezeAfter(-1);
-        waitFor([] { return flashStats().live == 0; }, 3000);
+        HWND a = curSci();
+        if (docText(a) != g_flashText)
+        {
+            sci(a, SCI_TARGETWHOLEDOCUMENT);
+            sci(a, SCI_REPLACETARGET, static_cast<WPARAM>(g_flashText.size()), reinterpret_cast<LPARAM>(g_flashText.c_str()));
+        }
+        if (!g_flashModified) sci(a, SCI_SETSAVEPOINT);
+        std::string text = "// KEX motion test\r\nint alpha = 1;\r\nint beta = 2;\r\nint gamma = 3;\r\nvoid fold_me()\r\n{\r\n"
+                           "    int a = 1; // alpha\r\n    int b = 2;\r\n    int c = 3;\r\n}\r\nzeta\r\neta\r\ntheta\r\niota\r\nkappa\r\n";
+        for (int i = 15; i < 200; ++i)
+        {
+            char b[64];
+            snprintf(b, sizeof(b), i == 180 ? "int needle = %d;\r\n" : "// filler %03d ----------------\r\n", i);
+            text += b;
+        }
+        writeFile(path(L"mo.cpp"), text);
+        open(L"mo.cpp");
         focusEditor();
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        const FlashStats before = flashStats();
-        const SlideStats sb = slideStats(s);
-        slideTestFreeze(0.35);   // hold it a third of the way: the text fading, the rest of the line on its way left
-        tokCommand(IDM_EDIT_CUT);
-        waitFor([before] { return flashStats().closeUps > before.closeUps; }, 1500);
-        pump(150);
-        const FlashStats st = flashStats();
-        const SlideStats ss = slideStats(s);
-        check(st.cuts == before.cuts + 1 && st.copies == before.copies && st.deletes == before.deletes && st.closeUps == before.closeUps + 1 && st.spawned == before.spawned
-              && st.lastCloseUp == s, L"X3", L"Edit > Cut: the text closes up (cuts %d, copies %d, flashes %d, close-ups %d)", st.cuts - before.cuts,
-              st.copies - before.copies, st.spawned - before.spawned, st.closeUps - before.closeUps);
-        check(ss.active && ss.collapses == sb.collapses + 1 && ss.collapseKind == 1 && ss.collapseFrames > sb.collapseFrames && ss.gap > 0.2f && ss.gap < 1.0f,
-              L"X3b", L"... drawn by Scintilla: one line, the rest of it %.0f %% of the way from its place (%d frames)", ss.gap * 100.0, ss.collapseFrames - sb.collapseFrames);
-        return shot(L"cut-close-up-third");
-    });
-    add([] {
         HWND s = curSci();
-        const SlideStats sb = slideStats(s);
-        slideTestFreeze(-1);
-        waitFor([s] { return !slideStats(s).active; }, 2000);
-        const SlideStats ss = slideStats(s);
-        check(!ss.active && ss.collapseEnded == sb.collapseEnded && ss.gap < 0.01f, L"X3c", L"... and it settles by itself (gap %.3f, ended early: %d)",
-              ss.gap, ss.collapseEnded - sb.collapseEnded);
-        sci(s, SCI_UNDO);
-        // delete: the same close-up, without the light
-        focusEditor();
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        const FlashStats st = flashStats();
-        tap(VK_DELETE);
-        waitFor([st] { return flashStats().closeUps > st.closeUps; }, 1500);
-        const FlashStats st2 = flashStats();
-        check(st2.deletes == st.deletes + 1 && st2.cuts == st.cuts && st2.lastRects == 1 && st2.closeUps == st.closeUps + 1, L"X4",
-              L"Delete on a selection: the text closes up (deletes %d, close-ups %d)", st2.deletes - st.deletes, st2.closeUps - st.closeUps);
-        waitFor([s] { return !slideStats(s).active; }, 2000);
-        sci(s, SCI_UNDO);
+        sci(s, SCI_COLOURISE, 0, -1);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);   // the steps come quickly: each its own motion
+        modules[M_MOTION]->loadOptions();
+        settle(200);
+        const MotionStats st = motionStats(s);
+        check(modules[M_MOTION]->isEnabled() && !st.active, L"MO0", L"editing motion on by default (%d motions so far)", st.total);
         return 100;
     });
     add([] {
+        // cut: picked up (lifted, a soft shadow), then gone while the rest of the line closes up; not a copy flash
         HWND s = curSci();
-        // over three lines: the lines below move up while the end of the last line joins the first
         focusEditor();
-        sci(s, SCI_SETSEL, posOf(s, 0, 3), posOf(s, 2, 2));
-        const SlideStats sb = slideStats(s);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        g_motionBefore = motionStats(s);
+        const FlashStats fb = flashStats();
         slideTestFreeze(0.5);
         tokCommand(IDM_EDIT_CUT);
         pump(200);
-        const SlideStats ss = slideStats(s);
-        check(ss.active && ss.collapses == sb.collapses + 1 && ss.collapseKind == 2 && ss.gap > 0.0f && ss.gap < 0.9f, L"X5",
-              L"cutting across three lines: the text below glides up (%.0f %% of the way to go)", ss.gap * 100.0);
-        return shot(L"cut-close-up-lines-half-way");
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[0] == g_motionBefore.started[0] + 1 && m.lastKind == 0 && m.style == 1 && m.gap > 0.1f && m.gap < 0.9f
+              && flashStats().copies == fb.copies, L"MO1", L"Edit > Cut: the text is picked up, then the line closes up (%.0f %% of the way to go, %d frames); no copy flash",
+              m.gap * 100.0, m.frames - g_motionBefore.frames);
+        return shot(L"motion-cut-half-way");
     });
     add([] {
         HWND s = curSci();
-        // typing during a close-up ends it at once: the editor never waits for an animation
-        const SlideStats sb = slideStats(s);
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        const MotionStats m = motionStats(s);
+        check(!m.active && m.ended == g_motionBefore.ended && m.gap < 0.01f, L"MO1b", L"... and it settles by itself (gap %.3f)", m.gap);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // Delete on a selection within a line: wiped away from its end back to the caret
+        focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.5);
+        tap(VK_DELETE);
+        pump(200);
+        const MotionStats d = motionStats(s);
+        check(d.active && d.started[1] == g_motionBefore.started[1] + 1 && d.style == 2 && d.gap > 0.1f && d.gap < 1.0f, L"MO2",
+              L"Delete on a selection in a line: wiped away (%.0f %% to go)", d.gap * 100.0);
+        return shot(L"motion-delete-wipe-half-way");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // across three lines: it fades where it was while the lines below glide up
+        focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 1, 4), posOf(s, 3, 4));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.5);
+        tap(VK_DELETE);
+        pump(200);
+        const MotionStats d = motionStats(s);
+        check(d.active && d.started[2] == g_motionBefore.started[2] + 1 && d.style == 3 && d.gap > 0.0f && d.gap < 0.9f, L"MO3",
+              L"Delete across three lines: the text fades, the lines below glide up (%.0f %% to go)", d.gap * 100.0);
+        return shot(L"motion-delete-lines-half-way");
+    });
+    add([] {
+        // typing during a motion ends it at once: the editor never waits for an animation
+        HWND s = curSci();
+        g_motionBefore = motionStats(s);
         focusEditor();
         tap('Q');
         pump(100);
-        const SlideStats ss = slideStats(s);
-        check(!ss.active && ss.collapseEnded == sb.collapseEnded + 1, L"X6", L"a key pressed during the close-up ends it at once (ended %d)",
-              ss.collapseEnded - sb.collapseEnded);
+        const MotionStats m = motionStats(s);
+        check(!m.active && m.ended == g_motionBefore.ended + 1, L"MO4", L"a key pressed during the motion ends it at once (ended %d)", m.ended - g_motionBefore.ended);
         slideTestFreeze(-1);
         sci(s, SCI_UNDO);
         sci(s, SCI_UNDO);
-        // typing over a selection, or deleting single characters, shows nothing
-        const FlashStats before = flashStats();
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // typing over a selection, deleting single characters: no motion
+        const MotionStats b = motionStats(s);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
         tap('X');
-        pump(100);
-        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 2, 1));
+        pump(80);
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 2, 5));
         tap(VK_DELETE);
         tap(VK_BACK);
         pump(100);
-        const FlashStats st = flashStats();
-        check(st.deletes == before.deletes && st.cuts == before.cuts && st.copies == before.copies && st.closeUps == before.closeUps, L"X7",
-              L"typing over a selection and deleting single characters: nothing");
-        // their own switches
-        settings.setInt(modules[M_FLASH]->key(), L"Copy", 0);
-        settings.setInt(modules[M_FLASH]->key(), L"CutClose", 0);
-        settings.setInt(modules[M_FLASH]->key(), L"DeleteClose", 0);
-        modules[M_FLASH]->loadOptions();
-        const FlashStats b4 = flashStats();
-        sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 1, 4));
+        check(motionStats(s).total == b.total, L"MO5", L"typing over a selection and deleting single characters: no motion");
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // paste: the text after the caret makes room and the pasted text is uncovered, lit for a moment
+        HWND s = curSci();
+        sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 3, 0));
         tokCommand(IDM_EDIT_COPY);
+        pump(100);
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 0));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.2);
+        tokCommand(IDM_EDIT_PASTE);
         pump(200);
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        tokCommand(IDM_EDIT_CUT);
-        pump(250);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[3] == g_motionBefore.started[3] + 1 && m.style == 4 && m.gap > 0.0f && m.gap < 1.0f, L"MO6",
+              L"Edit > Paste: room is made, the pasted lines are uncovered and lit (%.0f %% to go)", m.gap * 100.0);
+        return shot(L"motion-paste");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // undo shows what goes (the pasted lines close up), redo what comes back
+        g_motionBefore = motionStats(s);
+        tokCommand(IDM_EDIT_UNDO);
+        pump(60);
+        const MotionStats u = motionStats(s);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_REDO);
+        pump(60);
+        const MotionStats r = motionStats(s);
+        check(u.started[4] == g_motionBefore.started[4] + 1 && u.style == 3 && r.started[4] == u.started[4] + 1 && r.style == 4, L"MO7",
+              L"undo: the pasted lines close up (style %d); redo: they come back, uncovered (style %d)", u.style, r.style);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_UNDO);
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // move line: the line and the one it passes slide past each other
+        HWND s = curSci();
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 11, 1));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_EDIT_LINE_DOWN);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[5] == g_motionBefore.started[5] + 1 && m.lines == 1 && m.gap > 0.0f && m.gap < 1.0f
+              && lineText(s, 12) == "eta" && lineText(s, 11) == "theta", L"MO8", L"Ctrl+Shift+Down: \"eta\" slides down past \"theta\" (%.0f %% to go)", m.gap * 100.0);
+        return shot(L"motion-move-line");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_LINE_UP);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // indent: several lines glide to their new indentation
+        sci(s, SCI_SETSEL, posOf(s, 10, 0), posOf(s, 13, 2));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        sci(s, SCI_TAB);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[7] == g_motionBefore.started[7] + 1 && m.lines == 4 && m.gap > 0.0f && m.gap < 1.0f, L"MO9",
+              L"Tab on four lines: they glide to their new indentation (%d lines, %.0f %% to go)", m.lines, m.gap * 100.0);
+        return shot(L"motion-indent");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_BACKTAB);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // duplicate: the copy slides out from under the line
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 12, 2));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.2);
+        tokCommand(IDM_EDIT_DUP_LINE);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[8] == g_motionBefore.started[8] + 1 && m.style == 5 && lineText(s, 13) == "theta", L"MO10",
+              L"Ctrl+D: the copy of \"theta\" slides out from under it");
+        return shot(L"motion-duplicate");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
         sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // fold: the lines below slide up over the folded ones, and down again
+        const intptr_t header = sci(s, SCI_GETFOLDPARENT, 7);
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        sci(s, SCI_TOGGLEFOLD, header);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(header >= 0 && m.active && m.started[10] == g_motionBefore.started[10] + 1 && m.lines >= 3 && m.gap > 0.0f, L"MO11",
+              L"folding fold_me() (line %d): the lines below slide up over %d hidden lines", static_cast<int>(header) + 1, m.lines);
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_TOGGLEFOLD, header);
+        pump(60);
+        const MotionStats e = motionStats(s);
+        check(e.started[10] == m.started[10] + 1, L"MO11b", L"... unfolding: they slide down again");
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // sort: each line glides to its new place
+        HWND s = curSci();
+        sci(s, SCI_SETSEL, posOf(s, 10, 0), posOf(s, 14, 5));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[11] == g_motionBefore.started[11] + 1 && m.lines == 5 && lineText(s, 10) == "eta" && lineText(s, 14) == "zeta", L"MO12",
+              L"sorting zeta..kappa: each of the %d lines glides to its new place", m.lines);
+        return shot(L"motion-sort");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // find: a ring closes onto the match (Select and Find Next, Ctrl+F3)
+        sci(s, SCI_SETSEL, posOf(s, 1, 4), posOf(s, 1, 9));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_SEARCH_SETANDFINDNEXT);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        const intptr_t line = sci(s, SCI_LINEFROMPOSITION, sci(s, SCI_GETSELECTIONSTART));
+        check(m.started[6] == g_motionBefore.started[6] + 1 && m.ringFrames > g_motionBefore.ringFrames && line == 6, L"MO13",
+              L"Select and Find Next: a ring closes onto \"alpha\" on line %d (%d frames)", static_cast<int>(line) + 1, m.ringFrames - g_motionBefore.ringFrames);
+        return shot(L"motion-find-ring");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        pump(700);
+        // a far jump slides the page there, then a band marks the caret's line
+        sci(s, SCI_SETEMPTYSELECTION, 0);
+        sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+        pump(100);
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.15);
+        sci(s, SCI_GOTOLINE, 180);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[9] == g_motionBefore.started[9] + 1 && m.jumpLines > 20 && m.gap > 0.0f && m.gap < 1.0f, L"MO14",
+              L"go to line 181: the page slides down %d lines (%.0f %% to go)", m.jumpLines, m.gap * 100.0);
+        return shot(L"motion-jump");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // scrolling a little does nothing; a document just switched to shows where it was left, without a slide
+        g_motionBefore = motionStats(s);
+        sci(s, SCI_GOTOLINE, 176);
+        pump(100);
+        switchTo(L"a.cpp");
+        pump(50);
+        switchTo(L"mo.cpp");
+        sci(s, SCI_GOTOLINE, 2);
+        pump(100);
+        check(motionStats(s).started[9] == g_motionBefore.started[9], L"MO15", L"small scrolls and a document just switched to: no jump slide");
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        pump(600);
+        return 50;
+    });
+    add([] {
+        // each has its own switch; and "editing fast": a motion right after another is skipped
+        HWND s = curSci();
         focusEditor();
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        tap(VK_DELETE);
-        pump(200);
-        const FlashStats st4 = flashStats();
-        check(st4.cuts == b4.cuts + 1 && st4.deletes == b4.deletes + 1 && st4.closeUps == b4.closeUps && st4.spawned == b4.spawned, L"X8",
-              L"\"Copy\", \"Cut\" and \"Delete\" unticked: copying, cutting and deleting show nothing");
+        sci(s, SCI_GOTOLINE, 0);
+        pump(600);
+        settings.setInt(modules[M_MOTION]->key(), L"Cut", 0);
+        modules[M_MOTION]->loadOptions();
+        g_motionBefore = motionStats(s);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        tokCommand(IDM_EDIT_CUT);
+        pump(150);
+        const MotionStats off = motionStats(s);
         sci(s, SCI_UNDO);
-        settings.setInt(modules[M_FLASH]->key(), L"Copy", 1);
-        settings.setInt(modules[M_FLASH]->key(), L"CutClose", 1);
-        settings.setInt(modules[M_FLASH]->key(), L"DeleteClose", 1);
-        modules[M_FLASH]->loadOptions();
-        // a.cpp as it was
-        if (docText(s) != g_flashText)
+        pump(80);
+        settings.setInt(modules[M_MOTION]->key(), L"Cut", 1);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 400);
+        modules[M_MOTION]->loadOptions();
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        pump(450);
+        focusEditor();
+        const MotionStats b = motionStats(s);
+        const SlideStats sb = slideStats(s);
+        const bool focused = ::GetFocus() == s;
+        const intptr_t len0 = sci(s, SCI_GETLENGTH);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        tokCommand(IDM_EDIT_CUT);
+        pump(100);   // the cut's motion has its first frames
+        const MotionStats cut = motionStats(s);
+        const intptr_t len1 = sci(s, SCI_GETLENGTH);
+        sci(s, SCI_SETSEL, posOf(s, 3, 4), posOf(s, 3, 8));
+        tap(VK_DELETE);
+        pump(100);
+        const MotionStats fast = motionStats(s);
+        const intptr_t len2 = sci(s, SCI_GETLENGTH);
+        check(off.started[0] == g_motionBefore.started[0] && fast.started[0] == b.started[0] + 1 && fast.started[1] == b.started[1] && fast.skipped == b.skipped + 1,
+              L"MO16", L"\"Cut\" unticked: no motion (%d); a Delete 100 ms after a cut (within \"editing fast\", 400 ms): skipped, the text just goes (cuts %d, deletes %d, skipped %d)",
+              off.started[0] - g_motionBefore.started[0], fast.started[0] - b.started[0], fast.started[1] - b.started[1], fast.skipped - b.skipped);
+        if (fast.started[0] != b.started[0] + 1)
+            tlog(L"INFO MO16: before the cut motion %d slide %d (stop %d), focus %d; cut: -%d chars, refused +%d skipped +%d last %d; delete: -%d chars, refused +%d",
+                 b.active, sb.active, sb.stopReason, focused, static_cast<int>(len0 - len1), cut.refused - b.refused, cut.skipped - b.skipped, cut.lastKind,
+                 static_cast<int>(len1 - len2), fast.refused - cut.refused);
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // the KEX menu's Motion submenu: a switch for each, ticked as set; the Motion page: a tick and a time for each
+        HMENU sub = settingsSubmenu(PAGE_MOTION);
+        ::SendMessageW(npp._nppHandle, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(sub), MAKELPARAM(0, FALSE));
+        int marked = 0;
+        for (int k = 0; k < kMotionCount; ++k)
+            if (menuHasId(sub, settingsMotionId(k)) && ((::GetMenuState(sub, settingsMotionId(k), MF_BYCOMMAND) & MF_CHECKED) != 0) == motionOn(k)) ++marked;
+        ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsMotionId(11), 0);
+        const bool flipped = !motionOn(11) && settings.getInt(modules[M_MOTION]->key(), L"Sort", -1) == 0;
+        ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsMotionId(11), 0);
+        check(marked == kMotionCount && flipped && motionOn(11), L"MO17", L"KEX > Motion: %d of %d switches, each ticked as set; picking one switches it and stores it",
+              marked, kMotionCount);
+        openSettings(PAGE_MOTION);
+        pump(300);
+        HWND p = prefPage(PAGE_MOTION);
+        int boxes = 0;
+        for (int k = 0; p && k < kMotionCount; ++k)
         {
-            sci(s, SCI_TARGETWHOLEDOCUMENT);
-            sci(s, SCI_REPLACETARGET, static_cast<WPARAM>(g_flashText.size()), reinterpret_cast<LPARAM>(g_flashText.c_str()));
+            BOOL ok = FALSE;
+            const UINT ms = ::GetDlgItemInt(p, IDC_M_MS0 + k, &ok, FALSE);
+            if ((::IsDlgButtonChecked(p, IDC_M_ON0 + k) == BST_CHECKED) == motionOn(k) && ok && static_cast<int>(ms) == kMotionDefs[k].ms) ++boxes;
         }
-        if (!g_flashModified) sci(s, SCI_SETSAVEPOINT);
-        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 0, 0));
-        return until([s] { return flashStats().live == 0 && !slideStats(s).active; }, 3000);
+        check(boxes == kMotionCount, L"MO18", L"KEX Settings > Motion: %d of %d motions with their tick and time", boxes, kMotionCount);
+        return shot(L"settings-motion-page");
+    });
+    add([] {
+        // a time typed on the page reaches the editor: Sort at 0 ms is off
+        HWND p = prefPage(PAGE_MOTION);
+        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 0, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+        pump(100);
+        HWND s = curSci();
+        sci(s, SCI_SETSEL, posOf(s, 10, 0), posOf(s, 14, 5));
+        g_motionBefore = motionStats(s);
+        tokCommand(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING);
+        pump(150);
+        check(settings.getInt(modules[M_MOTION]->key(), L"SortMs", -1) == 0 && motionStats(s).started[11] == g_motionBefore.started[11], L"MO19",
+              L"Sort set to 0 ms on the Motion page: sorting just reorders");
+        sci(s, SCI_UNDO);
+        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 340, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+        if (HWND d = settingsDialog()) ::SendMessageW(d, WM_CLOSE, 0, 0);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 250);
+        modules[M_MOTION]->loadOptions();
+        // mo.cpp goes without asking
+        sci(s, SCI_SETSAVEPOINT);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        switchTo(L"a.cpp");
+        if (!g_flashModified) sci(curSci(), SCI_SETSAVEPOINT);
+        return until([] { return flashStats().live == 0 && !motionStats(curSci()).active; }, 3000);
     });
     add([] {
         // paint splash: Style All Occurrences of Token splashes every new occurrence
@@ -3115,6 +3421,8 @@ void buildSteps()
                 nppMsg(NPPM_MENUCOMMAND, 0, IDM_KEX_DOC_TO_VIEW1);
                 pump(80);
             }
+        // the KEX Settings window, open from the steps before, would sit over the places the tabs are dropped
+        if (HWND d = settingsDialog()) ::SendMessageW(d, WM_COMMAND, IDCANCEL, 0);
         ::ShowWindow(npp._nppHandle, SW_RESTORE);
         ::MoveWindow(npp._nppHandle, 20, 16, 960, 660, TRUE);
         ::SetForegroundWindow(npp._nppHandle);
@@ -3135,6 +3443,20 @@ void buildSteps()
         bool rightHalf = st.target.left > mid - 12 && st.target.left < mid + 12 && std::abs(st.target.right - rv.right) <= 3
                       && std::abs(st.target.top - rv.top) <= 3 && std::abs(st.target.bottom - rv.bottom) <= 3;
         bool inside = st.window.left >= st.target.left && st.window.right <= st.target.right && st.window.top >= st.target.top && st.window.bottom <= st.target.bottom;
+        if (!st.visible)
+        {
+            // what the pointer is over, as the core's hit test sees it
+            POINT at; ::GetCursorPos(&at);
+            HWND hit = kexsuite::windowFromPoint(at);
+            wchar_t cls[64] = L"", rootCls[64] = L"", rootTitle[96] = L"";
+            HWND root = hit ? ::GetAncestor(hit, GA_ROOT) : nullptr;
+            if (hit) ::GetClassNameW(hit, cls, 64);
+            if (root) { ::GetClassNameW(root, rootCls, 64); ::GetWindowTextW(root, rootTitle, 96); }
+            LONG_PTR hex = root ? ::GetWindowLongPtrW(root, GWL_EXSTYLE) : 0;
+            tlog(L"INFO no preview: cursor (%d,%d) over %ls, root %ls \"%ls\" (exstyle %llx, ours %d), lmb %d ctrl %d",
+                 at.x, at.y, cls, rootCls, rootTitle, static_cast<unsigned long long>(hex), root == npp._nppHandle,
+                 (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, (::GetKeyState(VK_LCONTROL) & 0x8000) != 0);
+        }
         check(st.visible && rightHalf && inside, L"N1", L"dragging %ls to the right edge previews the right half: %ls (view %ls, preview window %ls)",
             g_dragFile.c_str(), rectStr(st.target).c_str(), rectStr(rv).c_str(), rectStr(st.window).c_str());
         HWND pw = ::FindWindowW(L"KexSuiteSnapPreview", nullptr);

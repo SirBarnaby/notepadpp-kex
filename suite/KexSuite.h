@@ -149,9 +149,10 @@ Module* createPaintSplash();
 Module* createTabSwipe();
 Module* createTabFold();
 Module* createSaveGlint();
+Module* createEditMotion();
 
 enum ModuleId { M_LETTERS = 0, M_CARET, M_HOTKEY, M_TABS, M_DESKTOP, M_SNAP, M_KEYS, M_GLASS, M_TOKENS, M_FLASH, M_SLIDE, M_SPLASH, M_SWIPE,
-                M_TABFOLD, M_GLINT, M_COUNT };
+                M_TABFOLD, M_GLINT, M_MOTION, M_COUNT };
 extern Module* modules[M_COUNT];
 
 // Core services used across modules.
@@ -159,7 +160,7 @@ bool setModuleEnabled(int id, bool on, bool interactive);
 void refreshPrefPages();           // after a feature was switched on/off or failed
 void showNote(const std::wstring& text, int ms);   // non-modal note in the corner of Notepad++
 bool isPostItMode();
-enum PrefPageId { PAGE_EDITING = 0, PAGE_TABS, PAGE_WINDOWS, PAGE_HIGHLIGHT, PAGE_NOTE, PAGE_EFFECTS, PAGE_COUNT };
+enum PrefPageId { PAGE_EDITING = 0, PAGE_TABS, PAGE_WINDOWS, PAGE_HIGHLIGHT, PAGE_NOTE, PAGE_EFFECTS, PAGE_MOTION, PAGE_COUNT };
 // The KEX Settings window (PrefPages.cpp): KEX's own settings, apart from Notepad++'s Preferences.
 HWND prefPage(int i);              // a page of it (PrefPageId), while the window is open
 HWND settingsDialog();             // the window, while it is open
@@ -176,6 +177,7 @@ HMENU kexMenu();                   // the KEX menu itself
 HMENU settingsSubmenu(int page);
 UINT settingsSwitchId(int module);
 UINT settingsPreferencesId(int page);
+UINT settingsMotionId(int kind);   // KEX > Motion's switch for one motion
 
 // Main-window subclass hooks (owned by the core, consulted by modules).
 struct MainHooks {
@@ -208,15 +210,24 @@ struct LettersStats { int lastSpawned = 0; int lastCandidates = 0; int totalSpaw
 LettersStats lettersStats();
 void lettersFreezeAfter(int ms);   // <0 = run normally
 void lettersFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);   // the quick note's deletes
-void flashFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);
-struct FlashStats { int copies = 0, cuts = 0, deletes = 0, lastRects = 0, live = 0, spawned = 0;
-                    int closeUps = 0, closeUpsRefused = 0; HWND lastCloseUp = nullptr; };   // cut and delete: close-ups Scintilla took on, refused, the view of the last
+void flashFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType);   // the quick note's deletes (a cut there)
+struct FlashStats { int copies = 0, lastRects = 0, live = 0, spawned = 0; };
 FlashStats flashStats();
+// Editing motion (EditMotion.cpp): the editor animates its own edits (KexScintilla.h, SCI_KEX_SETMOTIONS), each
+// with its own switch and time, in the order of the core's KEXM_* kinds.
+const int kMotionCount = 12;
+struct MotionDef { const wchar_t* key; int ms; const wchar_t* menu; };
+extern const MotionDef kMotionDefs[kMotionCount];
+void applyMotions(HWND sciHwnd);       // an editor made later (the quick note) gets the motions too
+bool motionOn(int kind);
+void setMotionOn(int kind, bool on);   // KEX > Motion's switches
+struct MotionStats { bool active = false; int started[kMotionCount] = {}; int total = 0, skipped = 0, refused = 0, ended = 0, frames = 0, lastKind = -1;
+                     float fraction = 0, gap = 0; int style = 0, ringFrames = 0, jumpLines = 0, lines = 0; };
+MotionStats motionStats(HWND sciHwnd);
 struct SplashStats { int splashes = 0, lastTokens = 0, live = 0, spawned = 0; };
 SplashStats splashStats();
 struct SlideStats { int seen = 0, started = 0, skipped = 0, lastDir = 0, afterClose = 0; bool active = false;
-                    int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0; float fraction = 0;
-                    int collapses = 0, collapseFrames = 0, collapseEnded = 0, collapseKind = 0; float gap = 0; };   // the close-up after cut and delete
+                    int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0; float fraction = 0; };
 SlideStats slideStats(HWND view);
 void slideTestFreeze(double fraction);   // <0 = run normally
 // Touchpad tab swipe (TabSwipe.cpp). swipeSwitching: a view is about to show another document; true when the
@@ -230,7 +241,10 @@ void swipeTestFingers(int n);   // self-test: pretend this many fingers are on a
 std::wstring effectsInfo();       // the line on the KEX Effects page
 // Tab close and open, save glint (TabMotion.cpp)
 struct TabMotionStats { int folds = 0, unfolds = 0, foldBulk = 0, foldSkipped = 0, foldFrames = 0, lastDx = 0, lastDrop = 0; float lastFraction = 0, lastWidth = 0;
-                        int saves = 0, glints = 0, glintLines = 0, glintSkipped = 0, glintFrames = 0; bool overlayShown = false; };
+                        int saves = 0, glints = 0, glintLines = 0, glintSkipped = 0, glintFrames = 0; bool overlayShown = false;
+                        // the last save's tab and line glint: when each starts (ms after the save) and, at the moment the
+                        // tab's band crosses the middle of the tab, where the line's band is (view x) and that middle
+                        double tabGlintDelay = -1, lineGlintDelay = -1; float lineAtCross = 0, tabMiddle = 0; int glintMs = 0; };
 TabMotionStats tabMotionStats();
 void tabMotionTestFreeze(double fraction);   // <0 = run normally
 bool tabMotionTestSave(HWND target, const std::wstring& file);   // the overlay's picture now, as a .bmp
@@ -250,8 +264,11 @@ struct HotkeyStats { bool registered = false; bool byOtherNpp = false; DWORD las
                      int pins = 0, resets = 0;   // the pin: pinned where it was, sent back to the middle
                      int otherDesktopFg = 0;     // opened while the foreground window was on another desktop (not given the focus back)
                      int focusFallbacks = 0;     // hidden with the focus going to another window of this desktop than the one it came from
-                     HWND lastFocusTo = nullptr; };
+                     HWND lastFocusTo = nullptr;
+                     int zooms = 0, zoomFrames = 0;   // zoom in or out played, frames drawn
+                     float zoomScale = 0, zoomAlpha = 0; bool zoomOpening = false, zoomLive = false; };
 HotkeyStats hotkeyStats();
+void quickNoteZoomFreeze(double fraction);   // self-test: the zoom stops at this fraction (<0 = runs normally)
 void hotkeyPress();              // run the same code path as WM_HOTKEY
 bool hotkeyApply(UINT mods, UINT vk);   // store + re-register; true when registered
 std::wstring hotkeyText(UINT mods, UINT vk);

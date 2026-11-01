@@ -1,44 +1,28 @@
-// EditFlash.cpp - small answers to copy, cut and delete. Copy: the selection box flashes faintly. Cut and
-// delete: the text closes up. The removed text fades where it was while the text after it glides into its
-// place (the rest of the line slides left, the lines below move up), so nothing vanishes in one frame and
-// nothing floats over other text. A cut (Ctrl+X, and Shift+Delete, the old Windows key for Cut) also lights
-// the removed text up for a moment in the selection's colour, the way a copy flashes: it went somewhere.
+// EditFlash.cpp - copy flash: the copied selection lights up faintly for a moment, so a copy, which changes
+// nothing on screen, still answers. Scintilla puts text on the clipboard with its own window as the clipboard
+// owner, so a clipboard listener (WM_CLIPBOARDUPDATE) knows which editor copied.
 //
-// Copy: Scintilla puts text on the clipboard with its own window as the clipboard owner, so a clipboard
-// listener (WM_CLIPBOARDUPDATE) knows which editor copied. Cut: the text is copied and then removed in the
-// same command, so the removal (SC_MOD_BEFOREDELETE) comes while the clipboard still names that editor as
-// the owner of a change the listener has not seen yet. Delete: a selection removed with Delete, Backspace or
-// Edit > Delete. The close-up itself is drawn by Scintilla (SCI_KEX_COLLAPSE in the KEX core): it paints the
-// view before the text goes, then each frame from the new text, so it is crisp, works on glass and in the
-// quick note, and any keystroke, scroll or other change ends it at once. Following Apple's guidance for
-// motion on frequent actions, it is short (220 ms by default), with no bounce, and never holds up typing.
+// Cut and delete are motions drawn by the editor itself now (EditMotion.cpp): the cut text is picked up and
+// goes, deleted text is wiped away or fades while the rest closes up.
 #include "Effects.h"
-#include "KexScintilla.h"
 #include <cmath>
 
 namespace kex {
 
 namespace {
 
-const UINT_PTR kSubclassId = 0x4B454653;   // 'KEFS'
-
 class EditFlash;
 EditFlash* s_self = nullptr;
 
-enum FlashKind { F_COPY = 0, F_CUT, F_DELETE };
 
 class EditFlash : public Module, public MsgWindow {
 public:
     const wchar_t* key() const override { return L"EditFlash"; }
-    const wchar_t* title() const override { return L"Copy, cut and delete"; }
+    const wchar_t* title() const override { return L"Copy flash"; }
 
     void loadOptions() override
     {
-        _on[F_COPY] = settings.getInt(key(), L"Copy", 1) != 0;
-        // the close-up replaced the lift and shrink (which replaced the first flashes): switches of its own
-        _on[F_CUT] = settings.getInt(key(), L"CutClose", 1) != 0;
-        _on[F_DELETE] = settings.getInt(key(), L"DeleteClose", 1) != 0;
-        _closeMs = std::max(80, std::min(800, settings.getInt(key(), L"CloseUpMs", 220)));
+        _on = settings.getInt(key(), L"Copy", 1) != 0;
         _strength = std::max(10, std::min(200, settings.getInt(key(), L"Strength", 100)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
@@ -59,14 +43,12 @@ public:
         if (!::AddClipboardFormatListener(hwnd())) { destroyMsgWindow(); return false; }
         if (!fx::acquire()) { ::RemoveClipboardFormatListener(hwnd()); destroyMsgWindow(); return false; }
         _seenSeq = ::GetClipboardSequenceNumber();
-        if (::SetWindowSubclass(npp._nppHandle, mainProc, kSubclassId, 0)) _subclassed = true;
         s_self = this;
         return true;
     }
 
     void disable() override
     {
-        if (_subclassed) { ::RemoveWindowSubclass(npp._nppHandle, mainProc, kSubclassId); _subclassed = false; }
         if (s_self == this)
         {
             fx::clear(fx::K_FLASH);
@@ -79,33 +61,20 @@ public:
 
     void onNotify(SCNotification* n) override
     {
-        if (n->nmhdr.code != SCN_MODIFIED || !(n->modificationType & SC_MOD_BEFOREDELETE) || n->length <= 0) return;
-        HWND s = static_cast<HWND>(n->nmhdr.hwndFrom);
-        if (views.viewOf(s) < 0 || !::IsWindowVisible(s)) return;
-        if (views.sci(views.current()) != s) return;   // a document in two views notifies from both
-        beforeDelete(s, n->position, n->length, n->modificationType);
+        if (n->nmhdr.code == SCN_MODIFIED && (n->modificationType & SC_MOD_BEFOREDELETE))
+            beforeDelete(static_cast<HWND>(n->nmhdr.hwndFrom));
     }
 
-    // a removal in an editor: the second half of a cut, a deleted selection, or neither
-    void beforeDelete(HWND s, Sci_Position pos, Sci_Position len, int modType)
+    // Text going right after its editor put something on the clipboard: a cut. Its clipboard change is not a copy
+    // to flash (the text is gone; the cut has a motion of its own).
+    void beforeDelete(HWND s)
     {
-        if (modType & (SC_PERFORMED_UNDO | SC_PERFORMED_REDO)) return;
         const DWORD seq = ::GetClipboardSequenceNumber();
-        const double now = nowMs();
-        bool cut = false;
-        if (seq != _seenSeq && ::GetClipboardOwner() == s) { cut = true; _seenSeq = seq; _cutSeq = seq; _cutAt = now; }
-        else if (seq == _cutSeq && now - _cutAt < 60) cut = true;   // a rectangular cut removes line by line
-        if (cut) { ++_counts[F_CUT]; closeUp(F_CUT, s, pos, pos + len); return; }
-        const bool keyDelete = ::GetKeyState(VK_DELETE) < 0 || ::GetKeyState(VK_BACK) < 0 || _menuDelete;
-        if (!keyDelete || sci(s, SCI_GETSELECTIONEMPTY)) return;   // typing over a selection replaces it: nothing
-        ++_counts[F_DELETE];
-        closeUp(F_DELETE, s, pos, pos + len);
+        if (seq != _seenSeq && ::GetClipboardOwner() == s) _seenSeq = seq;
     }
 
-    int _counts[3] = {};
+    int _copies = 0;
     int _lastRects = 0;
-    int _closeUps = 0, _closeUpsRefused = 0;
-    HWND _lastCloseUp = nullptr;
 
 protected:
     LRESULT onMessage(UINT m, WPARAM w, LPARAM l) override
@@ -113,16 +82,16 @@ protected:
         if (m == WM_CLIPBOARDUPDATE)
         {
             const DWORD seq = ::GetClipboardSequenceNumber();
-            if (seq == _seenSeq) return 0;   // the cut that removed text has already flashed
+            if (seq == _seenSeq) return 0;
             _seenSeq = seq;
             HWND owner = ::GetClipboardOwner();
             if (!owner || !editorOf(owner) || !::IsWindowVisible(owner)) return 0;
-            ++_counts[F_COPY];
+            ++_copies;
             if (sci(owner, SCI_GETSELECTIONEMPTY))
             {
                 // copying without a selection copies the caret's line
                 const Sci_Position line = sci(owner, SCI_LINEFROMPOSITION, sci(owner, SCI_GETCURRENTPOS));
-                flash(F_COPY, owner, sci(owner, SCI_POSITIONFROMLINE, line), sci(owner, SCI_POSITIONFROMLINE, line + 1));
+                flash(owner, sci(owner, SCI_POSITIONFROMLINE, line), sci(owner, SCI_POSITIONFROMLINE, line + 1));
             }
             else
             {
@@ -133,7 +102,7 @@ protected:
                     std::vector<RECT> r = rangeRects(owner, sci(owner, SCI_GETSELECTIONNSTART, i), sci(owner, SCI_GETSELECTIONNEND, i), true);
                     all.insert(all.end(), r.begin(), r.end());
                 }
-                spawn(F_COPY, owner, all);
+                spawn(owner, all);
             }
             return 0;
         }
@@ -147,41 +116,15 @@ private:
         return _inNote && h == quickNoteEditor();
     }
 
-    void flash(int kind, HWND s, Sci_Position a, Sci_Position b)
+    void flash(HWND s, Sci_Position a, Sci_Position b)
     {
-        spawn(kind, s, rangeRects(s, a, b, true));
+        spawn(s, rangeRects(s, a, b, true));
     }
 
-    // Cut and delete: Scintilla closes the text up (SCI_KEX_COLLAPSE), set up now, while the text is still there.
-    // One range only (a rectangular or multiple selection removes several, which just go).
-    void closeUp(int kind, HWND s, Sci_Position a, Sci_Position b)
-    {
-        _lastRects = static_cast<int>(rangeRects(s, a, b, true).size());
-        if (!_on[kind] || b <= a) return;
-        if (_respectAnim && !fx::animationsOn()) return;
-        if (sci(s, SCI_GETSELECTIONS) > 1 || sci(s, SCI_SELECTIONISRECTANGLE)) return;
-        KexCollapse c{};
-        c.start = a;
-        c.end = b;
-        c.ms = _closeMs;
-        if (kind == F_CUT)
-        {
-            // the selection's colour, lit: what a copy flashes in
-            COLORREF sel = ::GetSysColor(COLOR_HIGHLIGHT);
-            const LRESULT ca = sci(s, SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK);
-            if (ca & 0xFF000000) sel = static_cast<COLORREF>(ca & 0xFFFFFF);
-            const COLORREF lit = mixColour(sel, RGB(255, 255, 255), 0.45);
-            const int alpha = std::min(255, static_cast<int>(0.42 * 255 * _strength / 100.0));
-            c.tint = static_cast<int>((static_cast<unsigned>(alpha) << 24) | (lit & 0xFFFFFF));
-        }
-        if (sci(s, SCI_KEX_COLLAPSE, reinterpret_cast<WPARAM>(&c))) { ++_closeUps; _lastCloseUp = s; }
-        else ++_closeUpsRefused;
-    }
-
-    void spawn(int kind, HWND s, const std::vector<RECT>& rects)
+    void spawn(HWND s, const std::vector<RECT>& rects)
     {
         _lastRects = static_cast<int>(rects.size());
-        if (!_on[kind] || rects.empty()) return;
+        if (!_on || rects.empty()) return;
         if (_respectAnim && !fx::animationsOn()) return;
         COLORREF sel = ::GetSysColor(COLOR_HIGHLIGHT);
         const LRESULT ca = sci(s, SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK);
@@ -210,33 +153,21 @@ private:
         fx::submit(std::move(items));
     }
 
-    static LRESULT CALLBACK mainProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
-    {
-        if (m == WM_COMMAND && LOWORD(w) == IDM_EDIT_DELETE && s_self)
-        {
-            s_self->_menuDelete = true;
-            LRESULT r = ::DefSubclassProc(h, m, w, l);
-            if (s_self) s_self->_menuDelete = false;
-            return r;
-        }
-        if (m == WM_NCDESTROY) ::RemoveWindowSubclass(h, mainProc, kSubclassId);
-        return ::DefSubclassProc(h, m, w, l);
-    }
+public:
+    bool _on = true;
+    int _strength = 100;
+    bool _respectAnim = true, _inNote = true;
+    DWORD _seenSeq = 0;
 
-    bool _on[3] = { true, true, true };
-    int _strength = 100, _closeMs = 220;
-    bool _respectAnim = true, _inNote = true, _subclassed = false, _menuDelete = false;
-    DWORD _seenSeq = 0, _cutSeq = 0;
-    double _cutAt = 0;
 };
 
 } // namespace
 
 Module* createEditFlash() { return new EditFlash(); }
 
-void flashFromNote(HWND sciHwnd, Sci_Position pos, Sci_Position len, int modType)
+void flashFromNote(HWND sciHwnd, Sci_Position, Sci_Position, int)
 {
-    if (s_self && quickNoteEditor() == sciHwnd) s_self->beforeDelete(sciHwnd, pos, len, modType);
+    if (s_self && quickNoteEditor() == sciHwnd) s_self->beforeDelete(sciHwnd);
 }
 
 FlashStats flashStats()
@@ -244,8 +175,7 @@ FlashStats flashStats()
     FlashStats st;
     if (s_self)
     {
-        st.copies = s_self->_counts[F_COPY]; st.cuts = s_self->_counts[F_CUT]; st.deletes = s_self->_counts[F_DELETE]; st.lastRects = s_self->_lastRects;
-        st.closeUps = s_self->_closeUps; st.closeUpsRefused = s_self->_closeUpsRefused; st.lastCloseUp = s_self->_lastCloseUp;
+        st.copies = s_self->_copies; st.lastRects = s_self->_lastRects;
     }
     const fx::Stats fs = fx::stats();
     st.live = fs.live[fx::K_FLASH];

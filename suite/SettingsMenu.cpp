@@ -1,14 +1,15 @@
 // SettingsMenu.cpp - the KEX menu in Notepad++'s menu bar (between Plugins and Window; the core's
 // Notepad_plus.rc gives it, holding "Settings..."): one submenu for each page of the KEX Settings window
-// ("Editing", "Tabs", "Windows", "Highlighting", "Quick Note", "Effects"), holding an on/off switch for every
-// feature on that page, the features' commands and "Settings..." to open the window on that page.
+// ("Editing", "Tabs", "Windows", "Highlighting", "Quick Note", "Effects", "Motion"), holding an on/off switch for
+// every feature on that page, the features' commands and "Settings..." to open the window on that page. "Motion"
+// also has a switch for each editing motion.
 #include "KexSuite.h"
 
 namespace kex {
 
 namespace {
 
-UINT g_first = 0;               // our command ids (NPPM_ALLOCATECMDID): a switch per feature, then "Settings..." per page
+UINT g_first = 0;               // our command ids (NPPM_ALLOCATECMDID): a switch per feature, "Settings..." per page, a switch per motion
 HMENU g_menu = nullptr;
 HMENU g_sub[PAGE_COUNT] = {};
 
@@ -31,7 +32,7 @@ bool buildSettingsMenu()
     HMENU kex = findKexMenu();
     if (!kex) { log(L"KEX menu: not found in the menu bar"); return false; }
     int first = 0;
-    if (!nppMsg(NPPM_ALLOCATECMDID, M_COUNT + PAGE_COUNT, reinterpret_cast<LPARAM>(&first)) || first <= 0)
+    if (!nppMsg(NPPM_ALLOCATECMDID, M_COUNT + PAGE_COUNT + kMotionCount, reinterpret_cast<LPARAM>(&first)) || first <= 0)
     {
         log(L"KEX menu: no command ids");
         return false;
@@ -45,6 +46,11 @@ bool buildSettingsMenu()
         HMENU sub = ::CreatePopupMenu();
         for (int i = 0; i < M_COUNT; ++i)
             if (pageOfModule(i) == p) ::AppendMenuW(sub, MF_STRING, g_first + i, modules[i]->title());
+        if (p == PAGE_MOTION)
+        {
+            ::AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+            for (int k = 0; k < kMotionCount; ++k) ::AppendMenuW(sub, MF_STRING, g_first + M_COUNT + PAGE_COUNT + k, kMotionDefs[k].menu);
+        }
         ::AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
         ::AppendMenuW(sub, MF_STRING, g_first + M_COUNT + p, L"Settings...");
         ::InsertMenuW(kex, 0, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(sub), pageTitle(p));
@@ -67,16 +73,27 @@ void settingsMenuPopup(HMENU m)
         for (int i = 0; i < M_COUNT; ++i)
             if (pageOfModule(i) == p)
                 ::CheckMenuItem(m, g_first + i, MF_BYCOMMAND | (modules[i]->isEnabled() ? MF_CHECKED : MF_UNCHECKED));
+        if (p == PAGE_MOTION)
+        {
+            const bool live = modules[M_MOTION]->isEnabled();
+            for (int k = 0; k < kMotionCount; ++k)
+            {
+                const UINT id = g_first + M_COUNT + PAGE_COUNT + k;
+                ::CheckMenuItem(m, id, MF_BYCOMMAND | (motionOn(k) ? MF_CHECKED : MF_UNCHECKED));
+                ::EnableMenuItem(m, id, MF_BYCOMMAND | (live ? MF_ENABLED : MF_GRAYED));
+            }
+        }
     }
 }
 
 // WM_COMMAND: true when the command was one of the menu's
 bool settingsMenuCommand(UINT id)
 {
-    if (!g_first || id < g_first || id >= g_first + M_COUNT + PAGE_COUNT) return false;
+    if (!g_first || id < g_first || id >= g_first + M_COUNT + PAGE_COUNT + kMotionCount) return false;
     const int i = static_cast<int>(id - g_first);
     if (i < M_COUNT) setModuleEnabled(i, !modules[i]->isEnabled(), true);   // stored, as the Settings tick is
-    else openSettings(i - M_COUNT);
+    else if (i < M_COUNT + PAGE_COUNT) openSettings(i - M_COUNT);
+    else { const int k = i - M_COUNT - PAGE_COUNT; setMotionOn(k, !motionOn(k)); refreshPrefPages(); }
     return true;
 }
 
@@ -84,5 +101,6 @@ HMENU kexMenu() { return g_menu; }
 HMENU settingsSubmenu(int page) { return (page >= 0 && page < PAGE_COUNT) ? g_sub[page] : nullptr; }
 UINT settingsSwitchId(int module) { return g_first ? g_first + module : 0; }
 UINT settingsPreferencesId(int page) { return g_first ? g_first + M_COUNT + page : 0; }
+UINT settingsMotionId(int kind) { return g_first ? g_first + M_COUNT + PAGE_COUNT + kind : 0; }
 
 } // namespace kex

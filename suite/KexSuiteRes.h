@@ -9,6 +9,7 @@
 #define IDD_KEX_PAGE_HIGHLIGHT 30503
 #define IDD_KEX_PAGE_NOTE    30504
 #define IDD_KEX_PAGE_EFFECTS 30505
+#define IDD_KEX_PAGE_MOTION  30506
 
 #define IDC_SUMMARY        1001
 #define IDC_L_EN           1100
@@ -46,6 +47,8 @@
 #define IDC_H_LETTERS      1317
 #define IDC_H_FLASH        1318
 #define IDC_H_OPACITY      1319
+#define IDC_H_ZOOM         1320
+#define IDC_H_ZOOMMS       1321
 #define IDC_T_EN           1400
 #define IDC_T_STATUS       1401
 #define IDC_T_ZONE         1402
@@ -79,9 +82,6 @@
 #define IDC_K_INFO         1905
 #define IDC_E_EN           2000
 #define IDC_E_STATUS       2001
-#define IDC_E_COPY         2002
-#define IDC_E_CUT          2003
-#define IDC_E_DEL          2004
 #define IDC_E_STRENGTH     2005
 #define IDC_E_INFO         2007
 #define IDC_W_EN           2100
@@ -99,4 +99,12 @@
 #define IDC_F_MS           2402
 #define IDC_GL_EN          2500
 #define IDC_GL_STATUS      2501
+#define IDC_GL_MS          2502
 #define IDC_FX_RESPECT     2600
+#define IDC_M_EN           2700
+#define IDC_M_STATUS       2701
+#define IDC_M_GLOW         2702
+#define IDC_M_RAPID        2703
+#define IDC_M_NOTE         2704
+#define IDC_M_ON0          2710   // + KEXM_* kind: a motion's switch
+#define IDC_M_MS0          2730   // + KEXM_* kind: its time

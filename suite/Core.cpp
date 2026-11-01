@@ -313,6 +313,7 @@ void setInfo(HINSTANCE inst, const NppData& d)
         modules[M_SWIPE] = createTabSwipe();
         modules[M_TABFOLD] = createTabFold();
         modules[M_GLINT] = createSaveGlint();
+        modules[M_MOTION] = createEditMotion();
     }
     catch (...) { for (Module*& m : modules) m = nullptr; }
 }

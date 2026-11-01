@@ -1,6 +1,6 @@
 // PrefPages.cpp - the KEX Settings window (KEX > Settings...): KEX's own settings, apart from Notepad++'s
-// Preferences but built the same way: the pages "Editing", "Tabs", "Windows", "Highlighting", "Quick Note"
-// and "Effects" in a list on the left, the picked page on the right, a Close button, Notepad++'s dark mode.
+// Preferences but built the same way: the pages "Editing", "Tabs", "Windows", "Highlighting", "Quick Note",
+// "Effects" and "Motion" in a list on the left, the picked page on the right, a Close button, Notepad++'s dark mode.
 // Like the Preferences pages, every change takes effect at once; numbers apply half a second after the
 // last keystroke (or when the window closes).
 #include "KexSuite.h"
@@ -16,7 +16,7 @@ const UINT_PTR TIMER_APPLY = 1;
 HWND g_pages[PAGE_COUNT] = {};
 HWND g_dialog = nullptr;
 int g_page = 0;                 // the page showing (or shown last)
-const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects" };
+const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects", L"Motion" };
 bool g_filling = false;
 
 struct IntField { int id; int module; const wchar_t* key; int def; };
@@ -37,6 +37,23 @@ const IntField kInts[] = {
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
     { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
     { IDC_F_MS, M_TABFOLD, L"DurationMs", 240 },
+    { IDC_GL_MS, M_GLINT, L"DurationMs", 420 },
+    { IDC_H_ZOOMMS, M_HOTKEY, L"ZoomOpenMs", 320 },
+    { IDC_M_GLOW, M_MOTION, L"GlowMs", 600 },
+    { IDC_M_RAPID, M_MOTION, L"RapidMs", 250 },
+    // the motions' times (KEXM_* order, kMotionDefs)
+    { IDC_M_MS0 + 0, M_MOTION, L"CutMs", 320 },
+    { IDC_M_MS0 + 1, M_MOTION, L"DeleteMs", 260 },
+    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesMs", 260 },
+    { IDC_M_MS0 + 3, M_MOTION, L"PasteMs", 260 },
+    { IDC_M_MS0 + 4, M_MOTION, L"UndoMs", 260 },
+    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineMs", 220 },
+    { IDC_M_MS0 + 6, M_MOTION, L"FindMs", 300 },
+    { IDC_M_MS0 + 7, M_MOTION, L"IndentMs", 220 },
+    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateMs", 240 },
+    { IDC_M_MS0 + 9, M_MOTION, L"JumpMs", 320 },
+    { IDC_M_MS0 + 10, M_MOTION, L"FoldMs", 240 },
+    { IDC_M_MS0 + 11, M_MOTION, L"SortMs", 340 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -60,18 +77,29 @@ const BoolField kBools[] = {
     { IDC_H_CARET, M_HOTKEY, L"SmoothCaret", 1 },
     { IDC_H_LETTERS, M_LETTERS, L"InQuickNote", 1 },
     { IDC_H_FLASH, M_FLASH, L"InQuickNote", 1 },
-    { IDC_E_COPY, M_FLASH, L"Copy", 1 },
-    { IDC_E_CUT, M_FLASH, L"CutClose", 1 },
-    { IDC_E_DEL, M_FLASH, L"DeleteClose", 1 },
     { IDC_SW_REVERSE, M_SWIPE, L"Reverse", 0 },
+    { IDC_H_ZOOM, M_HOTKEY, L"ZoomOpen", 0 },
+    { IDC_M_NOTE, M_MOTION, L"InQuickNote", 1 },
+    { IDC_M_ON0 + 0, M_MOTION, L"Cut", 1 },
+    { IDC_M_ON0 + 1, M_MOTION, L"Delete", 1 },
+    { IDC_M_ON0 + 2, M_MOTION, L"DeleteLines", 1 },
+    { IDC_M_ON0 + 3, M_MOTION, L"Paste", 1 },
+    { IDC_M_ON0 + 4, M_MOTION, L"Undo", 1 },
+    { IDC_M_ON0 + 5, M_MOTION, L"MoveLine", 1 },
+    { IDC_M_ON0 + 6, M_MOTION, L"Find", 1 },
+    { IDC_M_ON0 + 7, M_MOTION, L"Indent", 1 },
+    { IDC_M_ON0 + 8, M_MOTION, L"Duplicate", 1 },
+    { IDC_M_ON0 + 9, M_MOTION, L"Jump", 1 },
+    { IDC_M_ON0 + 10, M_MOTION, L"Fold", 1 },
+    { IDC_M_ON0 + 11, M_MOTION, L"Sort", 1 },
 };
 // one box on the Effects page for all of its animations: "Not when Windows animation effects are off"
-const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT };
+const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT, M_MOTION };
 // options the feature reads again at once: no restart (which would close the quick note, or take the token styles away)
 bool liveOption(int id, int module)
 {
-    return module == M_TOKENS || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE ||
-           id == IDC_E_COPY || id == IDC_E_CUT || id == IDC_E_DEL || id == IDC_E_STRENGTH ||
+    return module == M_TOKENS || module == M_MOTION || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE ||
+           id == IDC_H_ZOOM || id == IDC_H_ZOOMMS || id == IDC_E_STRENGTH ||
            id == IDC_W_MS || id == IDC_P_DROPS || id == IDC_C_BLINK || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT;
 }
 // a drop-down list: the setting is the index of the picked item
@@ -84,9 +112,9 @@ const ComboField kCombos[] = {
     { IDC_G_EDGES, M_GLASS, L"Edges", 0, L"Smooth|Sharp" },
 };
 const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
-                              IDC_F_EN, IDC_GL_EN };
+                              IDC_F_EN, IDC_GL_EN, IDC_M_EN };
 const int kStatus[M_COUNT] = { IDC_L_STATUS, IDC_C_STATUS, IDC_H_STATUS, IDC_T_STATUS, IDC_D_STATUS, IDC_S_STATUS, IDC_J_STATUS, IDC_G_STATUS, IDC_K_STATUS,
-                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS, IDC_F_STATUS, IDC_GL_STATUS };
+                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS, IDC_F_STATUS, IDC_GL_STATUS, IDC_M_STATUS };
 
 bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
 
@@ -469,6 +497,7 @@ int pageOfModule(int module)
     case M_TOKENS: return PAGE_HIGHLIGHT;
     case M_HOTKEY: return PAGE_NOTE;
     case M_FLASH: case M_SLIDE: case M_SPLASH: case M_TABFOLD: case M_GLINT: return PAGE_EFFECTS;
+    case M_MOTION: return PAGE_MOTION;
     default: return PAGE_WINDOWS;
     }
 }

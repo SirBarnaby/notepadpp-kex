@@ -9,14 +9,13 @@
 // The glide is a critically damped spring (Apple's default: no bounce), the sink accelerates away as
 // leaving things do. Then the window goes and the real bar shows. Several tabs at once (Close All,
 // opening a session) just change.
-// The document area changes at once, as in every editor; with Tab slide on, the document that takes a
-// closed one's place slides in from the side its tab came from (TabSlide.cpp).
+// Only the tab moves: the document area changes at once, as in every editor (no slide, no fade).
 //
 // Save glint: a soft diagonal band of light sweeps once across the tab of the file just saved, in a
 // click-through layered window over the bar, wherever the tab is (one row or several, scroll arrows or
-// not), and at the same moment a thin line of light runs along the top of the view showing that file.
-// With the tab out of sight (the tab bar hidden, or scrolled away from it) only the line runs. Save All
-// staggers the glints along the tabs.
+// not), and a thin line of light runs along the top of the view showing that file, timed as one light: the
+// line's band passes under the tab just as the tab's band crosses the tab's middle. With the tab out of sight
+// (the tab bar hidden, or scrolled away from it) only the line runs. Save All staggers the glints along the tabs.
 #include "Overlay.h"
 #include "KexScintilla.h"
 #include <cmath>
@@ -30,7 +29,7 @@ namespace {
 const UINT_PTR kBarSubclassId = 0x4B45544D;   // 'KETM'
 const UINT WM_TM_SETTLED = WM_APP + 61;       // wParam: the bar whose change Notepad++ has finished
 const UINT_PTR TIMER_FRAME = 1;
-const double kGlintMs = 420, kGlintStagger = 40, kMaxHoldMs = 1500;
+const double kGlintStagger = 40, kMaxHoldMs = 1500;
 
 class TabFold;
 class SaveGlint;
@@ -510,6 +509,8 @@ public:
     void loadOptions() override
     {
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
+        _ms = std::max(120, std::min(2000, settings.getInt(key(), L"DurationMs", 420)));
+        s_stats.glintMs = static_cast<int>(_ms);
     }
 
     bool selfCheck(std::wstring& why) override
@@ -566,28 +567,45 @@ public:
             // its tab, wherever it can be seen (one row or several, scroll arrows or not)
             const RECT vis = barVisible(bar);
             const RECT tab = ::IsRectEmpty(&vis) ? RECT{} : tabShows(bar, idx, vis);
-            if (!::IsRectEmpty(&tab))
+            Glint tabGlint{}, lineGlint{};
+            const bool hasTab = !::IsRectEmpty(&tab);
+            if (hasTab)
             {
-                Glint g{};
-                g.start = start;
-                g.r = tab;
-                g.colour = dark ? RGB(255, 255, 255) : mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), 0.35);
-                g.peak = dark ? 0.30f : 0.42f;
-                add(bar, g);
+                tabGlint.start = start;
+                tabGlint.r = tab;
+                tabGlint.colour = dark ? RGB(255, 255, 255) : mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), 0.35);
+                tabGlint.peak = dark ? 0.30f : 0.42f;
             }
-            // and, at the same moment, a thin line of light along the top of the view, when the view shows
-            // that document: the two read as one answer, whichever the eye is on
+            // and a thin line of light along the top of the view, when the view shows that document: the two read
+            // as one answer, whichever the eye is on
             HWND s = views.sci(v);
-            if (s && ::IsWindowVisible(s) && views.bufferId(v, views.currentIndex(v)) == buffer)
+            const bool hasLine = s && ::IsWindowVisible(s) && views.bufferId(v, views.currentIndex(v)) == buffer;
+            if (hasLine)
             {
                 RECT cr; ::GetClientRect(s, &cr);
-                Glint g{};
-                g.start = start;
-                g.r = RECT{ 0, 0, cr.right, std::min<LONG>(3, cr.bottom) };
-                g.colour = mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), dark ? 0.5 : 0.1);
-                g.peak = 0.9f;
-                add(s, g);
+                lineGlint.start = start;
+                lineGlint.r = RECT{ 0, 0, cr.right, std::min<LONG>(3, cr.bottom) };
+                lineGlint.colour = mixColour(::GetSysColor(COLOR_HIGHLIGHT), RGB(255, 255, 255), dark ? 0.5 : 0.1);
+                lineGlint.peak = 0.9f;
             }
+            if (hasTab && hasLine)
+            {
+                // one light: the line's band passes under the tab at the moment the tab's band crosses its middle
+                POINT mid{ (tab.left + tab.right) / 2, (tab.top + tab.bottom) / 2 };
+                ::ClientToScreen(bar, &mid);
+                ::ScreenToClient(s, &mid);
+                double band = 0;
+                const double travel = bandTravel(lineGlint.r, &band);
+                const double along = std::clamp((mid.x - lineGlint.r.left + band * 3) / travel, 0.02, 0.98);
+                const double lineU = invEaseInOutCubic(along);   // when (0..1 of its time) the line's band is there
+                if (lineU >= 0.5) tabGlint.start = start + (lineU - 0.5) * _ms;
+                else lineGlint.start = start + (0.5 - lineU) * _ms;
+                const double uLine = (tabGlint.start + 0.5 * _ms - lineGlint.start) / _ms;
+                s_stats.tabMiddle = static_cast<float>(mid.x);
+                s_stats.lineAtCross = static_cast<float>(lineGlint.r.left - band * 3 + travel * easeInOutCubic(uLine));
+            }
+            if (hasTab) { add(bar, tabGlint); s_stats.tabGlintDelay = tabGlint.start - now; }
+            if (hasLine) { add(s, lineGlint); s_stats.lineGlintDelay = lineGlint.start - now; }
         }
         if (any) { _lastStart = start; s_motion.tick(); }
     }
@@ -599,7 +617,7 @@ public:
         if (!overFold && b.frame.ensure(b.w, b.h)) b.frame.clear();
         for (auto it = b.glints.begin(); it != b.glints.end();)
         {
-            double t = (now - it->start) / kGlintMs;
+            double t = (now - it->start) / _ms;
             if (s_freeze >= 0) t = std::min(t, s_freeze);
             if (t >= 1.0) { it = b.glints.erase(it); continue; }
             live = true;
@@ -611,6 +629,23 @@ public:
     }
 
 private:
+    // how far a band goes across r (its width, the slant and the soft sides), and the band's width
+    static double bandTravel(const RECT& r, double* bandW)
+    {
+        const double w = r.right - r.left, h = r.bottom - r.top;
+        const double slant = h > 6 ? 0.6 : 0.0;   // a line along the view has no slant
+        *bandW = std::max(5.0, h > 6 ? std::min<double>(h, w) * 0.5 : w * 0.06);
+        return w + h * slant + *bandW * 6;
+    }
+
+    // the time (0..1) at which easeInOutCubic reaches e
+    static double invEaseInOutCubic(double e)
+    {
+        double lo = 0, hi = 1;
+        for (int i = 0; i < 40; ++i) { const double m = (lo + hi) / 2; (easeInOutCubic(m) < e ? lo : hi) = m; }
+        return (lo + hi) / 2;
+    }
+
     // a diagonal band, soft on both sides, across g.r at progress e
     void drawBand(BarFx& b, const Glint& g, double e)
     {
@@ -618,9 +653,9 @@ private:
         const int t = std::max<LONG>(0, g.r.top), btm = std::min<LONG>(b.h, g.r.bottom);
         if (r <= l || btm <= t) return;
         const double h = btm - t;
-        const double slant = h > 6 ? 0.6 : 0.0;   // a line along the view has no slant
-        const double bandW = std::max(5.0, h > 6 ? std::min<double>(h, r - l) * 0.5 : (r - l) * 0.06);
-        const double travel = (r - l) + h * slant + bandW * 6;
+        const double slant = h > 6 ? 0.6 : 0.0;
+        double bandW = 0;
+        const double travel = bandTravel(RECT{ l, t, r, btm }, &bandW);
         const double pos = -bandW * 3 + travel * e;
         const uint32_t cr = GetRValue(g.colour), cg = GetGValue(g.colour), cb = GetBValue(g.colour);
         for (int y = t; y < btm; ++y)
@@ -641,7 +676,7 @@ private:
     }
 
     bool _respect = true;
-    double _lastStart = 0;
+    double _lastStart = 0, _ms = 420;
 };
 
 void Motion::settled(HWND bar)
