@@ -46,6 +46,7 @@ public:
         _undoToo = settings.getInt(key(), L"AnimateUndoRedo", 0) != 0;
         _opacity = std::max(5, std::min(100, settings.getInt(key(), L"Opacity", 100)));
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
+        fx::setSpeed(fx::K_LETTER, animSpeed(key(), L"Speed"));
     }
 
     bool selfCheck(std::wstring& why) override

@@ -1,4 +1,4 @@
-From af69c5edce5a5d2b20b5a6e3684a0fee31783b49 Mon Sep 17 00:00:00 2001
+From 1aa348a9f1e69a6141e063467a552be9dd53c1a0 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -82,16 +82,16 @@ Claude-Session: https://claude.ai/code/session_01KLNHuTvRwta8ebaSJBmh3h
  PowerEditor/src/menuCmdID.h                   |    21 +
  PowerEditor/src/resource.h                    |     7 +-
  PowerEditor/src/winmain.cpp                   |    11 +
- scintilla/include/KexScintilla.h              |   140 +
+ scintilla/include/KexScintilla.h              |   142 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 19744 +++++++++-------
- scintilla/src/Editor.h                        |  1673 +-
+ scintilla/src/Editor.cxx                      | 19747 +++++++++-------
+ scintilla/src/Editor.h                        |  1674 +-
  scintilla/src/KexSurface.h                    |    21 +
  scintilla/win32/ScintillaWin.cxx              |  8785 +++----
  scintilla/win32/SurfaceD2D.cxx                |    59 +-
  scintilla/win32/SurfaceGDI.cxx                |    18 +-
- 46 files changed, 18988 insertions(+), 14673 deletions(-)
+ 46 files changed, 18994 insertions(+), 14673 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
@@ -5402,10 +5402,10 @@ index a675012..77021db 100644
  			// First of all, destroy static object NppParameters
 diff --git a/scintilla/include/KexScintilla.h b/scintilla/include/KexScintilla.h
 new file mode 100644
-index 0000000..8d9c3aa
+index 0000000..e58cab0
 --- /dev/null
 +++ b/scintilla/include/KexScintilla.h
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,142 @@
 +// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret, the tab slide, the motion of
 +// edits, and glass.
 +//
@@ -5423,6 +5423,7 @@ index 0000000..8d9c3aa
 +#define KEXCARET_OVERTYPE_BLOCK 0x4    // a block caret in overtype mode
 +#define KEXCARET_SNAPLINES(n) (((n) & 0xFF) << 8)   // jumps of more lines than this don't glide (0 = 12)
 +#define KEXCARET_NOBLINK 0x8           // the caret never blinks
++#define KEXCARET_FADEMS(ms) (((ms) & 0xFFF) << 16)  // KEXCARET_FADE: each fade's length in ms (0 = 140)
 +
 +// lParam: KexCaretInfo*, filled with what the last paint drew (for Notepad++ KEX's self-test).
 +#define SCI_KEX_GETCARETINFO 0x4B44
@@ -5435,6 +5436,7 @@ index 0000000..8d9c3aa
 +	int frames;          // paints that drew carets
 +	double workMs;       // time spent working out and drawing carets
 +	float alpha;         // the main caret's blink opacity at the last paint (1 = fully on, 0 = off)
++	int fadeMs;          // each fade's length (KEXCARET_FADEMS)
 +};
 +
 +// Self-test only: wParam = glide fraction to stop at in thousandths (-1 = run normally), lParam = 1 for
@@ -5627,10 +5629,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..d9e8f4c 100644
+index 1465bac..e369829 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,10565 @@
+@@ -1,9179 +1,10568 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -16837,7 +16839,7 @@ index 1465bac..d9e8f4c 100644
 +	const double P = caret.period;
 +	if (kexSolid || kexNoBlink || P <= 0)
 +		return 1.0f;
-+	const double F = kexFade ? std::min(140.0, P / 3) : 0.0;
++	const double F = kexFade ? std::min(static_cast<double>(kexFadeMs), P / 2) : 0.0;
 +	const double ph = std::fmod(now - kexBlinkStart, 2 * P);
 +	if (ph < P - F) {
 +		*nextChangeMs = (P - F) - ph;
@@ -22385,6 +22387,8 @@ index 1465bac..d9e8f4c 100644
 +		kexGlideMs = std::clamp(static_cast<int>(wParam), 0, 1000);
 +		kexFade = (lParam & KEXCARET_FADE) != 0;
 +		kexNoBlink = (lParam & KEXCARET_NOBLINK) != 0;
++		const int fadeMs = static_cast<int>((lParam >> 16) & 0xFFF);
++		kexFadeMs = fadeMs ? fadeMs : 140;
 +		view.kexOvertypeBlock = (lParam & KEXCARET_OVERTYPE_BLOCK) != 0;
 +		const int snapLines = static_cast<int>((lParam >> 8) & 0xFF);
 +		kexSnapLines = snapLines ? snapLines : 12;
@@ -22481,6 +22485,7 @@ index 1465bac..d9e8f4c 100644
 +			info->frames = kexStats.frames;
 +			info->workMs = kexStats.workMs;
 +			info->alpha = kexStats.mainAlpha;
++			info->fadeMs = kexFadeMs;
 +		}
 +		return kexOn ? 1 : 0;
 +	case SCI_KEX_CARETTEST:
@@ -25376,10 +25381,10 @@ index 1465bac..d9e8f4c 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..6ae9eb3 100644
+index 85c1410..f5f9686 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
-@@ -1,762 +1,911 @@
+@@ -1,762 +1,912 @@
 -// Scintilla source code edit control
 -/** @file Editor.h
 - ** Defines the main editor class.
@@ -26347,6 +26352,7 @@ index 85c1410..6ae9eb3 100644
 +	int kexGlideMs = 80;
 +	int kexSnapLines = 12;
 +	bool kexFade = true;
++	int kexFadeMs = 140;
 +	double kexFreeze = -1;	// self-test: glide fraction to stop at
 +	bool kexSolid = false;	// self-test: no blinking
 +	bool kexSnapNext = true;	// the next targets are taken as they are (new document, zoom)

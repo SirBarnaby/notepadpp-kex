@@ -26,6 +26,7 @@ public:
         _strength = std::max(10, std::min(200, settings.getInt(key(), L"Strength", 100)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
+        fx::setSpeed(fx::K_FLASH, animSpeed(key(), L"Speed"));
     }
 
     bool selfCheck(std::wstring& why) override

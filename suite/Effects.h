@@ -64,6 +64,7 @@ struct Stats {
     RECT box{};                       // the screen area of the last frame
     double frameMs = 0;               // average time to draw and show a frame (ms), last few seconds
     double lastFrameMs = 0;
+    int speed[K_COUNT] = {};          // each kind's own speed (%)
 };
 
 bool acquire();                       // a feature that draws starts using the renderer (started on first use)
@@ -71,6 +72,7 @@ void release();                       // ... stops using it (stopped with the la
 void submit(std::vector<Item>&& items);
 void submitLetters(LetterBatch&& batch);
 void clear(int kind);                 // take every piece of that kind off the screen
+void setSpeed(int kind, int percent); // that kind's own speed (%, 100 = as designed), on top of the speed for all
 Stats stats();
 void freezeAfter(int ms);             // self-test: pieces stop moving once the newest is ms old (<0 = run)
 bool animationsOn();                  // Windows' "Show animations in Windows" (client area animation)

@@ -83,7 +83,7 @@ public:
     Stats stats()
     {
         Stats st;
-        for (int k = 0; k < K_COUNT; ++k) { st.live[k] = _live[k]; st.spawned[k] = _spawned[k]; }
+        for (int k = 0; k < K_COUNT; ++k) { st.live[k] = _live[k]; st.spawned[k] = _spawned[k]; st.speed[k] = speedOf(k); }
         st.frames = _frames;
         st.visible = _visible;
         ::EnterCriticalSection(&_lock);
@@ -92,7 +92,10 @@ public:
         return st;
     }
 
+    int speedOf(int kind) const { const int v = speed[kind].load(std::memory_order_relaxed); return v > 0 ? v : 100; }
+
     std::atomic<int> freeze{ -1 };
+    std::atomic<int> speed[K_COUNT] = {};   // each kind's own speed (%); 0 = not set (100)
     int users = 0;
 
 private:
@@ -227,12 +230,14 @@ private:
             last = now;
             if (dt > 0.05f) dt = 0.05f;
             dt *= static_cast<float>(animSpeedAll()) / 100.0f;   // the speed for all animations
+            float kindDt[K_COUNT];                                 // and each kind's own
+            for (int k = 0; k < K_COUNT; ++k) kindDt[k] = dt * static_cast<float>(speedOf(k)) / 100.0f;
             const int fz = freeze.load();
             if (fz >= 0)
             {
                 float youngest = 1e9f;
                 for (const Live& l : _parts) youngest = std::min(youngest, l.age - l.it.delay);
-                if (youngest * 1000.0f >= fz) dt = 0;   // test hook
+                if (youngest * 1000.0f >= fz) std::fill(std::begin(kindDt), std::end(kindDt), 0.0f);   // test hook
             }
 
             const double t0 = nowMs();
@@ -241,7 +246,7 @@ private:
             for (auto i = _parts.begin(); i != _parts.end();)
             {
                 Live& p = *i;
-                p.age += dt;
+                p.age += kindDt[p.it.kind];
                 const float t = p.age - p.it.delay;
                 if (t < 0) { ++live[p.it.kind]; ++i; continue; }
                 p.x = p.it.x0 + p.it.vx * t;
@@ -386,6 +391,10 @@ void submitLetters(LetterBatch&& batch) { renderer().submitLetters(std::move(bat
 void clear(int kind) { renderer().clear(kind); }
 Stats stats() { return renderer().stats(); }
 void freezeAfter(int ms) { renderer().freeze = ms; }
+void setSpeed(int kind, int percent)
+{
+    if (kind >= 0 && kind < K_COUNT) renderer().speed[kind] = std::clamp(percent, kSpeedMin, kSpeedMax);
+}
 
 bool animationsOn()
 {

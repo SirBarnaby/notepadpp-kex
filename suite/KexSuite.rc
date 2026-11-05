@@ -20,42 +20,46 @@ IDD_KEX_PAGE_EDITING DIALOGEX 115, 10, 460, 205
 STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    GROUPBOX        "Falling letters (CS2D style)", -1, 4, 2, 452, 66
-    AUTOCHECKBOX    "Deleted text falls off the screen", IDC_L_EN, 12, 15, 160, 10
-    LTEXT           "", IDC_L_STATUS, 180, 16, 268, 9
-    LTEXT           "Gravity (px/s²):", -1, 12, 33, 56, 8
-    EDITTEXT        IDC_L_GRAVITY, 70, 31, 34, 12, ES_NUMBER
-    LTEXT           "Max letters:", -1, 116, 33, 42, 8
-    EDITTEXT        IDC_L_MAX, 160, 31, 30, 12, ES_NUMBER
-    LTEXT           "Spin (°/s):", -1, 202, 33, 38, 8
-    EDITTEXT        IDC_L_SPIN, 242, 31, 30, 12, ES_NUMBER
-    LTEXT           "Drift (px/s):", -1, 284, 33, 44, 8
-    EDITTEXT        IDC_L_DRIFT, 330, 31, 30, 12, ES_NUMBER
-    LTEXT           "Opacity (%):", -1, 372, 33, 44, 8
-    EDITTEXT        IDC_L_OPACITY, 418, 31, 28, 12, ES_NUMBER
-    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_L_RESPECT, 12, 50, 170, 10
-    AUTOCHECKBOX    "Also on undo and redo", IDC_L_UNDO, 190, 50, 100, 10
+    GROUPBOX        "Falling letters (CS2D style)", -1, 4, 2, 452, 62
+    AUTOCHECKBOX    "Deleted text falls off the screen", IDC_L_EN, 12, 14, 160, 10
+    LTEXT           "", IDC_L_STATUS, 180, 15, 268, 9
+    LTEXT           "Gravity (px/s²):", -1, 12, 31, 56, 8
+    EDITTEXT        IDC_L_GRAVITY, 70, 29, 34, 12, ES_NUMBER
+    LTEXT           "Max letters:", -1, 116, 31, 42, 8
+    EDITTEXT        IDC_L_MAX, 160, 29, 30, 12, ES_NUMBER
+    LTEXT           "Spin (°/s):", -1, 202, 31, 38, 8
+    EDITTEXT        IDC_L_SPIN, 242, 29, 30, 12, ES_NUMBER
+    LTEXT           "Drift (px/s):", -1, 284, 31, 44, 8
+    EDITTEXT        IDC_L_DRIFT, 330, 29, 30, 12, ES_NUMBER
+    LTEXT           "Opacity (%):", -1, 372, 31, 44, 8
+    EDITTEXT        IDC_L_OPACITY, 418, 29, 28, 12, ES_NUMBER
+    AUTOCHECKBOX    "Not when Windows animation effects are off", IDC_L_RESPECT, 12, 46, 176, 10
+    AUTOCHECKBOX    "Also on undo and redo", IDC_L_UNDO, 190, 46, 100, 10
+    LTEXT           "Speed (%):", -1, 372, 47, 44, 8
+    EDITTEXT        IDC_L_SPEED, 418, 45, 28, 12, ES_NUMBER
 
-    GROUPBOX        "Smooth caret", -1, 4, 74, 452, 50
-    AUTOCHECKBOX    "The caret glides to its new position", IDC_C_EN, 12, 87, 160, 10
-    LTEXT           "", IDC_C_STATUS, 180, 88, 268, 9
-    LTEXT           "Glide speed (%):", -1, 12, 105, 58, 8
-    EDITTEXT        IDC_C_GLIDE, 72, 103, 26, 12, ES_NUMBER
-    LTEXT           "Jump instead after (lines):", -1, 106, 105, 92, 8
-    EDITTEXT        IDC_C_SNAP, 200, 103, 24, 12, ES_NUMBER
-    LTEXT           "Blink:", -1, 234, 105, 22, 8
-    COMBOBOX        IDC_C_BLINK, 258, 103, 100, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    AUTOCHECKBOX    "Block caret in overtype", IDC_C_OVB, 366, 104, 86, 10
+    GROUPBOX        "Smooth caret", -1, 4, 68, 452, 60
+    AUTOCHECKBOX    "The caret glides to its new position", IDC_C_EN, 12, 80, 160, 10
+    LTEXT           "", IDC_C_STATUS, 180, 81, 268, 9
+    LTEXT           "Glide speed (%):", -1, 12, 97, 58, 8
+    EDITTEXT        IDC_C_GLIDE, 72, 95, 26, 12, ES_NUMBER
+    LTEXT           "Jump instead after (lines):", -1, 106, 97, 92, 8
+    EDITTEXT        IDC_C_SNAP, 200, 95, 24, 12, ES_NUMBER
+    LTEXT           "Blink:", -1, 234, 97, 22, 8
+    COMBOBOX        IDC_C_BLINK, 258, 95, 100, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Fade speed (%):", -1, 362, 97, 58, 8
+    EDITTEXT        IDC_C_FADE, 422, 95, 26, 12, ES_NUMBER
+    AUTOCHECKBOX    "Block caret in overtype", IDC_C_OVB, 12, 112, 140, 10
 
-    GROUPBOX        "JetBrains shortcuts", -1, 4, 130, 452, 58
-    AUTOCHECKBOX    "IntelliJ editor keys: Alt+J next occurrence, Ctrl+W extend selection, Ctrl+/ comment...", IDC_J_EN, 12, 141, 300, 10
-    LTEXT           "", IDC_J_STATUS, 318, 142, 130, 9
-    AUTOCHECKBOX    "Also the keys Notepad++ uses for something else (Ctrl+Y, Ctrl+W, Ctrl+R, F11, Ctrl+Num +/-...)", IDC_J_ALL, 12, 154, 340, 10
-    LTEXT           "Alt+J case:", -1, 12, 171, 40, 8
-    COMBOBOX        IDC_J_CASE, 54, 169, 104, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Whole words:", -1, 168, 171, 46, 8
-    COMBOBOX        IDC_J_WORDS, 216, 169, 148, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "Change keys...", IDC_J_LIST, 376, 168, 70, 13
+    GROUPBOX        "JetBrains shortcuts", -1, 4, 132, 452, 56
+    AUTOCHECKBOX    "IntelliJ editor keys: Alt+J next occurrence, Ctrl+W extend selection, Ctrl+/ comment...", IDC_J_EN, 12, 143, 300, 10
+    LTEXT           "", IDC_J_STATUS, 318, 144, 130, 9
+    AUTOCHECKBOX    "Also the keys Notepad++ uses for something else (Ctrl+Y, Ctrl+W, Ctrl+R, F11, Ctrl+Num +/-...)", IDC_J_ALL, 12, 156, 340, 10
+    LTEXT           "Alt+J case:", -1, 12, 173, 40, 8
+    COMBOBOX        IDC_J_CASE, 54, 171, 104, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Whole words:", -1, 168, 173, 46, 8
+    COMBOBOX        IDC_J_WORDS, 216, 171, 148, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Change keys...", IDC_J_LIST, 376, 170, 70, 13
 
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END
@@ -69,6 +73,8 @@ BEGIN
     LTEXT           "", IDC_S_STATUS, 232, 16, 216, 9
     AUTOCHECKBOX    "Animate the preview", IDC_S_ANIM, 12, 31, 100, 10
     AUTOCHECKBOX    "Lift the tab off the bar while it is dragged", IDC_S_LIFT, 120, 31, 200, 10
+    LTEXT           "Speed (%):", -1, 330, 32, 40, 8
+    EDITTEXT        IDC_S_SPEED, 372, 30, 28, 12, ES_NUMBER
     LTEXT           "A preview shows where the tab will land. Drop it on another view to move it there; hold Ctrl to clone it instead. Esc cancels. Off: dropping a tab on its own view shows the Move/Clone menu.", -1, 12, 45, 436, 18
 
     GROUPBOX        "F12 hover tabs", -1, 4, 72, 452, 46
@@ -85,6 +91,8 @@ BEGIN
     LTEXT           "Sensitivity (%):", -1, 12, 151, 54, 8
     EDITTEXT        IDC_SW_SENS, 68, 149, 28, 12, ES_NUMBER
     AUTOCHECKBOX    "Swipe left goes to the tab on the right", IDC_SW_REVERSE, 110, 150, 170, 10
+    LTEXT           "Speed (%):", -1, 290, 151, 40, 8
+    EDITTEXT        IDC_SW_MS, 332, 149, 28, 12, ES_NUMBER
     LTEXT           "The tab follows your fingers. Let go past half way, or flick, to switch; let go before that and it slides back. Where a long line scrolls sideways the swipe scrolls it first; over the tab bar it always switches tabs.", -1, 12, 164, 436, 18
 
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
@@ -163,8 +171,12 @@ BEGIN
     LTEXT           "Opacity (%):", -1, 314, 132, 44, 8
     EDITTEXT        IDC_H_OPACITY, 360, 130, 28, 12, ES_NUMBER
     AUTOCHECKBOX    "Zoom in as it opens, out as it goes", IDC_H_ZOOM, 12, 146, 150, 10
-    LTEXT           "Zoom speed (%):", -1, 170, 147, 58, 8
-    EDITTEXT        IDC_H_ZOOMMS, 230, 145, 28, 12, ES_NUMBER
+    LTEXT           "Speed (%): zoom", -1, 168, 147, 64, 8
+    EDITTEXT        IDC_H_ZOOMMS, 234, 145, 28, 12, ES_NUMBER
+    LTEXT           "fade", -1, 270, 147, 18, 8
+    EDITTEXT        IDC_H_FADEMS, 290, 145, 28, 12, ES_NUMBER
+    LTEXT           "glide to the middle", -1, 326, 147, 70, 8
+    EDITTEXT        IDC_H_GLIDEMS, 398, 145, 28, 12, ES_NUMBER
     LTEXT           "No title bar: drag the top strip to move it, the edges to resize it. The pin keeps it in place; pinned, it sends it back to the middle. Esc or the hotkey hides it and never hands the focus to another desktop. Ctrl+wheel zooms; Enter keeps the indentation.", -1, 12, 161, 436, 24
 
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
@@ -178,7 +190,9 @@ BEGIN
     AUTOCHECKBOX    "Copying lights the copied text up for a moment", IDC_E_EN, 12, 15, 196, 10
     LTEXT           "Light (%):", -1, 214, 16, 36, 8
     EDITTEXT        IDC_E_STRENGTH, 252, 14, 28, 12, ES_NUMBER
-    LTEXT           "", IDC_E_STATUS, 290, 16, 158, 9
+    LTEXT           "Speed (%):", -1, 288, 16, 38, 8
+    EDITTEXT        IDC_E_MS, 328, 14, 28, 12, ES_NUMBER
+    LTEXT           "", IDC_E_STATUS, 364, 16, 84, 9
 
     GROUPBOX        "Tabs", -1, 4, 36, 452, 72
     AUTOCHECKBOX    "Switching tabs slides the new document in, like switching desktops", IDC_W_EN, 12, 48, 246, 10
@@ -198,7 +212,9 @@ BEGIN
     AUTOCHECKBOX    "Giving a token a colour splashes paint", IDC_P_EN, 12, 125, 160, 10
     LTEXT           "Drops:", -1, 178, 126, 24, 8
     EDITTEXT        IDC_P_DROPS, 204, 124, 26, 12, ES_NUMBER
-    LTEXT           "", IDC_P_STATUS, 240, 126, 208, 9
+    LTEXT           "Speed (%):", -1, 240, 126, 38, 8
+    EDITTEXT        IDC_P_MS, 280, 124, 28, 12, ES_NUMBER
+    LTEXT           "", IDC_P_STATUS, 318, 126, 130, 9
 
     AUTOCHECKBOX    "Not when Windows animation effects are off (here and on the Motion page)", IDC_FX_RESPECT, 8, 148, 280, 10
     LTEXT           "", IDC_E_INFO, 4, 163, 452, 26

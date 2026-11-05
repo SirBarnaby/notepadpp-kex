@@ -95,6 +95,10 @@ public:
         _smoothCaret = settings.getInt(key(), L"SmoothCaret", 1) != 0;
         _zoomOpen = settings.getInt(key(), L"ZoomOpen", 0) != 0;
         _zoomOpenMs = std::min(5120, animMs(320, animSpeed(key(), L"ZoomSpeed", 320, L"ZoomOpenMs")));
+        _fadeMs = animMs(FADE_MS, animSpeed(key(), L"FadeSpeed"));
+        _glideStretch = animMs(1000, animSpeed(key(), L"GlideSpeed")) / 1000.0;
+        s_stats.fadeMs = _fadeMs;
+        s_stats.glideMs = static_cast<int>(std::lround(GLIDE_RESPONSE_S * 1000.0 * _glideStretch));
         _autoHide = settings.getInt(key(), L"HideWhenInactive", 0) != 0;
         _opacity = std::max(30, std::min(100, settings.getInt(key(), L"Opacity", 100)));
         const std::wstring f = noteFileSetting();
@@ -413,7 +417,7 @@ private:
 
     void fadeStep()
     {
-        double t = std::min(1.0, (nowMs() - _fadeT0) / (FADE_MS * animScale()));
+        double t = std::min(1.0, (nowMs() - _fadeT0) / _fadeMs);
         double e = 1.0 - (1.0 - t) * (1.0 - t);
         _alpha = static_cast<int>(std::lround(_alphaFrom + (_alphaTo - _alphaFrom) * e));
         ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA);
@@ -631,7 +635,7 @@ private:
     void glideStep(bool finish)
     {
         if (_glideT0 < 0 || !_note) return;
-        const double t = (nowMs() - _glideT0) / 1000.0 / animScale(), w = 2.0 * 3.14159265358979 / GLIDE_RESPONSE_S;
+        const double t = (nowMs() - _glideT0) / 1000.0 / _glideStretch, w = 2.0 * 3.14159265358979 / GLIDE_RESPONSE_S;
         double p = 1.0 - (1.0 + w * t) * std::exp(-w * t);
         if (finish || p > 0.998) p = 1.0;
         const int x = static_cast<int>(std::lround(_glideFrom.x + (_glideTarget.x - _glideFrom.x) * p));
@@ -1194,7 +1198,8 @@ private:
     LRESULT _marginWidth = -1;
     HWND _note = nullptr, _sci = nullptr, _prevFg = nullptr, _tip = nullptr;
     int _alpha = 255, _alphaFrom = 0, _alphaTo = 255;
-    double _fadeT0 = 0;
+    double _fadeT0 = 0, _glideStretch = 1.0;   // the glide back to the middle: what its designed time is multiplied by
+    int _fadeMs = 150;
     bool _hover = false, _pressed = false;
     std::wstring _tipText;
     POINT _glideFrom{}, _glideTarget{};

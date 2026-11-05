@@ -131,8 +131,11 @@ next to it, and changes apply at once.
     Token, the token menu) splashes paint: the word lights up in its colour and drops fly off it.
     "Drops per token" sets how many.
     Animation speeds are percentages of the designed speed: 100 % as designed, 200 % twice as
-    fast, 50 % half as fast (25 to 400). Each animation with a speed box has its own, and "All
-    animations, speed (%)" at the bottom of the KEX Settings window speeds them all up or down.
+    fast, 50 % half as fast (25 to 400). Every animation has a speed box of its own on its page
+    (falling letters, the caret's glide and blink fade, tab snapping, touchpad swipe, the quick
+    note's zoom, fade and glide, copy flash, tab slide, close and open, glint, paint splash and
+    each editing motion), and "All animations, speed (%)" at the bottom of the KEX Settings
+    window speeds them all up or down on top of that.
     The effects follow Windows' "Animation effects" setting unless you untick that. The falling
     letters, flashes and splashes are drawn on a thread of their own and put on screen by Windows'
     compositor; the tab slide and the caret are drawn by Notepad++'s own renderer (DirectWrite,

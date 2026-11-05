@@ -231,7 +231,7 @@ public:
     {
         _sensitivity = std::max(25, std::min(400, settings.getInt(key(), L"Sensitivity", 100)));
         _reverse = settings.getInt(key(), L"Reverse", 0) != 0;
-        _settleMs = std::max(15, std::min(3200, animMs(std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 220))))));
+        _settleMs = std::min(3200, animMs(220, animSpeed(key(), L"Speed", 220, L"DurationMs")));
     }
 
     bool selfCheck(std::wstring& why) override
@@ -305,6 +305,7 @@ public:
     TouchPad _pad;
     bool busy() const { return _state == St::pending || _state == St::swiping || _state == St::settling; }
     bool holding() const { return _state == St::swiping; }
+    int settleMs() const { return _settleMs; }
 
 protected:
     LRESULT onMessage(UINT m, WPARAM w, LPARAM l) override
@@ -544,7 +545,7 @@ private:
         _from = _pos;
         _to = target;
         _t0 = now;
-        _ms = std::max(60.0, _settleMs * std::abs(_to - _from));
+        _ms = std::max(60.0 / 220.0, std::abs(_to - _from)) * _settleMs;   // a short way back: 60 ms at the designed speed
         ::SetTimer(hwnd(), TIMER_TICK, TICK_MS, nullptr);
     }
 
@@ -665,6 +666,7 @@ SwipeStats swipeStats()
     st.active = s_self && s_self->busy();
     st.holding = s_self && s_self->holding();
     st.fingers = s_self ? s_self->_pad.fingers(nowMs()) : -1;
+    st.settleMs = s_self ? s_self->settleMs() : 0;
     return st;
 }
 

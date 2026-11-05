@@ -33,6 +33,7 @@ public:
     {
         _drops = std::max(0, std::min(24, settings.getInt(key(), L"DropsPerToken", 7)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
+        fx::setSpeed(fx::K_DROP, animSpeed(key(), L"Speed"));
     }
 
     bool selfCheck(std::wstring& why) override

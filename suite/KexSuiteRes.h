@@ -22,12 +22,14 @@
 #define IDC_L_RESPECT      1106
 #define IDC_L_UNDO         1107
 #define IDC_L_OPACITY      1108
+#define IDC_L_SPEED        1109
 #define IDC_C_EN           1200
 #define IDC_C_STATUS       1201
 #define IDC_C_GLIDE        1202
 #define IDC_C_SNAP         1203
 #define IDC_C_BLINK        1204
 #define IDC_C_OVB          1205
+#define IDC_C_FADE         1206   // the blink's fade speed (%)
 #define IDC_H_EN           1300
 #define IDC_H_STATUS       1301
 #define IDC_H_KEY          1302
@@ -50,6 +52,8 @@
 #define IDC_H_OPACITY      1319
 #define IDC_H_ZOOM         1320
 #define IDC_H_ZOOMMS       1321
+#define IDC_H_FADEMS       1322
+#define IDC_H_GLIDEMS      1323
 #define IDC_T_EN           1400
 #define IDC_T_STATUS       1401
 #define IDC_T_ZONE         1402
@@ -61,6 +65,7 @@
 #define IDC_S_STATUS       1601
 #define IDC_S_ANIM         1602
 #define IDC_S_LIFT         1603
+#define IDC_S_SPEED        1604
 #define IDC_J_EN           1700
 #define IDC_J_STATUS       1701
 #define IDC_J_ALL          1702
@@ -84,6 +89,7 @@
 #define IDC_E_EN           2000
 #define IDC_E_STATUS       2001
 #define IDC_E_STRENGTH     2005
+#define IDC_E_MS           2006
 #define IDC_E_INFO         2007
 #define IDC_W_EN           2100
 #define IDC_W_STATUS       2101
@@ -91,10 +97,12 @@
 #define IDC_P_EN           2200
 #define IDC_P_STATUS       2201
 #define IDC_P_DROPS        2202
+#define IDC_P_MS           2203
 #define IDC_SW_EN          2300
 #define IDC_SW_STATUS      2301
 #define IDC_SW_SENS        2302
 #define IDC_SW_REVERSE     2303
+#define IDC_SW_MS          2304
 #define IDC_F_EN           2400
 #define IDC_F_STATUS       2401
 #define IDC_F_MS           2402

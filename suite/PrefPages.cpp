@@ -20,42 +20,50 @@ int g_page = 0;                 // the page showing (or shown last)
 const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects", L"Motion" };
 bool g_filling = false;
 
-// a number box; an animation's speed (%) also names the time in ms it took over from and that time's default
-struct IntField { int id; int module; const wchar_t* key; int def; const wchar_t* oldMs = nullptr; int baseMs = 0; };
+// a number box; an animation's speed (%), and where it took over from a time in ms, that time's key and default
+struct IntField { int id; int module; const wchar_t* key; int def; bool speed = false; const wchar_t* oldMs = nullptr; int baseMs = 0; };
 const IntField kInts[] = {
     { IDC_L_GRAVITY, M_LETTERS, L"Gravity", 2200 },
     { IDC_L_MAX, M_LETTERS, L"MaxLetters", 200 },
     { IDC_L_SPIN, M_LETTERS, L"SpinDegPerSec", 260 },
     { IDC_L_DRIFT, M_LETTERS, L"DriftPxPerSec", 90 },
     { IDC_L_OPACITY, M_LETTERS, L"Opacity", 100 },
-    { IDC_C_GLIDE, M_CARET, L"GlideSpeed", 100, L"GlideMs", 80 },
+    { IDC_L_SPEED, M_LETTERS, L"Speed", 100, true },
+    { IDC_C_GLIDE, M_CARET, L"GlideSpeed", 100, true, L"GlideMs", 80 },
     { IDC_C_SNAP, M_CARET, L"SnapAfterLines", 12 },
+    { IDC_C_FADE, M_CARET, L"FadeSpeed", 100, true },
     { IDC_T_ZONE, M_TABS, L"HotZonePx", 6 },
     { IDC_T_DELAY, M_TABS, L"HideDelayMs", 350 },
     { IDC_G_TINT, M_GLASS, L"Tint", 40 },
     { IDC_H_OPACITY, M_HOTKEY, L"Opacity", 100 },
     { IDC_E_STRENGTH, M_FLASH, L"Strength", 100 },
-    { IDC_W_MS, M_SLIDE, L"Speed", 100, L"DurationMs", 200 },
+    { IDC_E_MS, M_FLASH, L"Speed", 100, true },
+    { IDC_W_MS, M_SLIDE, L"Speed", 100, true, L"DurationMs", 200 },
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
+    { IDC_P_MS, M_SPLASH, L"Speed", 100, true },
     { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
-    { IDC_F_MS, M_TABFOLD, L"Speed", 100, L"DurationMs", 240 },
-    { IDC_GL_MS, M_GLINT, L"Speed", 100, L"DurationMs", 420 },
-    { IDC_H_ZOOMMS, M_HOTKEY, L"ZoomSpeed", 100, L"ZoomOpenMs", 320 },
-    { IDC_M_GLOW, M_MOTION, L"GlowSpeed", 100, L"GlowMs", 600 },
+    { IDC_SW_MS, M_SWIPE, L"Speed", 100, true, L"DurationMs", 220 },
+    { IDC_S_SPEED, M_SNAP, L"Speed", 100, true },
+    { IDC_F_MS, M_TABFOLD, L"Speed", 100, true, L"DurationMs", 240 },
+    { IDC_GL_MS, M_GLINT, L"Speed", 100, true, L"DurationMs", 420 },
+    { IDC_H_ZOOMMS, M_HOTKEY, L"ZoomSpeed", 100, true, L"ZoomOpenMs", 320 },
+    { IDC_H_FADEMS, M_HOTKEY, L"FadeSpeed", 100, true },
+    { IDC_H_GLIDEMS, M_HOTKEY, L"GlideSpeed", 100, true },
+    { IDC_M_GLOW, M_MOTION, L"GlowSpeed", 100, true, L"GlowMs", 600 },
     { IDC_M_RAPID, M_MOTION, L"RapidMs", 250 },
     // the motions' speeds (KEXM_* order, kMotionDefs)
-    { IDC_M_MS0 + 0, M_MOTION, L"CutSpeed", 100, L"CutMs", 320 },
-    { IDC_M_MS0 + 1, M_MOTION, L"DeleteSpeed", 100, L"DeleteMs", 260 },
-    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesSpeed", 100, L"DeleteLinesMs", 260 },
-    { IDC_M_MS0 + 3, M_MOTION, L"PasteSpeed", 100, L"PasteMs", 260 },
-    { IDC_M_MS0 + 4, M_MOTION, L"UndoSpeed", 100, L"UndoMs", 260 },
-    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineSpeed", 100, L"MoveLineMs", 220 },
-    { IDC_M_MS0 + 6, M_MOTION, L"FindSpeed", 100, L"FindMs", 300 },
-    { IDC_M_MS0 + 7, M_MOTION, L"IndentSpeed", 100, L"IndentMs", 220 },
-    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateSpeed", 100, L"DuplicateMs", 240 },
-    { IDC_M_MS0 + 9, M_MOTION, L"JumpSpeed", 100, L"JumpMs", 320 },
-    { IDC_M_MS0 + 10, M_MOTION, L"FoldSpeed", 100, L"FoldMs", 240 },
-    { IDC_M_MS0 + 11, M_MOTION, L"SortSpeed", 100, L"SortMs", 340 },
+    { IDC_M_MS0 + 0, M_MOTION, L"CutSpeed", 100, true, L"CutMs", 320 },
+    { IDC_M_MS0 + 1, M_MOTION, L"DeleteSpeed", 100, true, L"DeleteMs", 260 },
+    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesSpeed", 100, true, L"DeleteLinesMs", 260 },
+    { IDC_M_MS0 + 3, M_MOTION, L"PasteSpeed", 100, true, L"PasteMs", 260 },
+    { IDC_M_MS0 + 4, M_MOTION, L"UndoSpeed", 100, true, L"UndoMs", 260 },
+    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineSpeed", 100, true, L"MoveLineMs", 220 },
+    { IDC_M_MS0 + 6, M_MOTION, L"FindSpeed", 100, true, L"FindMs", 300 },
+    { IDC_M_MS0 + 7, M_MOTION, L"IndentSpeed", 100, true, L"IndentMs", 220 },
+    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateSpeed", 100, true, L"DuplicateMs", 240 },
+    { IDC_M_MS0 + 9, M_MOTION, L"JumpSpeed", 100, true, L"JumpMs", 320 },
+    { IDC_M_MS0 + 10, M_MOTION, L"FoldSpeed", 100, true, L"FoldMs", 240 },
+    { IDC_M_MS0 + 11, M_MOTION, L"SortSpeed", 100, true, L"SortMs", 340 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -101,8 +109,8 @@ const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT, 
 bool liveOption(int id, int module)
 {
     return module == M_TOKENS || module == M_MOTION || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE ||
-           id == IDC_H_ZOOM || id == IDC_H_ZOOMMS || id == IDC_E_STRENGTH ||
-           id == IDC_W_MS || id == IDC_P_DROPS || id == IDC_C_BLINK || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT;
+           id == IDC_H_ZOOM || id == IDC_H_ZOOMMS || id == IDC_H_FADEMS || id == IDC_H_GLIDEMS || id == IDC_E_STRENGTH || id == IDC_E_MS ||
+           id == IDC_W_MS || id == IDC_P_DROPS || id == IDC_P_MS || id == IDC_L_SPEED || id == IDC_S_SPEED || id == IDC_C_FADE || id == IDC_C_BLINK || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT;
 }
 // a drop-down list: the setting is the index of the picked item
 struct ComboField { int id; int module; const wchar_t* key; int def; const wchar_t* items; };
@@ -123,7 +131,7 @@ bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
 int fieldValue(const IntField& f)
 {
     const wchar_t* sec = modules[f.module]->key();
-    return f.oldMs ? animSpeed(sec, f.key, f.baseMs, f.oldMs) : settings.getInt(sec, f.key, f.def);
+    return f.speed ? animSpeed(sec, f.key, f.baseMs, f.oldMs) : settings.getInt(sec, f.key, f.def);
 }
 
 void fillStatus(HWND d)
@@ -259,7 +267,7 @@ void applyNumbers(HWND d)
         if (!has(d, f.id)) continue;
         BOOL ok = FALSE;
         int v = static_cast<int>(::GetDlgItemInt(d, f.id, &ok, FALSE));
-        if (f.oldMs) v = std::clamp(v, kSpeedMin, kSpeedMax);
+        if (f.speed) v = std::clamp(v, kSpeedMin, kSpeedMax);
         if (!ok || v == fieldValue(f)) continue;
         settings.setInt(modules[f.module]->key(), f.key, v);
         if (liveOption(f.id, f.module)) modules[f.module]->loadOptions();

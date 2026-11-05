@@ -57,12 +57,12 @@ std::wstring fileNameOf(const std::wstring& path);
 double nowMs();   // QueryPerformanceCounter in ms
 // Animation speed in percent: 100 = as designed, 200 = twice as fast, 50 = half as fast. One for all of KEX (at the
 // bottom of the KEX Settings window, [General] AnimationSpeed) and one for each animation that has its own: an
-// animation takes its designed time divided by both.
+// animation takes its designed time divided by both. Every animation has its own.
 const int kSpeedMin = 25, kSpeedMax = 400;
 int animSpeedAll();
 void setAnimSpeedAll(int percent);
 // one animation's own speed (sec/key), taken from its time in ms (oldMsKey) where only that was set so far
-int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs, const wchar_t* oldMsKey);
+int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs = 0, const wchar_t* oldMsKey = nullptr);
 int animMs(double baseMs, int percent = 100);   // a designed time at that speed and the speed for all, in ms (1 at least)
 double animScale();                              // what a designed time is multiplied by: 100 / the speed for all
 bool rectsIntersect(const RECT& a, const RECT& b);
@@ -246,6 +246,7 @@ void slideTestFreeze(double fraction);   // <0 = run normally
 bool swipeSwitching(HWND view);
 struct SwipeStats { int gestures = 0, slides = 0, commits = 0, cancels = 0, textScrolls = 0, notches = 0, edges = 0, lastDir = 0;
                     double lastPos = 0; bool active = false, holding = false, rawRegistered = false; int fingers = -1;
+                    int settleMs = 0;   // a whole swipe's settle at the speeds now
                     std::wstring trace; };   // the last decisions, for the self-test's log
 SwipeStats swipeStats();
 void swipeTestFingers(int n);   // self-test: pretend this many fingers are on a precision touchpad (-1 = the real one)
@@ -265,6 +266,7 @@ struct CaretStats { int carets = 0; bool visible = false; HWND target = nullptr;
                     int pushes = 0;   // paints that drew the caret
                     double workMs = 0;   // time Scintilla spent working out and drawing carets
                     float alpha = 0;     // the main caret's blink opacity at the last paint
+                    int fadeMs = 0;      // each of the blink's fades
 };
 CaretStats caretStats();
 void caretTestFreeze(double glideFraction, bool solidBlink);   // fraction <0 = off
@@ -277,7 +279,8 @@ struct HotkeyStats { bool registered = false; bool byOtherNpp = false; DWORD las
                      int focusFallbacks = 0;     // hidden with the focus going to another window of this desktop than the one it came from
                      HWND lastFocusTo = nullptr;
                      int zooms = 0, zoomFrames = 0;   // zoom in or out played, frames drawn
-                     float zoomScale = 0, zoomAlpha = 0; bool zoomOpening = false, zoomLive = false; };
+                     float zoomScale = 0, zoomAlpha = 0; bool zoomOpening = false, zoomLive = false;
+                     int fadeMs = 0, glideMs = 0; };   // the fade and the glide back to the middle at the speeds now
 HotkeyStats hotkeyStats();
 void quickNoteZoomFreeze(double fraction);   // self-test: the zoom stops at this fraction (<0 = runs normally)
 void hotkeyPress();              // run the same code path as WM_HOTKEY
@@ -297,7 +300,8 @@ struct TabsStats { bool stripVisible = false; RECT strip{}; int tabCount = 0; in
 TabsStats tabsStats();
 void tabsTestClick(int index);
 struct SnapStats { bool visible = false; RECT target{}; RECT window{}; int alpha = 0; int shows = 0; int moves = 0; int cancels = 0;
-                   bool lifted = false; RECT lift{}; int liftAlpha = 0; int lifts = 0; };
+                   bool lifted = false; RECT lift{}; int liftAlpha = 0; int lifts = 0;
+                   int glideMs = 0; };   // the preview's glide at the speeds now
 SnapStats snapStats();
 struct JetBrainsStats { int handled = 0; int grows = 0; std::wstring last; };
 JetBrainsStats jetBrainsStats();

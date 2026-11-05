@@ -25,6 +25,7 @@ public:
     {
         _glideMs = std::min(1000, animMs(80, animSpeed(key(), L"GlideSpeed", 80, L"GlideMs")));
         _snapLines = std::max(1, std::min(255, settings.getInt(key(), L"SnapAfterLines", 12)));
+        _fadeMs = std::min(4000, animMs(140, animSpeed(key(), L"FadeSpeed")));   // the blink's fades
         // how it blinks: 0 fades, 1 on and off like Notepad++'s caret, 2 not at all (once a checkbox, FadeBlink)
         _blink = settings.getInt(key(), L"Blink", -1);
         if (_blink < 0 || _blink > 2)
@@ -89,12 +90,12 @@ public:
     LPARAM flags() const
     {
         return KEXCARET_ON | (_blink == 0 ? KEXCARET_FADE : 0) | (_blink == 2 ? KEXCARET_NOBLINK : 0) |
-               (_overtypeBlock ? KEXCARET_OVERTYPE_BLOCK : 0) | KEXCARET_SNAPLINES(_snapLines);
+               (_overtypeBlock ? KEXCARET_OVERTYPE_BLOCK : 0) | KEXCARET_SNAPLINES(_snapLines) | KEXCARET_FADEMS(_fadeMs);
     }
     int glideMs() const { return _glideMs; }
 
 private:
-    int _glideMs = 80, _snapLines = 12, _blink = 0;
+    int _glideMs = 80, _snapLines = 12, _blink = 0, _fadeMs = 140;
     bool _overtypeBlock = true;
     std::vector<HWND> _applied;
 };
@@ -119,6 +120,7 @@ CaretStats caretStats()
     st.pushes = info.frames;
     st.workMs = info.workMs;
     st.alpha = info.alpha;
+    st.fadeMs = info.fadeMs;
     return st;
 }
 

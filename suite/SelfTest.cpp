@@ -5,6 +5,7 @@
 // screenshot; the step machine waits for <testdir>\ackN before going on.
 // Optional argument: KexSuite_testdir=C:\path (default: <plugin config dir>\KexSuite-selftest).
 #include "Overlay.h"
+#include "Effects.h"
 #include "KexSuiteRes.h"
 #include "KexScintilla.h"
 #include "preference_rc.h"
@@ -973,6 +974,36 @@ std::vector<int> stylesOf(HWND s)
 }
 
 void addRegressionSteps(const std::function<void(std::function<int()>)>& add);
+
+// The animations that followed only the speed for all until each got a speed box of its own.
+struct SpeedBox { int page; int id; };
+const SpeedBox kOwnSpeeds[] = { { PAGE_EDITING, IDC_L_SPEED }, { PAGE_EDITING, IDC_C_FADE }, { PAGE_TABS, IDC_S_SPEED }, { PAGE_TABS, IDC_SW_MS },
+                                { PAGE_NOTE, IDC_H_FADEMS }, { PAGE_NOTE, IDC_H_GLIDEMS }, { PAGE_EFFECTS, IDC_E_MS }, { PAGE_EFFECTS, IDC_P_MS } };
+const int kOwnSpeedModules[] = { M_LETTERS, M_CARET, M_HOTKEY, M_SNAP, M_SWIPE, M_FLASH, M_SPLASH };
+bool g_ownSpeedWasOn[M_COUNT] = {};
+// typed into every one of those boxes, a page at a time, each page's taken as half a second after its last keystroke
+// (taking them fills every page again)
+void typeOwnSpeeds(int percent)
+{
+    for (int page : { PAGE_EDITING, PAGE_TABS, PAGE_NOTE, PAGE_EFFECTS })
+    {
+        HWND p = prefPage(page);
+        if (!p) continue;
+        for (const SpeedBox& b : kOwnSpeeds)
+            if (b.page == page) ::SetDlgItemInt(p, b.id, static_cast<UINT>(percent), FALSE);
+        ::SendMessageW(p, WM_TIMER, 1, 0);
+    }
+}
+// their times now (ms), as the features use them
+struct OwnTimes {
+    int caretFade, snapGlide, swipeSettle, noteFade, noteGlide;
+    bool operator==(const OwnTimes&) const = default;
+};
+OwnTimes ownTimes()
+{
+    const HotkeyStats hs = hotkeyStats();
+    return OwnTimes{ caretStats().fadeMs, snapStats().glideMs, swipeStats().settleMs, hs.fadeMs, hs.glideMs };
+}
 
 void buildSteps()
 {
@@ -4209,6 +4240,78 @@ void buildSteps()
 
 // The views draw with DirectWrite, as Notepad++ does on Windows (under Wine it falls back to GDI by itself):
 // the editing motion and the tab slide on that path. Run alone with KexSuite_only=directwrite.
+// Every animation has a speed of its own, besides the speed for all (round 11b): the ones that had only the speed for all.
+void addOwnSpeedSteps(const std::function<void(std::function<int()>)>& add)
+{
+    add([] {
+        // ---- every animation has a speed of its own (the ones that followed only the speed for all before) ----
+        // the box on its page shows 100 %; 200 % typed there halves its time; the speed for all at 200 % halves it again
+        for (int m : kOwnSpeedModules)
+        {
+            g_ownSpeedWasOn[m] = modules[m]->isEnabled();
+            if (!g_ownSpeedWasOn[m]) setModuleEnabled(m, true, false);
+        }
+        openSettings(PAGE_EDITING);
+        pump(300);
+        int shown = 0;
+        for (const SpeedBox& b : kOwnSpeeds)
+        {
+            BOOL ok = FALSE;
+            HWND p = prefPage(b.page);
+            if (p && ::GetDlgItem(p, b.id) && ::GetDlgItemInt(p, b.id, &ok, FALSE) == 100 && ok) ++shown;
+        }
+        const int boxes = static_cast<int>(std::size(kOwnSpeeds));
+        check(shown == boxes, L"SP1", L"KEX Settings: %d of %d animations that had only the speed for all show a speed box of their own, at 100 %%",
+              shown, boxes);
+        typeOwnSpeeds(200);
+        focusEditor();
+        pump(150);
+        const fx::Stats fs = fx::stats();
+        const OwnTimes own = ownTimes();
+        check(fs.speed[fx::K_LETTER] == 200 && fs.speed[fx::K_FLASH] == 200 && fs.speed[fx::K_DROP] == 200 && own == OwnTimes{ 70, 60, 110, 75, 160 },
+              L"SP2", L"each at 200 %%: falling letters, copy flash and paint splash at %d/%d/%d %%; caret fade %d ms (designed 140), tab snapping %d ms (120), "
+              L"swipe settle %d ms (220), quick note fade %d ms (150), glide to the middle %d ms (320)",
+              fs.speed[fx::K_LETTER], fs.speed[fx::K_FLASH], fs.speed[fx::K_DROP], own.caretFade, own.snapGlide, own.swipeSettle, own.noteFade, own.noteGlide);
+        HWND d = settingsDialog();
+        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 200, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        focusEditor();
+        pump(150);
+        const OwnTimes all = ownTimes();
+        check(animSpeedAll() == 200 && fx::stats().speed[fx::K_FLASH] == 200 && all == OwnTimes{ 35, 30, 55, 38, 80 },
+              L"SP3", L"and all animations at 200 %%: caret fade %d ms, tab snapping %d ms, swipe settle %d ms, quick note fade %d ms, glide %d ms",
+              all.caretFade, all.snapGlide, all.swipeSettle, all.noteFade, all.noteGlide);
+        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 100, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        openSettings(PAGE_EFFECTS);   // in front again (Wine puts the window under Notepad++ when the editor takes the focus)
+        return 300;
+    });
+    add([] { return shot(L"settings-effects-page"); });
+    add([] {
+        // the copy flash at its own speed: at 400 % it is gone long before its designed 300 ms, at 25 % still there after them
+        open(L"rg.txt");
+        HWND s = curSci();
+        focusEditor();
+        lettersFreezeAfter(-1);
+        auto flashAt = [s](int percent, int waitMs) {
+            if (HWND p = prefPage(PAGE_EFFECTS)) { ::SetDlgItemInt(p, IDC_E_MS, static_cast<UINT>(percent), FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+            until([] { return flashStats().live == 0; }, 2000);
+            sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 1, 8));
+            const FlashStats before = flashStats();
+            tokCommand(IDM_EDIT_COPY);
+            waitFor([before] { return flashStats().spawned > before.spawned; }, 1500);
+            pump(waitMs);
+            return flashStats();
+        };
+        const FlashStats fast = flashAt(400, 260);
+        const FlashStats slow = flashAt(25, 500);
+        check(fast.live == 0 && slow.live >= 1, L"SP4", L"copy flash at 400 %%: %d left after 260 ms; at 25 %%: %d still showing after 500 ms", fast.live, slow.live);
+        typeOwnSpeeds(100);
+        if (HWND d = settingsDialog()) ::SendMessageW(d, WM_CLOSE, 0, 0);
+        for (int m : kOwnSpeedModules)
+            if (!g_ownSpeedWasOn[m]) setModuleEnabled(m, false, false);
+        return until([] { return flashStats().live == 0; }, 3000);
+    });
+}
+
 // Motions that did not play on the user's PC (round 11): a line moved past or as a wrapped line, a tab closed and
 // opened with the tab bar showing its scroll arrows, and the quick note opening where it was left.
 void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
@@ -4398,6 +4501,7 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
         focusEditor();
         return 100;
     });
+    addOwnSpeedSteps(add);
 }
 
 void addDirectWriteSteps(const std::function<void(std::function<int()>)>& add)
