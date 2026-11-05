@@ -50,20 +50,20 @@ const IntField kInts[] = {
     { IDC_H_FADEMS, M_HOTKEY, L"FadeSpeed", 100, true },
     { IDC_H_GLIDEMS, M_HOTKEY, L"GlideSpeed", 100, true },
     { IDC_M_GLOW, M_MOTION, L"GlowSpeed", 100, true, L"GlowMs", 600 },
-    { IDC_M_RAPID, M_MOTION, L"RapidMs", 250 },
-    // the motions' speeds (KEXM_* order, kMotionDefs)
-    { IDC_M_MS0 + 0, M_MOTION, L"CutSpeed", 100, true, L"CutMs", 320 },
-    { IDC_M_MS0 + 1, M_MOTION, L"DeleteSpeed", 100, true, L"DeleteMs", 260 },
-    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesSpeed", 100, true, L"DeleteLinesMs", 260 },
-    { IDC_M_MS0 + 3, M_MOTION, L"PasteSpeed", 100, true, L"PasteMs", 260 },
-    { IDC_M_MS0 + 4, M_MOTION, L"UndoSpeed", 100, true, L"UndoMs", 260 },
-    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineSpeed", 100, true, L"MoveLineMs", 220 },
-    { IDC_M_MS0 + 6, M_MOTION, L"FindSpeed", 100, true, L"FindMs", 300 },
-    { IDC_M_MS0 + 7, M_MOTION, L"IndentSpeed", 100, true, L"IndentMs", 220 },
-    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateSpeed", 100, true, L"DuplicateMs", 240 },
-    { IDC_M_MS0 + 9, M_MOTION, L"JumpSpeed", 100, true, L"JumpMs", 320 },
-    { IDC_M_MS0 + 10, M_MOTION, L"FoldSpeed", 100, true, L"FoldMs", 240 },
-    { IDC_M_MS0 + 11, M_MOTION, L"SortSpeed", 100, true, L"SortMs", 340 },
+    { IDC_M_RAPID, M_MOTION, L"RapidMs", kMotionRapidMs },
+    // the motions' speeds (KEXM_* order, kMotionDefs), each from its own default
+    { IDC_M_MS0 + 0, M_MOTION, L"CutSpeed", kMotionDefaultSpeed[0], true, L"CutMs", 320 },
+    { IDC_M_MS0 + 1, M_MOTION, L"DeleteSpeed", kMotionDefaultSpeed[1], true, L"DeleteMs", 260 },
+    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesSpeed", kMotionDefaultSpeed[2], true, L"DeleteLinesMs", 260 },
+    { IDC_M_MS0 + 3, M_MOTION, L"PasteSpeed", kMotionDefaultSpeed[3], true, L"PasteMs", 260 },
+    { IDC_M_MS0 + 4, M_MOTION, L"UndoSpeed", kMotionDefaultSpeed[4], true, L"UndoMs", 260 },
+    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineSpeed", kMotionDefaultSpeed[5], true, L"MoveLineMs", 220 },
+    { IDC_M_MS0 + 6, M_MOTION, L"FindSpeed", kMotionDefaultSpeed[6], true, L"FindMs", 300 },
+    { IDC_M_MS0 + 7, M_MOTION, L"IndentSpeed", kMotionDefaultSpeed[7], true, L"IndentMs", 220 },
+    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateSpeed", kMotionDefaultSpeed[8], true, L"DuplicateMs", 240 },
+    { IDC_M_MS0 + 9, M_MOTION, L"JumpSpeed", kMotionDefaultSpeed[9], true, L"JumpMs", 320 },
+    { IDC_M_MS0 + 10, M_MOTION, L"FoldSpeed", kMotionDefaultSpeed[10], true, L"FoldMs", 240 },
+    { IDC_M_MS0 + 11, M_MOTION, L"SortSpeed", kMotionDefaultSpeed[11], true, L"SortMs", 340 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -131,7 +131,7 @@ bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
 int fieldValue(const IntField& f)
 {
     const wchar_t* sec = modules[f.module]->key();
-    return f.speed ? animSpeed(sec, f.key, f.baseMs, f.oldMs) : settings.getInt(sec, f.key, f.def);
+    return f.speed ? animSpeed(sec, f.key, f.baseMs, f.oldMs, f.def) : settings.getInt(sec, f.key, f.def);
 }
 
 void fillStatus(HWND d)

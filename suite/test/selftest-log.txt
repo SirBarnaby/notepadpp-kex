@@ -84,17 +84,17 @@ PASS P8 a number typed on the page is saved and the feature restarted with it
 PASS P9 the KEX Settings window closes
 INFO deleting the selection on line 11 (58 chars, 50 visible non-blank)
 PASS F1 Delete key on a selection: 50 letters spawned, expected 50
-PASS F2 overlay alive with 50 letters, bounding box (98,267)-(457,336) (Notepad++ window (20,16)-(980,676))
+PASS F2 overlay alive with 50 letters, bounding box (98,268)-(457,337) (Notepad++ window (20,16)-(980,676))
 PASS F3 overlay is layered, click-through, non-activating, topmost (exstyle 0x80800a8)
 PASS F4 focus stays in the editor while letters fall
 SHOT 7 falling-letters-selection
-PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 173)
+PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 179)
 PASS F6 Backspace x3: 3 letters spawned
 SHOT 8 falling-letters-backspace
 PASS F7 Edit > Cut of "Particle": 8 letters spawned
 PASS F8 undo of typed text does not rain letters (skipped undo deletes: 1)
 PASS F9 deleting off-screen lines spawns nothing
-PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 201 ms
+PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 202 ms
 SHOT 9 falling-letters-huge-delete
 PASS F11 Replace All (text replaced) spawned 0 letters; NPPN_GLOBALMODIFIED seen 1 time(s)
 PASS F12 Windows animation effects off: no letters (respected by default)
@@ -102,7 +102,7 @@ PASS F13a c.txt cloned into the second view
 PASS F13 second view: 10 letters spawned from "second line"
 SHOT 10 falling-letters-second-view
 PASS C1 smooth caret on in Scintilla in both views, Notepad++'s caret style untouched (view1 on=1 style=0x1; view2 on=1 style=0x1; )
-INFO caret glide from (68.0,30.0) to (143.0,120.0): 14ms:(68.0,30.0) 32ms:(109.2,80.2) 46ms:(109.2,80.2) 60ms:(132.8,108.8) 75ms:(140.7,118.4) 92ms:(142.0,120.0) 105ms:(142.0,120.0) 118ms:(142.0,120.0) 132ms:(142.0,120.0) 147ms:(142.0,120.0) 162ms:(142.0,120.0) 
+INFO caret glide from (68.0,30.0) to (143.0,120.0): 14ms:(68.0,30.0) 28ms:(107.3,77.8) 43ms:(107.3,77.8) 56ms:(131.8,107.6) 71ms:(140.0,117.6) 86ms:(142.0,120.0) 103ms:(142.0,120.0) 118ms:(142.0,120.0) 133ms:(142.0,120.0) 148ms:(142.0,120.0) 163ms:(142.0,120.0) 
 PASS C2 caret glides through 4 intermediate positions and lands on the target (142.0,120.0)
 SHOT 11 caret-glide-frozen-midway
 PASS C3 smooth caret visible at (83,150), 15 px high
@@ -211,7 +211,7 @@ SHOT 19 quick-note-pinned
   [kex] quick note: opened at 80,70 640x420, previous window 0000000000010142
 PASS Q20 pinned: hidden and shown again, it comes back at (80,70)-(720,490)
   [kex] quick note: back to the middle, unpinned
-PASS Q21 clicking it again: the note glides back to the middle (at 277 px partway, off by 0,0 at the end) and is unpinned
+PASS Q21 clicking it again: the note glides back to the middle (at 302 px partway, off by 0,0 at the end) and is unpinned
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
   [kex] WM_HOTKEY received
@@ -219,16 +219,16 @@ PASS Q21 clicking it again: the note glides back to the middle (at 277 px partwa
 PASS Q22 unpinned: it opens in the middle again, (320,190)-(960,610)
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
-INFO shell window 0000000000100A6A (a stand-in for Explorer's)
+INFO shell window 00000000000E0A66 (a stand-in for Explorer's)
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000000000
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000100A6A (came from 0000000000000000)
+  [kex] quick note: closed, focus to 00000000000E0A66 (came from 0000000000000000)
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000000000
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000100A6A (came from 0000000000000000)
-PASS Q23 on an empty desktop 2 with the last window of desktop 1 still named the foreground: the note opens here and, hidden, hands the focus to the desktop, never to desktop 1: ok another program on desktop 1, focus then to 0000000000100a6a (the desktop); ok Notepad++ on desktop 1, focus then to 0000000000100a6a (the desktop); 
+  [kex] quick note: closed, focus to 00000000000E0A66 (came from 0000000000000000)
+PASS Q23 on an empty desktop 2 with the last window of desktop 1 still named the foreground: the note opens here and, hidden, hands the focus to the desktop, never to desktop 1: ok another program on desktop 1, focus then to 00000000000e0a66 (the desktop); ok Notepad++ on desktop 1, focus then to 00000000000e0a66 (the desktop); 
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A8E
   [kex] WM_HOTKEY received
@@ -237,10 +237,10 @@ PASS Q24 a program open on desktop 2 too: hidden, the note gives the focus back 
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A8E
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000100A6A (came from 0000000000040A8E)
+  [kex] quick note: closed, focus to 00000000000E0A66 (came from 0000000000040A8E)
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A8E
-  [kex] quick note: closed, focus to 0000000000100A6A (came from 0000000000040A8E)
+  [kex] quick note: closed, focus to 00000000000E0A66 (came from 0000000000040A8E)
 PASS Q25 opened on desktop 2, hidden after a move to desktop 3: the focus stays on desktop 3 (hotkey ok, Esc ok)
 PASS Q26 the quick note's zoom is off by default
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000010142
@@ -265,7 +265,7 @@ PASS T6 outside post-it mode the hot zone does nothing
   [kex] Copy flash: enabled
   [kex] Paint splash: enabled
 PASS W0 tab slide, flashes and paint splash on
-PASS W1 switching tabs slides the new document in from the left (started 1, 19 frames, held at 0.50; active 1, pictures 8, stopped early 4, technology 0)
+PASS W1 switching tabs slides the new document in from the left (started 1, 22 frames, held at 0.50; active 1, pictures 9, stopped early 4, technology 0)
 SHOT 22 tab-slide-half-way
 PASS W2 the slide ends with the new document in place (last frame at 1.00)
 PASS W3 switching back slides the other way (from the right)
@@ -296,32 +296,32 @@ PASS SW1 half a swipe: the tab on the right is half way in (at 0.50, tab 0 -> 1)
 SHOT 27 tab-swipe-half-way
 PASS SW2 fingers resting: the slide holds where they left it (0.50 after 450 ms)
 PASS SW3a the slide follows the fingers back (0.30)
-  [kex] Tab swipe: touchpad, 240 wheel units, let go at 0.30 (-7.3 swipes/s) -> slid back
+  [kex] Tab swipe: touchpad, 240 wheel units, let go at 0.30 (-6.2 swipes/s) -> slid back
 PASS SW3 let go before half way: it slides back to the first tab (tab 0)
 PASS SW3b the Ctrl+Tab order is as it was before the swipe (7 tabs)
-  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (7.8 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (7.3 swipes/s) -> switched
 PASS SW4 let go past half way: the switch finishes (tab 1, last frame at 1.00)
-  [kex] Tab swipe: touchpad, 160 wheel units, let go at 0.20 (5.7 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 160 wheel units, let go at 0.20 (5.9 swipes/s) -> switched
 PASS SW5 a short quick flick to the left switches to the tab on the left (tab 0)
 PASS SW6 swiping left on the first tab does nothing
   [kex] Tab swipe: wheel, 560 wheel units, let go at 0.70 (0.0 swipes/s) -> switched
 PASS SW7 without touchpad reports a pause in the swipe lets go (tab 1; begin(touch) start back begin(touch) start finish begin(touch) start finish begin(touch) let-go-early begin(wheel) start finish)
 PASS SW8 tilt wheel right: the next tab at once (tab 2)
 PASS SW9 where the line scrolls sideways the swipe scrolls it (x offset 48), no tab moves
-  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (5.8 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (5.1 swipes/s) -> switched
 PASS SW10 over the tab bar the swipe switches tabs even where the line could scroll (tab 3 from 4, under the pointer: SysTabControl32; begin(touch) start back begin(touch) start finish begin(touch) start finish begin(touch) let-go-early begin(wheel) start finish begin(wheel) begin(touch) text begin(touch) start finish)
   [kex] Touchpad tab swipe: disabled
 PASS SW11 touchpad tab swipe off: swiping does not switch tabs
   [kex] Touchpad tab swipe: enabled
 PASS X1 Edit > Copy: the selection flashes (1 rectangle, 1 live)
 PASS X2 copying three lines flashes 3 rectangles
-PASS MO0 editing motion on by default (3 motions so far)
-PASS MO1 Edit > Cut: the text is picked up, then the line closes up (49 % of the way to go, 8 frames); no copy flash
+PASS MO0 editing motion on by default (4 motions so far), 12 of 12 at their default speeds (Cut 178 ms, Paste 65 ms), editing fast within 50 ms
+PASS MO1 Edit > Cut: the text is picked up, then the line closes up (49 % of the way to go, 9 frames); no copy flash
 SHOT 28 motion-cut-half-way
 PASS MO1b ... and it settles by itself (gap 0.000)
 PASS MO2 Delete on a selection in a line: wiped away (58 % to go)
 SHOT 29 motion-delete-wipe-half-way
-PASS MO3 Delete across three lines: the text fades, the lines below glide up (19 % to go)
+PASS MO3 Delete across three lines: the text fades, the lines below glide up (20 % to go)
 SHOT 30 motion-delete-lines-half-way
 PASS MO4 a key pressed during the motion ends it at once (ended 1)
 PASS MO5 typing over a selection and deleting single characters: no motion
@@ -359,7 +359,7 @@ PASS P3 Style One Token: one splash, on that occurrence only (1)
   [kex] Paint splash: disabled
 PASS P4 paint splash off: colouring splashes nothing
   [kex] Paint splash: enabled
-PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (2810 frames so far, 2.82 ms of drawing per frame lately, the last one 4.92 ms); Windows' compositor puts them on screen with the graphics card."
+PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (2752 frames so far, 4.55 ms of drawing per frame lately, the last one 3.76 ms); Windows' compositor puts them on screen with the graphics card."
   [kex] Falling letters: disabled
 PASS E1 Falling letters off from Preferences: unticked and remembered, no letters left (the flashes and splashes keep the overlay)
   [kex] Falling letters: enabled
@@ -602,55 +602,55 @@ PASS L28 Clear all Styles takes the single bold/italic ranges away too
   [kex] Tab close and open: disabled
   [kex] Save glint: disabled
   [kex] Editing motion: disabled
-INFO PERF all KEX features on: 36.523 ms per key, 2.00% CPU idle; all off: 28.459 ms per key, 2.00% CPU idle
-INFO PERF smooth caret: drawn in 1.16 paints per key while typing, 0.0 a second while idle (glide and blink fades)
-INFO PERF text repaints per key: 1.16 with the features on, 1.00 with them off
-INFO PERF smooth caret's own code in Scintilla per key: 0.193 ms
+INFO PERF all KEX features on: 31.628 ms per key, 1.50% CPU idle; all off: 25.632 ms per key, 1.00% CPU idle
+INFO PERF smooth caret: drawn in 1.15 paints per key while typing, 0.0 a second while idle (glide and blink fades)
+INFO PERF text repaints per key: 1.15 with the features on, 1.00 with them off
+INFO PERF smooth caret's own code in Scintilla per key: 0.174 ms
   [kex] Falling letters: enabled
-INFO PERF only Falling letters                    29.033 ms per key (+0.574), 1.50% CPU idle (-0.50)
+INFO PERF only Falling letters                    25.963 ms per key (+0.330), 2.00% CPU idle (+1.00)
   [kex] Falling letters: disabled
   [kex] Smooth caret: enabled
-INFO PERF only Smooth caret                       30.472 ms per key (+2.013), 1.50% CPU idle (-0.50)
+INFO PERF only Smooth caret                       28.646 ms per key (+3.014), 1.50% CPU idle (+0.50)
   [kex] Smooth caret: disabled
   [kex] hotkey Ctrl+Alt+M: registered (error 0)
   [kex] Quick note (global hotkey): enabled
-INFO PERF only Quick note (global hotkey)         31.962 ms per key (+3.502), 2.00% CPU idle (+0.00)
+INFO PERF only Quick note (global hotkey)         31.386 ms per key (+5.753), 2.50% CPU idle (+1.50)
   [kex] Quick note (global hotkey): disabled
   [kex] F12 hover tabs: enabled
-INFO PERF only F12 hover tabs                     29.841 ms per key (+1.382), 1.50% CPU idle (-0.50)
+INFO PERF only F12 hover tabs                     28.336 ms per key (+2.704), 2.00% CPU idle (+1.00)
   [kex] F12 hover tabs: disabled
   [kex] A Notepad++ for each desktop: enabled
-INFO PERF only A Notepad++ for each desktop       28.692 ms per key (+0.233), 1.50% CPU idle (-0.50)
+INFO PERF only A Notepad++ for each desktop       27.856 ms per key (+2.224), 2.00% CPU idle (+1.00)
   [kex] A Notepad++ for each desktop: disabled
   [kex] Tab snapping: enabled
-INFO PERF only Tab snapping                       29.253 ms per key (+0.794), 2.00% CPU idle (+0.00)
+INFO PERF only Tab snapping                       26.373 ms per key (+0.740), 1.50% CPU idle (+0.50)
   [kex] Tab snapping: disabled
   [kex] JetBrains shortcuts: enabled
-INFO PERF only JetBrains shortcuts                27.921 ms per key (-0.538), 2.00% CPU idle (+0.00)
+INFO PERF only JetBrains shortcuts                26.938 ms per key (+1.305), 2.00% CPU idle (+1.00)
   [kex] JetBrains shortcuts: disabled
   [kex] Live token styles: enabled
-INFO PERF only Live token styles                  29.404 ms per key (+0.945), 2.00% CPU idle (+0.00)
+INFO PERF only Live token styles                  27.368 ms per key (+1.736), 2.00% CPU idle (+1.00)
   [kex] Live token styles: disabled
   [kex] Copy flash: enabled
-INFO PERF only Copy flash                         29.414 ms per key (+0.955), 2.00% CPU idle (+0.00)
+INFO PERF only Copy flash                         27.328 ms per key (+1.696), 2.00% CPU idle (+1.00)
   [kex] Copy flash: disabled
   [kex] Tab slide: enabled
-INFO PERF only Tab slide                          28.540 ms per key (+0.081), 1.50% CPU idle (-0.50)
+INFO PERF only Tab slide                          28.233 ms per key (+2.600), 1.50% CPU idle (+0.50)
   [kex] Tab slide: disabled
   [kex] Paint splash: enabled
-INFO PERF only Paint splash                       30.158 ms per key (+1.699), 2.00% CPU idle (+0.00)
+INFO PERF only Paint splash                       28.328 ms per key (+2.696), 1.50% CPU idle (+0.50)
   [kex] Paint splash: disabled
   [kex] Touchpad tab swipe: enabled
-INFO PERF only Touchpad tab swipe                 27.832 ms per key (-0.627), 1.50% CPU idle (-0.50)
+INFO PERF only Touchpad tab swipe                 27.255 ms per key (+1.623), 1.50% CPU idle (+0.50)
   [kex] Touchpad tab swipe: disabled
   [kex] Tab close and open: enabled
-INFO PERF only Tab close and open                 27.788 ms per key (-0.671), 2.00% CPU idle (+0.00)
+INFO PERF only Tab close and open                 26.559 ms per key (+0.927), 1.50% CPU idle (+0.50)
   [kex] Tab close and open: disabled
   [kex] Save glint: enabled
-INFO PERF only Save glint                         26.856 ms per key (-1.603), 1.50% CPU idle (-0.50)
+INFO PERF only Save glint                         29.569 ms per key (+3.936), 2.00% CPU idle (+1.00)
   [kex] Save glint: disabled
   [kex] Editing motion: enabled
-INFO PERF only Editing motion                     28.052 ms per key (-0.407), 1.50% CPU idle (-0.50)
+INFO PERF only Editing motion                     30.978 ms per key (+5.346), 1.50% CPU idle (+0.50)
   [kex] Editing motion: disabled
   [kex] Falling letters: enabled
   [kex] Smooth caret: enabled
@@ -668,10 +668,10 @@ INFO PERF only Editing motion                     28.052 ms per key (-0.407), 1.
   [kex] Tab close and open: enabled
   [kex] Save glint: enabled
   [kex] Editing motion: enabled
-PASS PERF1 the features' own work adds 8.064 ms per key and -0.00% CPU while idle; caret redraws 1.16 per key, 0.0 a second idle (total 36.523 vs 28.459 ms per key, 2.00% vs 2.00% idle)
+PASS PERF1 the features' own work adds 5.995 ms per key and 0.50% CPU while idle; caret redraws 1.15 per key, 0.0 a second idle (total 31.628 vs 25.632 ms per key, 1.50% vs 1.00% idle)
 PASS RG1 word wrap on: a line moving down past a wrapped line slides (the long line takes 10 rows; started 1, frames +13, refused +0, skipped +0)
 SHOT 50 move-wrapped-RG1
-PASS RG2 word wrap on: the wrapped line itself moving down slides (the long line takes 10 rows; started 1, frames +11, refused +0, skipped +0)
+PASS RG2 word wrap on: the wrapped line itself moving down slides (the long line takes 10 rows; started 1, frames +8, refused +0, skipped +0)
 SHOT 51 move-wrapped-RG2
 PASS RG2b the bottom line in sight moving down: the view scrolls by 2 line(s) and the line slides (started 1, refused +0)
 SHOT 52 move-line-at-edge
@@ -692,6 +692,10 @@ SHOT 56 arrows-open-narrow
 PASS RG6 Ctrl+Alt+M hidden and shown again: the note shows line 120 at the top (was 120), caret at 1823 (was 1823)
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
+PASS RG7 undo right after a paste: the caret shows between where it was and where it goes, never past them (x 80, was 164, goes to 73; text 100 % to go)
+SHOT 57 undo-after-paste-caret
+PASS RG7b Delete on a selection made rightwards: the caret shows between where it was and where it goes (x 84, was 150, goes to 73; text 100 % to go)
+SHOT 58 delete-selection-caret
 PASS SP1 KEX Settings: 8 of 8 animations that had only the speed for all show a speed box of their own, at 100 %
 PASS SP2 each at 200 %: falling letters, copy flash and paint splash at 200/200/200 %; caret fade 70 ms (designed 140), tab snapping 60 ms (120), swipe settle 110 ms (220), quick note fade 75 ms (150), glide to the middle 160 ms (320)
   [kex] Smooth caret: disabled
@@ -699,7 +703,7 @@ PASS SP2 each at 200 %: falling letters, copy flash and paint splash at 200/200/
 PASS SP3 and all animations at 200 %: caret fade 35 ms, tab snapping 30 ms, swipe settle 55 ms, quick note fade 38 ms, glide 80 ms
   [kex] Smooth caret: disabled
   [kex] Smooth caret: enabled
-SHOT 57 settings-effects-page
+SHOT 59 settings-effects-page
 PASS SP4 copy flash at 400 %: 0 left after 260 ms; at 25 %: 1 still showing after 500 ms
-RESULT 312 passed, 0 failed
+RESULT 314 passed, 0 failed
 DONE

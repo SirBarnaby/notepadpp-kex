@@ -2760,11 +2760,21 @@ void buildSteps()
         focusEditor();
         HWND s = curSci();
         sci(s, SCI_COLOURISE, 0, -1);
-        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);   // the steps come quickly: each its own motion
+        // out of the box: every motion at the speed the user tuned it to, "editing fast" within 50 ms
+        int tuned = 0;
+        for (int k = 0; k < kMotionCount; ++k)
+            if (motionMs(k) == std::min(3000, animMs(kMotionDefs[k].ms, kMotionDefaultSpeed[k]))) ++tuned;
+        const int rapidDefault = settings.getInt(modules[M_MOTION]->key(), L"RapidMs", -1);
+        // the steps run at the designed times (100 %) and come quickly: each its own motion
+        for (int k = 0; k < kMotionCount; ++k) settings.setInt(modules[M_MOTION]->key(), (std::wstring(kMotionDefs[k].key) + L"Speed").c_str(), 100);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
         modules[M_MOTION]->loadOptions();
         settle(200);
         const MotionStats st = motionStats(s);
-        check(modules[M_MOTION]->isEnabled() && !st.active, L"MO0", L"editing motion on by default (%d motions so far)", st.total);
+        check(modules[M_MOTION]->isEnabled() && !st.active && tuned == kMotionCount && rapidDefault == -1, L"MO0",
+              L"editing motion on by default (%d motions so far), %d of %d at their default speeds (Cut %d ms, Paste %d ms), editing fast within %d ms",
+              st.total, tuned, kMotionCount, std::min(3000, animMs(kMotionDefs[0].ms, kMotionDefaultSpeed[0])), std::min(3000, animMs(kMotionDefs[3].ms, kMotionDefaultSpeed[3])),
+              kMotionRapidMs);
         return 100;
     });
     add([] {
@@ -3114,7 +3124,7 @@ void buildSteps()
         if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 100, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
         if (d) ::SendMessageW(d, WM_CLOSE, 0, 0);
         HWND s = curSci();
-        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 250);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", kMotionRapidMs);
         modules[M_MOTION]->loadOptions();
         // mo.cpp goes without asking
         sci(s, SCI_SETSAVEPOINT);
@@ -4501,6 +4511,68 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
         focusEditor();
         return 100;
     });
+    // The caret in an edit motion (round 11b): it goes on top of each frame and moves only by its own glide. It used to
+    // be painted into the picture of the text after the edit, so it glided and moved with that text as well: an undo
+    // right after a paste threw the caret far to the right before it came back.
+    auto caretRides = [add](const wchar_t* id, bool paste) {
+        add([id, paste] {
+            open(L"rg.txt");
+            HWND s = curSci();
+            focusEditor();
+            sci(s, SCI_SETWRAPMODE, SC_WRAP_NONE);
+            sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+            sci(s, SCI_SETXOFFSET, 0);   // the view may be a narrow one of four: nothing here scrolls it sideways
+            const int line = paste ? 3 : 5;
+            float fromX = 0, toX = 0;   // where the caret is before the edit, and where it ends up
+            if (paste)
+            {
+                const std::string clip = "PASTED words";
+                sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
+                sci(s, SCI_SETEMPTYSELECTION, posOf(s, line, 4));
+                settle(300);
+                toX = caretStats().mainX;
+                tokCommand(IDM_EDIT_PASTE);
+                settle(800);
+            }
+            else
+            {
+                sci(s, SCI_SETEMPTYSELECTION, posOf(s, line, 4));
+                settle(300);
+                toX = caretStats().mainX;
+                sci(s, SCI_SETSEL, posOf(s, line, 4), posOf(s, line, 18));   // selected rightwards: the caret at its end
+                settle(300);
+            }
+            fromX = caretStats().mainX;
+            // the caret glides slowly (320 ms) and doesn't blink, the motion holds near its start
+            settings.setInt(modules[M_CARET]->key(), L"GlideSpeed", 25);
+            modules[M_CARET]->loadOptions();
+            caretTestFreeze(-1, true);
+            slideTestFreeze(0.05);
+            g_motionBefore = motionStats(s);
+            if (paste) tokCommand(IDM_EDIT_UNDO);
+            else tap(VK_DELETE);
+            pump(200);
+            const MotionStats m = motionStats(s);
+            const int kind = paste ? 4 : 1;
+            check(m.active && m.started[kind] == g_motionBefore.started[kind] + 1 && m.caretX <= fromX + 1.5f && m.caretX >= toX - 1.5f, id,
+                  paste ? L"undo right after a paste: the caret shows between where it was and where it goes, never past them (x %.0f, was %.0f, goes to %.0f; text %.0f %% to go)"
+                        : L"Delete on a selection made rightwards: the caret shows between where it was and where it goes (x %.0f, was %.0f, goes to %.0f; text %.0f %% to go)",
+                  m.caretX, fromX, toX, m.gap * 100.0);
+            return shot(paste ? L"undo-after-paste-caret" : L"delete-selection-caret");
+        });
+        add([paste] {
+            HWND s = curSci();
+            caretTestFreeze(-1, false);
+            slideTestFreeze(-1);
+            settings.setInt(modules[M_CARET]->key(), L"GlideSpeed", 100);
+            modules[M_CARET]->loadOptions();
+            waitFor([s] { return !motionStats(s).active; }, 2000);
+            if (!paste) sci(s, SCI_UNDO);   // the deleted text back (the undone paste stays undone)
+            return until([s] { return !motionStats(s).active; }, 2000);
+        });
+    };
+    caretRides(L"RG7", true);
+    caretRides(L"RG7b", false);
     addOwnSpeedSteps(add);
 }
 

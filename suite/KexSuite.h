@@ -62,7 +62,7 @@ const int kSpeedMin = 25, kSpeedMax = 400;
 int animSpeedAll();
 void setAnimSpeedAll(int percent);
 // one animation's own speed (sec/key), taken from its time in ms (oldMsKey) where only that was set so far
-int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs = 0, const wchar_t* oldMsKey = nullptr);
+int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs = 0, const wchar_t* oldMsKey = nullptr, int defPercent = 100);
 int animMs(double baseMs, int percent = 100);   // a designed time at that speed and the speed for all, in ms (1 at least)
 double animScale();                              // what a designed time is multiplied by: 100 / the speed for all
 bool rectsIntersect(const RECT& a, const RECT& b);
@@ -228,12 +228,16 @@ FlashStats flashStats();
 const int kMotionCount = 12;
 struct MotionDef { const wchar_t* key; int ms; const wchar_t* menu; };
 extern const MotionDef kMotionDefs[kMotionCount];
+// each motion's speed (%) until it is set, as the user tuned them (2026-11-05), and "editing fast" (ms)
+inline constexpr int kMotionDefaultSpeed[kMotionCount] = { 180, 200, 300, 400, 250, 250, 100, 270, 330, 100, 100, 100 };
+inline constexpr int kMotionRapidMs = 50;
 void applyMotions(HWND sciHwnd);       // an editor made later (the quick note) gets the motions too
 bool motionOn(int kind);
 int motionMs(int kind);   // its time now, from the speeds
 void setMotionOn(int kind, bool on);   // KEX > Motion's switches
 struct MotionStats { bool active = false; int started[kMotionCount] = {}; int total = 0, skipped = 0, refused = 0, ended = 0, frames = 0, lastKind = -1;
-                     float fraction = 0, gap = 0; int style = 0, ringFrames = 0, jumpLines = 0, lines = 0; };
+                     float fraction = 0, gap = 0; int style = 0, ringFrames = 0, jumpLines = 0, lines = 0;
+                     float caretX = 0; };   // the last edit motion's frame: where the main caret showed
 MotionStats motionStats(HWND sciHwnd);
 struct SplashStats { int splashes = 0, lastTokens = 0, live = 0, spawned = 0; };
 SplashStats splashStats();

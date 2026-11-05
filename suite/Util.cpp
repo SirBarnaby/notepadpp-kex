@@ -195,7 +195,7 @@ void setAnimSpeedAll(int percent)
     g_animSpeed.store(percent, std::memory_order_relaxed);
 }
 
-int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs, const wchar_t* oldMsKey)
+int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs, const wchar_t* oldMsKey, int defPercent)
 {
     int pct = settings.getInt(sec, key, -1);
     if (pct < 0 && oldMsKey)
@@ -205,7 +205,7 @@ int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs, const wchar_t*
         if (old > 0) pct = static_cast<int>(std::lround(baseMs * 100.0 / old));
         else if (old == 0) pct = kSpeedMax;
     }
-    return pct < 0 ? 100 : std::clamp(pct, kSpeedMin, kSpeedMax);
+    return std::clamp(pct < 0 ? defPercent : pct, kSpeedMin, kSpeedMax);
 }
 
 double animScale() { return 100.0 / animSpeedAll(); }

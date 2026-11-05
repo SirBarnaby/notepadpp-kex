@@ -49,10 +49,11 @@ public:
         {
             const MotionDef& d = kMotionDefs[k];
             _on[k] = settings.getInt(key(), d.key, 1) != 0;
-            _ms[k] = std::min(3000, animMs(d.ms, animSpeed(key(), (std::wstring(d.key) + L"Speed").c_str(), d.ms, (std::wstring(d.key) + L"Ms").c_str())));
+            _ms[k] = std::min(3000, animMs(d.ms, animSpeed(key(), (std::wstring(d.key) + L"Speed").c_str(), d.ms, (std::wstring(d.key) + L"Ms").c_str(),
+                                                           kMotionDefaultSpeed[k])));
         }
         _glowMs = std::min(3000, animMs(600, animSpeed(key(), L"GlowSpeed", 600, L"GlowMs")));
-        _rapidMs = std::max(0, std::min(3000, settings.getInt(key(), L"RapidMs", 250)));
+        _rapidMs = std::max(0, std::min(3000, settings.getInt(key(), L"RapidMs", kMotionRapidMs)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
         if (s_self == this) pushAll();
@@ -158,7 +159,7 @@ MotionStats motionStats(HWND s)
     for (int k = 0; k < kMotionCount; ++k) { st.started[k] = info.started[k]; st.total += info.started[k]; }
     st.skipped = info.skipped; st.refused = info.refused; st.ended = info.ended; st.frames = info.frames;
     st.lastKind = info.lastKind; st.fraction = info.fraction; st.gap = info.gap; st.style = info.style;
-    st.ringFrames = info.ringFrames; st.jumpLines = info.jumpLines; st.lines = info.lines;
+    st.ringFrames = info.ringFrames; st.jumpLines = info.jumpLines; st.lines = info.lines; st.caretX = info.caretX;
     return st;
 }
 
