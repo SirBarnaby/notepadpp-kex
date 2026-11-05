@@ -8,7 +8,9 @@
 // the tabs on its right glide over to close the gap; a new tab's gap opens first and the tab rises into it.
 // The glide is a critically damped spring (Apple's default: no bounce), the sink accelerates away as
 // leaving things do. Then the window goes and the real bar shows. Several tabs at once (Close All,
-// opening a session) just change.
+// opening a session) just change. A bar with more tabs than room (scroll arrows) plays it too: the tabs
+// glide from where they were to where they are now on both sides of the change (the bar may scroll by it),
+// and the arrows stay as they are.
 // Only the tab moves: the document area changes at once, as in every editor (no slide, no fade).
 //
 // Save glint: a soft diagonal band of light sweeps once across the tab of the file just saved, in a
@@ -62,7 +64,7 @@ bool animationsAllowed(bool respect)
 
 // How much of a tab bar can be seen, from its top: 0 when none. Notepad++ sizes the tab control to the whole
 // pane and lays the view over its lower part, or over all of it with the tab bar hidden (and in F12 post-it
-// mode). One row of tabs only, without scroll arrows.
+// mode). One row of tabs only (scroll arrows or not).
 int barStrip(HWND bar)
 {
     if (!bar || !::IsWindowVisible(bar)) return 0;
@@ -72,11 +74,6 @@ int barStrip(HWND bar)
     if (style & (TCS_MULTILINE | TCS_VERTICAL)) return 0;
     RECT rc; ::GetClientRect(bar, &rc);
     if (rc.right < 8 || rc.bottom < 8) return 0;
-    for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
-    {
-        wchar_t cls[32] = {};
-        if (::IsWindowVisible(c) && ::GetClassNameW(c, cls, 31) && ::lstrcmpiW(cls, UPDOWN_CLASSW) == 0) return 0;   // more tabs than room
-    }
     int strip = rc.bottom;
     RECT it{};
     if (::SendMessageW(bar, TCM_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&it)) && it.bottom > 0) strip = std::min<int>(strip, it.bottom + 3);
@@ -91,6 +88,21 @@ int barStrip(HWND bar)
         if (sr.left < org.x + rc.right && sr.right > org.x && sr.bottom > org.y) strip = std::min<int>(strip, sr.top - org.y);
     }
     return strip >= 8 ? strip : 0;
+}
+
+// Where a tab bar's scroll arrows start (shown when there are more tabs than room), or w without them.
+int arrowsLeft(HWND bar, int w)
+{
+    for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
+    {
+        wchar_t cls[32] = {};
+        if (!::IsWindowVisible(c) || !::GetClassNameW(c, cls, 31) || ::lstrcmpiW(cls, UPDOWN_CLASSW) != 0) continue;
+        RECT ur{};
+        ::GetWindowRect(c, &ur);
+        ::MapWindowPoints(nullptr, bar, reinterpret_cast<POINT*>(&ur), 2);
+        return std::clamp<int>(ur.left, 0, w);
+    }
+    return w;
 }
 
 // The part of a tab bar that can be seen, any layout (several rows, scroll arrows, tabs down the side):
@@ -175,16 +187,6 @@ inline void over(uint32_t& d, uint32_t s, uint32_t k)
     d = s + (rb | (ag << 8));
 }
 
-// columns [sx, sx + sw) of src copied straight to dx
-void copyColumns(Surface& dst, Surface& src, int sx, int sw, int dx, int h)
-{
-    sw = std::min(sw, src.w - sx);
-    const int i0 = std::max(0, -dx), i1 = std::min(sw, dst.w - dx);
-    if (sx < 0 || i1 <= i0) return;
-    for (int y = 0; y < h; ++y)
-        memcpy(rowOf(dst, y) + dx + i0, rowOf(src, y) + sx + i0, static_cast<size_t>(i1 - i0) * 4);
-}
-
 // ---------------------------------------------------------------------------------------------
 // one tab bar (or, for a glint with the bar hidden, the top edge of a view): its overlay and what it plays
 
@@ -195,13 +197,18 @@ struct BarFx {
     HWND overlay = nullptr;
     int w = 0, h = 0;
     Surface before, after, frame;
-    // fold
+    // fold. Tabs show left of rightB in the bar as it was (before) and of rightA as it is now (after): the scroll
+    // arrows start there.
     bool holding = false;           // the overlay shows the bar as it was; Notepad++ is still changing it
     int ops = 0;                    // tab changes since the overlay went up
     bool closing = true;
-    int index = -1, x0 = 0, dx = 0, backX = -1;
+    int index = -1, dx = 0;         // the tab, and the room it takes (to the next tab's start)
+    int x0b = 0, x0a = 0;           // where the tabs on its left end: before, and now
+    int rightOfB = 0, rightOfA = 0; // where the tabs on its right start: before, and now
+    int rightB = 0, rightA = 0;
     int tabW = 0, tabTop = 0;       // the tab itself: its width, and where it starts from the bar's top
-    bool tail = false;              // tabs on its right, which glide (without any, the room is only background)
+    bool head = false, tail = false;// tabs on its left / right, which glide (without any, there is only background)
+    std::vector<uint32_t> back;     // one column of the bar's background, top to bottom
     double holdStart = 0, start = 0;
     bool folding = false;
     // glints
@@ -211,15 +218,86 @@ struct BarFx {
 
 std::map<HWND, BarFx> s_bars;
 
-// A column of the bar's own background: halfway between the last tab and the bar's end, clear of the
-// selected tab's raised edge (drawn wider than its rectangle) and of the control's border. -1: no room.
-int backgroundColumn(HWND bar, int w)
+// the background column a bar showed last (a bar full of tabs, with scroll arrows, shows none)
+struct BackSeen { int h = 0; bool dark = false; std::vector<uint32_t> px; };
+std::map<HWND, BackSeen> s_backSeen;
+
+// A column of the bar's own background: halfway between the last tab and where the tabs end (the bar's end or
+// its scroll arrows), clear of the selected tab's raised edge (drawn wider than its rectangle) and of the
+// control's border. -1: no room.
+int backgroundColumn(HWND bar, int right)
 {
     const int n = static_cast<int>(::SendMessageW(bar, TCM_GETITEMCOUNT, 0, 0));
-    if (n == 0) return w / 2;
+    if (n == 0) return right / 2;
     RECT last{};
-    if (!::SendMessageW(bar, TCM_GETITEMRECT, n - 1, reinterpret_cast<LPARAM>(&last)) || last.right + 12 >= w) return -1;
-    return (last.right + w) / 2;
+    if (!::SendMessageW(bar, TCM_GETITEMRECT, n - 1, reinterpret_cast<LPARAM>(&last)) || last.right + 12 >= right) return -1;
+    return (last.right + right) / 2;
+}
+
+// One column of b's bar background, top to bottom (keeps the bar's lines and shading), from a picture of the
+// bar when it has room after its last tab. false when it has none (the tabs reach its end or its scroll arrows).
+bool backFromPicture(BarFx& b, HWND bar, Surface& pic, int right)
+{
+    const int x = backgroundColumn(bar, right);
+    if (x < 0 || x >= pic.w || pic.h < b.h) return false;
+    b.back.resize(static_cast<size_t>(b.h));
+    for (int y = 0; y < b.h; ++y) b.back[y] = rowOf(pic, y)[x] | 0xFF000000u;
+    BackSeen& seen = s_backSeen[bar];
+    seen.h = b.h; seen.dark = nppMsg(NPPM_ISDARKMODEENABLED, 0, 0) != 0; seen.px = b.back;
+    return true;
+}
+
+// The bar's background for a fold: from the bar as it is now, else as it was (taken before the change), else the
+// column it showed last, else the bar paints its background for it (Notepad++'s dark mode fills it with its own
+// colour; a light bar that paints none there shows the face colour). Never a capture of a control asked to print
+// itself: Notepad++'s dark bar prints no background then (white).
+void takeBackground(BarFx& b, HWND bar, Surface& pic, int right)
+{
+    if (backFromPicture(b, bar, pic, right) || static_cast<int>(b.back.size()) == b.h) return;
+    const bool dark = nppMsg(NPPM_ISDARKMODEENABLED, 0, 0) != 0;
+    const BackSeen& seen = s_backSeen[bar];
+    if (seen.h == b.h && seen.dark == dark && static_cast<int>(seen.px.size()) == b.h) { b.back = seen.px; return; }
+    const COLORREF face = ::GetSysColor(COLOR_BTNFACE);
+    const uint32_t facepx = 0xFF000000u | (GetRValue(face) << 16) | (GetGValue(face) << 8) | GetBValue(face);
+    b.back.assign(static_cast<size_t>(b.h), facepx);
+    Surface s;
+    if (!s.ensure(4, b.h)) return;
+    const uint32_t mark = 0x00FE01FDu;   // a colour no bar has: still there = nothing was painted
+    for (int y = 0; y < b.h; ++y) for (int i = 0; i < 4; ++i) rowOf(s, y)[i] = mark;
+    ::GdiFlush();
+    ::SendMessageW(bar, WM_ERASEBKGND, reinterpret_cast<WPARAM>(s.dc), 0);
+    ::GdiFlush();
+    for (int y = 0; y < b.h; ++y)
+    {
+        const uint32_t c = rowOf(s, y)[2] & 0xFFFFFFu;
+        if (c != mark) b.back[y] = c | 0xFF000000u;
+    }
+}
+
+inline void fillColumns(Surface& dst, const std::vector<uint32_t>& col, int x0, int x1)
+{
+    x0 = std::max(0, x0); x1 = std::min(x1, dst.w);
+    for (int y = 0; y < dst.h && y < static_cast<int>(col.size()); ++y)
+    {
+        uint32_t* row = rowOf(dst, y);
+        for (int x = x0; x < x1; ++x) row[x] = col[y];
+    }
+}
+
+// columns [s0, s1) of src drawn with their left at dx + s0, kept inside [0, clip)
+void blitColumns(Surface& dst, Surface& src, int s0, int s1, int dx, int clip, int h, int y0 = 0, int dy = 0)
+{
+    s0 = std::max(s0, 0); s1 = std::min(s1, src.w);
+    int d0 = s0 + dx, d1 = s1 + dx;
+    if (d0 < 0) { s0 -= d0; d0 = 0; }
+    d1 = std::min(d1, std::min(clip, dst.w));
+    if (d1 <= d0) return;
+    for (int y = std::max(0, y0 + dy); y < h && y < dst.h; ++y)
+    {
+        const int sy = y - dy;
+        if (sy < 0 || sy >= src.h) continue;
+        memcpy(rowOf(dst, y) + d0, rowOf(src, sy) + s0, static_cast<size_t>(d1 - d0) * 4);
+    }
 }
 
 void hideOverlay(BarFx& b)
@@ -303,6 +381,32 @@ Motion s_motion;
 // ---------------------------------------------------------------------------------------------
 // Tab close and open
 
+// a tab change that just happens, with why in kex.log (the first few: enough to see what keeps one from playing)
+void foldSkipped(const wchar_t* why, int a = 0, int b = 0)
+{
+    static int logged = 0;
+    ++s_stats.foldSkipped;
+    if (logged < 20) { ++logged; log(L"tab close/open not played: %ls (%d, %d)", why, a, b); }
+}
+
+bool itemRect(HWND bar, int i, RECT& r)
+{
+    return i >= 0 && ::SendMessageW(bar, TCM_GETITEMRECT, i, reinterpret_cast<LPARAM>(&r)) != 0;
+}
+
+// Tabs that glide by shift as p goes from 0 to 1: drawn as they were (columns [b0, b1) of the bar before) and,
+// over that, as they are (columns [a0, a1) now), each where the glide has them. Where the bar scrolls by the
+// change, tabs leave on one side as the ones the bar shows now come in on the other. A scroll further than the
+// bar is wide glides one bar's width: the tabs between are never seen.
+void glide(BarFx& b, int b0, int b1, int a0, int a1, int shift, double p, int clip)
+{
+    const int span = std::max(1, std::min(b.rightA, b.rightB));
+    shift = std::clamp(shift, -span, span);
+    const int offB = static_cast<int>(std::lround(shift * p)), offA = offB - shift;
+    blitColumns(b.frame, b.before, b0, std::min(b1, b.rightB), offB, clip, b.h);
+    blitColumns(b.frame, b.after, a0, std::min(a1, b.rightA), offA, clip, b.h);
+}
+
 class TabFold : public Module {
 public:
     const wchar_t* key() const override { return L"TabFold"; }
@@ -310,7 +414,7 @@ public:
 
     void loadOptions() override
     {
-        _ms = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 240)));
+        _ms = std::min(3840, animMs(240, animSpeed(key(), L"Speed", 240, L"DurationMs")));
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
     }
 
@@ -350,29 +454,38 @@ public:
         b.target = bar;
         if (b.holding) { ++b.ops; return; }   // a second change in the same go: several tabs at once
         const int strip = animationsAllowed(_respect) ? barStrip(bar) : 0;
-        if (!strip) { ++s_stats.foldSkipped; return; }
+        if (!strip) { foldSkipped(animationsAllowed(_respect) ? L"the tab bar can't be seen (or has several rows)" : L"Windows animation effects are off"); return; }
         RECT rc; ::GetClientRect(bar, &rc);
         if (b.folding) { b.folding = false; hideOverlay(b); }   // the last one jumps to its end
         b.w = rc.right; b.h = strip;
-        if (!grab(bar, b.before, b.w, b.h)) return;
+        b.rightB = arrowsLeft(bar, b.w);
         b.closing = closing;
         b.index = index;
-        b.ops = 1;
-        b.x0 = b.dx = 0;
-        b.backX = -1;
+        b.dx = b.tabW = b.tabTop = 0;
+        b.head = index > 0;
         const int n = static_cast<int>(::SendMessageW(bar, TCM_GETITEMCOUNT, 0, 0));
+        RECT it{};
         if (closing)
         {
-            RECT it{};
-            if (!::SendMessageW(bar, TCM_GETITEMRECT, index, reinterpret_cast<LPARAM>(&it))) return;
+            // a tab out of sight (scrolled away behind the arrows) just goes
+            if (!itemRect(bar, index, it) || it.right <= 0 || it.left >= b.rightB) { foldSkipped(L"the closed tab is scrolled out of sight", it.left, b.rightB); return; }
             RECT next{};
-            b.x0 = it.left;
-            b.dx = (index + 1 < n && ::SendMessageW(bar, TCM_GETITEMRECT, index + 1, reinterpret_cast<LPARAM>(&next)) && next.left > it.left)
-                   ? next.left - it.left : it.right - it.left;
+            b.x0b = it.left;
+            b.dx = (itemRect(bar, index + 1, next) && next.left > it.left) ? next.left - it.left : it.right - it.left;
             b.tabW = it.right - it.left;
             b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
+            b.rightOfB = b.x0b + b.dx;
         }
-        else b.backX = backgroundColumn(bar, b.w);   // before the new tab comes
+        else
+        {
+            if (index < n && itemRect(bar, index, it)) b.x0b = it.left;
+            else b.x0b = (n > 0 && itemRect(bar, n - 1, it)) ? it.right : 0;
+            b.rightOfB = b.x0b;
+        }
+        if (!grab(bar, b.before, b.w, b.h)) return;
+        b.back.clear();
+        backFromPicture(b, bar, b.before, b.rightB);   // the bar may have no room left for it once the change is made
+        b.ops = 1;
         // the bar as it was, over the bar, at once: the change underneath can't be seen
         present(b, b.before);
         b.holding = true;
@@ -390,30 +503,45 @@ public:
         const bool bulk = b.ops > 1;
         if (bulk || barStrip(bar) != b.h || rc.right != b.w)
         {
-            if (bulk) ++s_stats.foldBulk; else ++s_stats.foldSkipped;
+            if (bulk) ++s_stats.foldBulk; else foldSkipped(L"the tab bar changed size", rc.right - b.w, barStrip(bar) - b.h);
             hideOverlay(b);
             return;
         }
         ::UpdateWindow(bar);
         if (!grab(bar, b.after, b.w, b.h)) { hideOverlay(b); return; }
         const int n = static_cast<int>(::SendMessageW(bar, TCM_GETITEMCOUNT, 0, 0));
+        b.rightA = arrowsLeft(bar, b.w);
+        // Where the tabs on the left end now (they may have moved: the bar may have scrolled by the change). Measured at
+        // the change itself, never at a tab left of it: a tab scrolled away to the left has no place (TCM_GETITEMRECT
+        // fails for it).
+        bool ok = true;
+        RECT it{};
         if (b.closing)
         {
-            b.backX = backgroundColumn(bar, b.w);
             b.tail = b.index < n;
+            ok = b.tail ? itemRect(bar, b.index, it) : itemRect(bar, b.index - 1, it);
+            b.x0a = b.tail ? it.left : it.right;
+            b.rightOfA = b.x0a;
         }
         else
         {
-            RECT it{}, next{};
-            if (b.index < 0 || b.index >= n || !::SendMessageW(bar, TCM_GETITEMRECT, b.index, reinterpret_cast<LPARAM>(&it))) { hideOverlay(b); return; }
-            b.x0 = it.left;
-            b.dx = (b.index + 1 < n && ::SendMessageW(bar, TCM_GETITEMRECT, b.index + 1, reinterpret_cast<LPARAM>(&next)) && next.left > it.left)
-                   ? next.left - it.left : it.right - it.left;
+            RECT next{};
+            ok = itemRect(bar, b.index, it);
+            b.x0a = it.left;
+            b.dx = (itemRect(bar, b.index + 1, next) && next.left > it.left) ? next.left - it.left : it.right - it.left;
             b.tabW = it.right - it.left;
             b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
             b.tail = b.index + 1 < n;
+            b.rightOfA = b.x0a + b.dx;
+            ok = ok && b.x0a + b.tabW > 0 && b.x0a < b.rightA;   // a new tab out of sight: the bar just changes
         }
-        if (b.dx <= 0 || b.x0 < 0 || b.x0 >= b.w || b.backX < 0) { ++s_stats.foldSkipped; hideOverlay(b); return; }
+        if (!ok || b.dx <= 0 || b.tabW <= 0 || b.rightA <= 0 || b.rightB <= 0)
+        {
+            foldSkipped(b.closing ? L"the tabs can't be found after the close" : L"the new tab is out of sight", b.x0a, b.rightA);
+            hideOverlay(b);
+            return;
+        }
+        takeBackground(b, bar, b.after, b.rightA);
         b.folding = true;
         b.start = nowMs();
         if (b.closing) ++s_stats.folds; else ++s_stats.unfolds;
@@ -429,46 +557,36 @@ public:
         if (t >= 1.0) { b.folding = false; return false; }
         s_stats.lastFraction = static_cast<float>(t);
         if (!b.frame.ensure(b.w, b.h)) return false;
-        Surface& bg = b.closing ? b.after : b.before;   // where the bar's empty background can be seen
-        // left of the tab: as it is now
-        copyColumns(b.frame, b.after, 0, b.x0, 0, b.h);
-        // the rest starts as background, one column of it repeated (keeps the bar's lines and shading)
-        for (int y = 0; y < b.h; ++y)
-        {
-            const uint32_t c = rowOf(bg, y)[std::min(b.backX, b.w - 1)];
-            uint32_t* row = rowOf(b.frame, y);
-            for (int x = b.x0; x < b.w; ++x) row[x] = c;
-        }
+        const int clip = b.rightA;   // the tabs show left of the scroll arrows, which stay as they are now
+        fillColumns(b.frame, b.back, 0, clip);
+        blitColumns(b.frame, b.after, clip, b.w, 0, b.w, b.h);
         // the room the tab takes: closing, it starts to close once the tab is on its way down; opening, it
-        // opens first and the tab rises into it
-        const double room = b.closing ? 1.0 - springOut((t - 0.2) / 0.8) : springOut(t / 0.7);
-        const double width = b.dx * room;
-        s_stats.lastWidth = static_cast<float>(width);
+        // opens first and the tab rises into it. Both sides of it glide on the same spring.
+        const double p = b.closing ? springOut((t - 0.2) / 0.8) : springOut(t / 0.7);
+        s_stats.lastWidth = static_cast<float>(b.dx * (b.closing ? 1.0 - p : p));
+        const int span = std::max(1, std::min(b.rightA, b.rightB));
+        const int shiftL = std::clamp(b.x0a - b.x0b, -span, span);
+        const int offL = static_cast<int>(std::lround(shiftL * p));
         // the tab, whole and upright, moved down: sinking below the bar's edge (accelerating away), or rising
-        // from below it (settling softly)
+        // from below it (settling softly), and carried along with the tabs on its left
         const double down = b.closing ? easeInQuad(t / 0.55) : 1.0 - easeOutCubic((t - 0.15) / 0.85);
         const int travel = b.h - b.tabTop + 1;
         const int drop = static_cast<int>(std::lround(down * travel));
         s_stats.lastDrop = drop;
         if (drop < travel)
         {
-            Surface& pic = b.closing ? b.before : b.after;
             // a new tab is cut off where its room ends; a closing one goes under its neighbours as they come
-            const int w = b.closing ? std::min(b.tabW, b.w - b.x0) : std::min(static_cast<int>(std::lround(width)), std::min(b.tabW, b.w - b.x0));
-            for (int y = b.tabTop + drop; y < b.h && w > 0; ++y)
-                memcpy(rowOf(b.frame, y) + b.x0, rowOf(pic, y - drop) + b.x0, static_cast<size_t>(w) * 4);
+            if (b.closing) blitColumns(b.frame, b.before, b.x0b, b.x0b + b.tabW, offL, clip, b.h, b.tabTop, drop);
+            else blitColumns(b.frame, b.after, b.x0a, b.x0a + std::min(b.tabW, static_cast<int>(std::lround(b.dx * p))), offL - shiftL, clip, b.h, b.tabTop, drop);
         }
-        // the tabs on its right, gliding (whole pixels: text never blurs); with none there, the background is
-        // already in place (copying it would slide the selected tab's edge along)
-        if (b.tail)
-        {
-            const int from = b.closing ? b.x0 : b.x0 + b.dx;
-            copyColumns(b.frame, b.after, from, b.w - from, b.x0 + static_cast<int>(std::lround(width)), b.h);
-        }
+        // the tabs on either side, gliding (whole pixels: text never blurs); with none on the right, the background
+        // is already in place (copying it would slide the selected tab's edge along)
+        if (b.head) glide(b, 0, b.x0b, 0, b.x0a, b.x0a - b.x0b, p, clip);
+        else blitColumns(b.frame, b.after, 0, b.x0a, 0, clip, b.h);   // the bar's margin
+        if (b.tail) glide(b, b.rightOfB, b.rightB, b.rightOfA, b.rightA, b.rightOfA - b.rightOfB, p, clip);
         ++s_stats.foldFrames;
         return true;
     }
-
 
 private:
     static LRESULT CALLBACK barProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
@@ -509,7 +627,7 @@ public:
     void loadOptions() override
     {
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
-        _ms = std::max(120, std::min(2000, settings.getInt(key(), L"DurationMs", 420)));
+        _ms = std::min(6720, animMs(420, animSpeed(key(), L"Speed", 420, L"DurationMs")));
         s_stats.glintMs = static_cast<int>(_ms);
     }
 

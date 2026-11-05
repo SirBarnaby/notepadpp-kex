@@ -23,7 +23,7 @@ public:
 
     void loadOptions() override
     {
-        _glideMs = std::max(0, std::min(1000, settings.getInt(key(), L"GlideMs", 80)));
+        _glideMs = std::min(1000, animMs(80, animSpeed(key(), L"GlideSpeed", 80, L"GlideMs")));
         _snapLines = std::max(1, std::min(255, settings.getInt(key(), L"SnapAfterLines", 12)));
         // how it blinks: 0 fades, 1 on and off like Notepad++'s caret, 2 not at all (once a checkbox, FadeBlink)
         _blink = settings.getInt(key(), L"Blink", -1);

@@ -55,6 +55,16 @@ inline LRESULT nppMsg(UINT m, WPARAM w = 0, LPARAM l = 0) { return ::SendMessage
 std::wstring bufferPath(intptr_t bufferId);
 std::wstring fileNameOf(const std::wstring& path);
 double nowMs();   // QueryPerformanceCounter in ms
+// Animation speed in percent: 100 = as designed, 200 = twice as fast, 50 = half as fast. One for all of KEX (at the
+// bottom of the KEX Settings window, [General] AnimationSpeed) and one for each animation that has its own: an
+// animation takes its designed time divided by both.
+const int kSpeedMin = 25, kSpeedMax = 400;
+int animSpeedAll();
+void setAnimSpeedAll(int percent);
+// one animation's own speed (sec/key), taken from its time in ms (oldMsKey) where only that was set so far
+int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs, const wchar_t* oldMsKey);
+int animMs(double baseMs, int percent = 100);   // a designed time at that speed and the speed for all, in ms (1 at least)
+double animScale();                              // what a designed time is multiplied by: 100 / the speed for all
 bool rectsIntersect(const RECT& a, const RECT& b);
 
 // A hidden message-only window that forwards to a member function.
@@ -220,6 +230,7 @@ struct MotionDef { const wchar_t* key; int ms; const wchar_t* menu; };
 extern const MotionDef kMotionDefs[kMotionCount];
 void applyMotions(HWND sciHwnd);       // an editor made later (the quick note) gets the motions too
 bool motionOn(int kind);
+int motionMs(int kind);   // its time now, from the speeds
 void setMotionOn(int kind, bool on);   // KEX > Motion's switches
 struct MotionStats { bool active = false; int started[kMotionCount] = {}; int total = 0, skipped = 0, refused = 0, ended = 0, frames = 0, lastKind = -1;
                      float fraction = 0, gap = 0; int style = 0, ringFrames = 0, jumpLines = 0, lines = 0; };

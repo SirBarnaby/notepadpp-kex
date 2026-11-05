@@ -26,7 +26,7 @@ public:
 
     void loadOptions() override
     {
-        _ms = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 200)));
+        _ms = std::min(3200, animMs(200, animSpeed(key(), L"Speed", 200, L"DurationMs")));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _onClose = settings.getInt(key(), L"SlideOnClose", 0) != 0;
     }

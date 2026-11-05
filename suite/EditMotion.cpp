@@ -10,7 +10,7 @@
 // text. Following Apple's guidelines for motion (purposeful, brief, optional, cancellable): each one is short,
 // moves on a critically damped spring (no bounce), ends at once on typing, any other change or a scroll, and is
 // skipped when it comes right after another one (fast editing), so it never holds anyone up. Each has its own
-// switch and its own time.
+// switch and its own speed.
 #include "Effects.h"
 #include "KexScintilla.h"
 
@@ -49,9 +49,9 @@ public:
         {
             const MotionDef& d = kMotionDefs[k];
             _on[k] = settings.getInt(key(), d.key, 1) != 0;
-            _ms[k] = std::max(0, std::min(3000, settings.getInt(key(), (std::wstring(d.key) + L"Ms").c_str(), d.ms)));
+            _ms[k] = std::min(3000, animMs(d.ms, animSpeed(key(), (std::wstring(d.key) + L"Speed").c_str(), d.ms, (std::wstring(d.key) + L"Ms").c_str())));
         }
-        _glowMs = std::max(0, std::min(3000, settings.getInt(key(), L"GlowMs", 600)));
+        _glowMs = std::min(3000, animMs(600, animSpeed(key(), L"GlowSpeed", 600, L"GlowMs")));
         _rapidMs = std::max(0, std::min(3000, settings.getInt(key(), L"RapidMs", 250)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
@@ -139,6 +139,8 @@ void applyMotions(HWND s)
 }
 
 bool motionOn(int kind) { return s_any && kind >= 0 && kind < kMotionCount && s_any->_on[kind]; }
+
+int motionMs(int kind) { return (s_any && kind >= 0 && kind < kMotionCount) ? s_any->_ms[kind] : 0; }
 
 void setMotionOn(int kind, bool on)
 {

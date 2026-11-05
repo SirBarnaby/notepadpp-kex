@@ -1,4 +1,4 @@
-From 8130f5535a69e9915f5e8571745074a7abc51b8c Mon Sep 17 00:00:00 2001
+From af69c5edce5a5d2b20b5a6e3684a0fee31783b49 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -85,13 +85,13 @@ Claude-Session: https://claude.ai/code/session_01KLNHuTvRwta8ebaSJBmh3h
  scintilla/include/KexScintilla.h              |   140 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 19718 +++++++++-------
- scintilla/src/Editor.h                        |  1672 +-
+ scintilla/src/Editor.cxx                      | 19744 +++++++++-------
+ scintilla/src/Editor.h                        |  1673 +-
  scintilla/src/KexSurface.h                    |    21 +
  scintilla/win32/ScintillaWin.cxx              |  8785 +++----
  scintilla/win32/SurfaceD2D.cxx                |    59 +-
  scintilla/win32/SurfaceGDI.cxx                |    18 +-
- 46 files changed, 18961 insertions(+), 14673 deletions(-)
+ 46 files changed, 18988 insertions(+), 14673 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
@@ -5627,10 +5627,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..c995a88 100644
+index 1465bac..d9e8f4c 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,10539 @@
+@@ -1,9179 +1,10565 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -17316,12 +17316,23 @@ index 1465bac..c995a88 100644
 +bool Editor::KexMotionSize(KexMotionKind kind, int *rows) const noexcept {
 +	*rows = 0;
 +	switch (static_cast<int>(kind)) {
-+	case KEXM_MOVELINE:
++	case KEXM_MOVELINE: {
++		// the moved lines and the line they pass, as they are now: all shown (not folded away); a wrapped line
++		// takes several rows and moves as one band
++		const Sci::Line from = kexMotion.lineFrom + std::min(0, kexMotion.lineDelta);
++		const Sci::Line to = kexMotion.lineTo + std::max(0, kexMotion.lineDelta);
++		if (from < 0 || to > pdoc->LinesTotal())
++			return false;
++		for (Sci::Line line = from; line < to; ++line) {
++			if (!pcs->GetVisible(line))
++				return false;
++		}
++		*rows = static_cast<int>(pcs->DisplayFromDoc(to) - pcs->DisplayFromDoc(from));
++		return *rows > 0;
++	}
 +	case KEXM_INDENT:
 +	case KEXM_SORT:
-+		// line by line: every line one row on screen
-+		if (Wrapping())
-+			return false;
++		// line by line: every line one row on screen (word wrap may be on, as long as these lines don't wrap)
 +		for (Sci::Line line = kexMotion.lineFrom; line < kexMotion.lineTo; ++line) {
 +			if (!pcs->GetVisible(line) || pcs->GetHeight(line) != 1)
 +				return false;
@@ -17351,6 +17362,12 @@ index 1465bac..c995a88 100644
 +		return;
 +	}
 +	const int kind = static_cast<int>(m.kind);
++	if (!m.started && kind == KEXM_MOVELINE && topLine != m.topLine && xOffset == m.xOffset) {
++		// the view scrolled to keep the moved lines in sight (moved past its top or bottom edge): they start where they
++		// were, in the view as it is now (every frame is made from the new picture)
++		m.rowTop -= static_cast<XYPOSITION>(topLine - m.topLine) * vs.lineHeight;
++		m.topLine = topLine;
++	}
 +	const bool scrolled = kind == KEXM_JUMP ? (m.started && topLine != m.jumpTo) : (topLine != m.topLine || xOffset != m.xOffset);
 +	if (scrolled || kexNewWidth != kexOldWidth || kexNewHeight != kexOldHeight) {
 +		showNew();
@@ -17405,7 +17422,13 @@ index 1465bac..c995a88 100644
 +			else
 +				ok = ok && m.rowTop + rows * lh > 0;	// some of the lines are
 +			if (ok && kind == KEXM_MOVELINE) {
-+				ok = m.lineDelta != 0;
++				// now the moved lines start one line further on (or back) and the passed line is where they began (or ended)
++				const Sci::Line blockNow = m.lineFrom + m.lineDelta;
++				const Sci::Line passedNow = m.lineDelta > 0 ? m.lineFrom : m.lineTo - 1;
++				m.blockRows = pcs->DisplayFromDoc(blockNow + (m.lineTo - m.lineFrom)) - pcs->DisplayFromDoc(blockNow);
++				m.passedRows = pcs->GetHeight(passedNow);
++				ok = m.lineDelta != 0 && m.blockRows > 0 && m.passedRows > 0;
++				rows = static_cast<int>(m.blockRows);	// the moved lines' rows (a wrapped line takes several)
 +			} else if (ok && kind == KEXM_INDENT) {
 +				m.newX.clear();
 +				for (Sci::Line line = m.lineFrom; line < m.lineTo; ++line)
@@ -17673,13 +17696,16 @@ index 1465bac..c995a88 100644
 +	const XYPOSITION top = std::round(m.rowTop);
 +	const XYPOSITION n = static_cast<XYPOSITION>(m.lineTo - m.lineFrom);
 +	if (kind == KEXM_MOVELINE) {
-+		const XYPOSITION blockNow = top + m.lineDelta * lh;
-+		const XYPOSITION passedNow = m.lineDelta < 0 ? top + (n - 1) * lh : top;
-+		const XYPOSITION passedMove = (m.lineDelta < 0 ? n : -n) * lh;
-+		empty(std::min(top, blockNow), std::max(top, blockNow) + n * lh);
++		// the moved lines (b high) and the line they pass (pr high) swap places: each band glides from where it was
++		const XYPOSITION b = static_cast<XYPOSITION>(m.blockRows) * lh, pr = static_cast<XYPOSITION>(m.passedRows) * lh;
++		const XYPOSITION blockMove = m.lineDelta > 0 ? pr : -pr;	// now less before
++		const XYPOSITION passedMove = m.lineDelta > 0 ? -b : b;
++		const XYPOSITION blockNow = top + blockMove;
++		const XYPOSITION passedNow = m.lineDelta > 0 ? top : top + b - pr;
++		empty(std::min(top, blockNow), std::max(top, blockNow) + b);
 +		// the line passed, then the moved lines over it
-+		copy(*kexSlideNew, PRectangle(left, passedNow, W, passedNow + lh), 0, std::round(-passedMove * (1.0 - p)), 0);
-+		copy(*kexSlideNew, PRectangle(left, blockNow, W, blockNow + n * lh), 0, std::round(-m.lineDelta * lh * (1.0 - p)), 0);
++		copy(*kexSlideNew, PRectangle(left, passedNow, W, passedNow + pr), 0, std::round(-passedMove * (1.0 - p)), 0);
++		copy(*kexSlideNew, PRectangle(left, blockNow, W, blockNow + b), 0, std::round(-blockMove * (1.0 - p)), 0);
 +	} else if (kind == KEXM_INDENT) {
 +		for (size_t i = 0; i < m.newX.size(); ++i) {
 +			const XYPOSITION y = top + static_cast<XYPOSITION>(i) * lh;
@@ -25350,10 +25376,10 @@ index 1465bac..c995a88 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..3428cce 100644
+index 85c1410..6ae9eb3 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
-@@ -1,762 +1,910 @@
+@@ -1,762 +1,911 @@
 -// Scintilla source code edit control
 -/** @file Editor.h
 - ** Defines the main editor class.
@@ -26395,6 +26421,7 @@ index 85c1410..3428cce 100644
 +		Point newEnd;				// where the new text ends (new picture)
 +		XYPOSITION peelTop = 0;			// duplicate: where the copy comes out
 +		Sci::Line rowsMoved = 0;		// fold: rows that open or close
++		Sci::Line blockRows = 0, passedRows = 0;	// move line: rows the moved lines and the line they pass take (wrapped lines take several)
 +		bool contracting = false;		// fold: the lines close up
 +		bool changed = false;			// the text changed while the edit ran
 +		std::vector<XYPOSITION> newX;		// indent: where each line's text starts now

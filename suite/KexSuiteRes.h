@@ -3,6 +3,7 @@
 #define IDD_KEX_SETTINGS     30520
 #define IDC_KEX_PAGELIST     1010
 #define IDC_KEX_CLOSE        1011
+#define IDC_KEX_SPEED        1012   // the speed of all animations (%)
 #define IDD_KEX_PAGE_EDITING 30500
 #define IDD_KEX_PAGE_TABS    30501
 #define IDD_KEX_PAGE_WINDOWS 30502

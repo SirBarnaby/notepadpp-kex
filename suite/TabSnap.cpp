@@ -120,14 +120,14 @@ public:
             log(L"tab lift: drag cancelled with Esc");
             return;
         }
-        double t = _animate ? std::min(1.0, (nowMs() - _start) / LIFT_MS) : 1.0;
+        double t = _animate ? std::min(1.0, (nowMs() - _start) / (LIFT_MS * animScale())) : 1.0;
         const double e = 1 - (1 - t) * (1 - t) * (1 - t);   // ease out
         const double scale = 1 + (LIFT_SCALE - 1) * e;
         const int lift = static_cast<int>(::MulDiv(3, dpiOf(_wnd), 96) * e + 0.5);
         int alpha = static_cast<int>(LIFT_ALPHA * (_animate ? std::min(1.0, t * 1.5) : 1.0));
         if (_dropping)
         {
-            const double d = std::min(1.0, (nowMs() - _dropStart) / DROP_MS);
+            const double d = std::min(1.0, (nowMs() - _dropStart) / (DROP_MS * animScale()));
             alpha = static_cast<int>(_dropFrom * (1 - d));
             if (d >= 1) { drop(true); return; }
         }
@@ -315,11 +315,11 @@ public:
             log(L"tab snapping: drag cancelled with Esc");
             return;
         }
-        double t = _animate ? (nowMs() - _start) / GLIDE_MS : 1.0;
+        double t = _animate ? (nowMs() - _start) / (GLIDE_MS * animScale()) : 1.0;
         if (t > 1) t = 1;
         const double e = 1 - (1 - t) * (1 - t) * (1 - t);   // ease out
         int alpha = PREVIEW_ALPHA;
-        if (_animate) alpha = static_cast<int>(PREVIEW_ALPHA * std::min(1.0, (nowMs() - _shownTime) / GLIDE_MS));
+        if (_animate) alpha = static_cast<int>(PREVIEW_ALPHA * std::min(1.0, (nowMs() - _shownTime) / (GLIDE_MS * animScale())));
         place(lerpRect(_from, _to, e), static_cast<BYTE>(alpha));
     }
 

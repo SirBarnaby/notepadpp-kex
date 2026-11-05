@@ -231,7 +231,7 @@ public:
     {
         _sensitivity = std::max(25, std::min(400, settings.getInt(key(), L"Sensitivity", 100)));
         _reverse = settings.getInt(key(), L"Reverse", 0) != 0;
-        _settleMs = std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 220)));
+        _settleMs = std::max(15, std::min(3200, animMs(std::max(60, std::min(800, settings.getInt(key(), L"DurationMs", 220))))));
     }
 
     bool selfCheck(std::wstring& why) override

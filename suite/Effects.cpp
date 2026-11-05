@@ -226,6 +226,7 @@ private:
             float dt = static_cast<float>((now - last) / 1000.0);
             last = now;
             if (dt > 0.05f) dt = 0.05f;
+            dt *= static_cast<float>(animSpeedAll()) / 100.0f;   // the speed for all animations
             const int fz = freeze.load();
             if (fz >= 0)
             {

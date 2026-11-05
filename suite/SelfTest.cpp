@@ -96,7 +96,9 @@ void pump(int ms)
     while (nowMs() < end)
     {
         MSG m;
-        while (::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
+        // everything waiting is handled, but a view that keeps asking to be painted never holds the step up for long
+        const double cap = nowMs() + 2000;
+        while (nowMs() < cap && ::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
         {
             // as Notepad++'s own loop: a dialog's keys go to the dialog, the rest through Notepad++'s shortcuts
             HWND active = ::GetActiveWindow();
@@ -497,6 +499,7 @@ std::vector<intptr_t> recentOrder()
     return out;
 }
 MotionStats g_motionBefore;   // the editor's motion counts before a step
+RECT g_rgWindow{};            // Notepad++'s window before a regression step made it narrow
 HotkeyStats g_zoomBefore;     // the quick note's zoom counts before a step
 std::string g_flashText;   // a.cpp before the flash steps edit it
 bool g_flashModified = false;
@@ -968,6 +971,8 @@ std::vector<int> stylesOf(HWND s)
     for (intptr_t i = 0, n = sci(s, SCI_GETLENGTH); i < n; ++i) v.push_back(styleAt(s, i));
     return v;
 }
+
+void addRegressionSteps(const std::function<void(std::function<int()>)>& add);
 
 void buildSteps()
 {
@@ -3052,26 +3057,32 @@ void buildSteps()
         {
             BOOL ok = FALSE;
             const UINT ms = ::GetDlgItemInt(p, IDC_M_MS0 + k, &ok, FALSE);
-            if ((::IsDlgButtonChecked(p, IDC_M_ON0 + k) == BST_CHECKED) == motionOn(k) && ok && static_cast<int>(ms) == kMotionDefs[k].ms) ++boxes;
+            if ((::IsDlgButtonChecked(p, IDC_M_ON0 + k) == BST_CHECKED) == motionOn(k) && ok && ms == 100 && motionMs(k) == kMotionDefs[k].ms) ++boxes;
         }
-        check(boxes == kMotionCount, L"MO18", L"KEX Settings > Motion: %d of %d motions with their tick and time", boxes, kMotionCount);
+        check(boxes == kMotionCount, L"MO18", L"KEX Settings > Motion: %d of %d motions with their tick and speed (100 %%: the designed time)", boxes, kMotionCount);
         return shot(L"settings-motion-page");
     });
     add([] {
-        // a time typed on the page reaches the editor: Sort at 0 ms is off
+        // a speed typed on the page reaches the editor: Sort at 200 % takes half its time; all animations at 200 %
+        // (the box at the bottom of the window) halve it again, and every other animation's time with it
         HWND p = prefPage(PAGE_MOTION);
-        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 0, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 200, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
         pump(100);
+        const int sortMs = motionMs(11);
+        HWND d = settingsDialog();
+        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 200, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        pump(100);
+        const int sortAll = motionMs(11), cutAll = motionMs(0);
+        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 900, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }   // more than the most: 400
+        pump(100);
+        const int capped = settings.getInt(modules[M_MOTION]->key(), L"SortSpeed", -1);
+        check(settings.getInt(modules[M_MOTION]->key(), L"SortSpeed", -1) == 400 && sortMs == 170 && sortAll == 85 && cutAll == 160 && animSpeedAll() == 200,
+              L"MO19", L"Sort at 200 %% on the Motion page: %d ms (designed 340); all animations at 200 %%: %d ms, Cut %d ms (designed 320); 900 %% typed is kept at %d %%",
+              sortMs, sortAll, cutAll, capped);
+        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 100, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 100, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        if (d) ::SendMessageW(d, WM_CLOSE, 0, 0);
         HWND s = curSci();
-        sci(s, SCI_SETSEL, posOf(s, 10, 0), posOf(s, 14, 5));
-        g_motionBefore = motionStats(s);
-        tokCommand(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING);
-        pump(150);
-        check(settings.getInt(modules[M_MOTION]->key(), L"SortMs", -1) == 0 && motionStats(s).started[11] == g_motionBefore.started[11], L"MO19",
-              L"Sort set to 0 ms on the Motion page: sorting just reorders");
-        sci(s, SCI_UNDO);
-        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 340, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
-        if (HWND d = settingsDialog()) ::SendMessageW(d, WM_CLOSE, 0, 0);
         settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 250);
         modules[M_MOTION]->loadOptions();
         // mo.cpp goes without asking
@@ -4186,12 +4197,269 @@ void buildSteps()
         pump(200);
         return 100;
     });
+    addRegressionSteps(add);
     add([] {
         if (g_other.hProcess) { ::TerminateProcess(g_other.hProcess, 0); ::CloseHandle(g_other.hProcess); ::CloseHandle(g_other.hThread); }
         tlog(L"RESULT %d passed, %d failed", g_pass, g_fail);
         tlog(L"DONE");
         g_done = true;
         return 0;
+    });
+}
+
+// The views draw with DirectWrite, as Notepad++ does on Windows (under Wine it falls back to GDI by itself):
+// the editing motion and the tab slide on that path. Run alone with KexSuite_only=directwrite.
+// Motions that did not play on the user's PC (round 11): a line moved past or as a wrapped line, a tab closed and
+// opened with the tab bar showing its scroll arrows, and the quick note opening where it was left.
+void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
+{
+    add([] {
+        std::string text;
+        for (int i = 0; i < 60; ++i) { char b[48]; snprintf(b, sizeof(b), "line %02d of the regression test\r\n", i); text += b; }
+        writeFile(path(L"rg.txt"), text);
+        open(L"rg.txt");
+        focusEditor();
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        settle(200);
+        return 100;
+    });
+    auto moveWrapped = [add](int line, const wchar_t* id, const wchar_t* what) {
+        add([line, id, what] {
+            HWND s = curSci();
+            focusEditor();
+            sci(s, SCI_SETWRAPMODE, SC_WRAP_WORD);
+            if (line == 10)
+            {
+                std::string longLine;
+                for (int i = 0; i < 40; ++i) longLine += "wrapped words ";
+                sci(s, SCI_SETTARGETRANGE, posOf(s, 11, 0), sci(s, SCI_GETLINEENDPOSITION, 11));
+                sci(s, SCI_REPLACETARGET, longLine.size(), reinterpret_cast<LPARAM>(longLine.c_str()));
+            }
+            sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+            settle(200);
+            const int rows = static_cast<int>(std::max(sci(s, SCI_WRAPCOUNT, 10), sci(s, SCI_WRAPCOUNT, 11)));
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 2));
+            g_motionBefore = motionStats(s);
+            slideTestFreeze(0.3);
+            tokCommand(IDM_EDIT_LINE_DOWN);
+            pump(200);
+            const MotionStats m = motionStats(s);
+            check(rows > 1 && m.started[5] == g_motionBefore.started[5] + 1 && m.frames > g_motionBefore.frames, id,
+                  L"word wrap on: %ls slides (the long line takes %d rows; started %d, frames +%d, refused +%d, skipped +%d)", what, rows,
+                  m.started[5] - g_motionBefore.started[5], m.frames - g_motionBefore.frames, m.refused - g_motionBefore.refused,
+                  m.skipped - g_motionBefore.skipped);
+            wchar_t n[64]; swprintf(n, 64, L"move-wrapped-%ls", id);
+            return shot(n);
+        });
+        add([] {
+            HWND s = curSci();
+            slideTestFreeze(-1);
+            waitFor([s] { return !motionStats(s).active; }, 2000);
+            return 100;
+        });
+    };
+    moveWrapped(10, L"RG1", L"a line moving down past a wrapped line");
+    moveWrapped(11, L"RG2", L"the wrapped line itself moving down");
+    add([] {
+        HWND s = curSci();
+        tokCommand(IDM_EDIT_UNDO);
+        tokCommand(IDM_EDIT_UNDO);
+        tokCommand(IDM_EDIT_UNDO);
+        sci(s, SCI_SETWRAPMODE, SC_WRAP_NONE);
+        settle(200);
+        // the last line in sight moving down: the view scrolls by a line to keep it in sight, and it still slides
+        const int rows = static_cast<int>(sci(s, SCI_LINESONSCREEN));
+        const int last = std::min(55, std::max(30, rows + 5));
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, last, 2));
+        sci(s, SCI_SETFIRSTVISIBLELINE, last - rows + 1);
+        settle(200);
+        const int top = static_cast<int>(sci(s, SCI_GETFIRSTVISIBLELINE));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_EDIT_LINE_DOWN);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        const int scrolled = static_cast<int>(sci(s, SCI_GETFIRSTVISIBLELINE)) - top;
+        check(scrolled > 0 && m.started[5] == g_motionBefore.started[5] + 1 && m.frames > g_motionBefore.frames, L"RG2b",
+              L"the bottom line in sight moving down: the view scrolls by %d line(s) and the line slides (started %d, refused +%d)",
+              scrolled, m.started[5] - g_motionBefore.started[5], m.refused - g_motionBefore.refused);
+        return shot(L"move-line-at-edge");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_UNDO);
+        settle(200);
+        // more tabs than the bar has room for: it shows its scroll arrows
+        for (int i = 0; i < 16; ++i)
+        {
+            wchar_t n[64]; swprintf(n, 64, L"a-tab-with-a-rather-long-name-%02d.txt", i);
+            writeFile(path(n), "overflow\r\n");
+            open(n);
+        }
+        settle(300);
+        return 100;
+    });
+    auto arrowsShown = [] {
+        HWND ud = ::FindWindowExW(views.tabBar(views.viewOf(curSci())), nullptr, UPDOWN_CLASSW, nullptr);
+        return ud && ::IsWindowVisible(ud);
+    };
+    auto frames = [](const wchar_t* what) {
+        for (int k = 1; k <= 9; k += 2)
+        {
+            tabMotionTestFreeze(k / 10.0);
+            pump(60);
+            wchar_t n[64]; swprintf(n, 64, L"frame-%ls-%d0.bmp", what, k);
+            tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
+        }
+        tabMotionTestFreeze(0.5);
+        pump(60);
+    };
+    auto tabStep = [add, arrowsShown, frames](const wchar_t* id, const wchar_t* what, const wchar_t* pics, std::function<void()> act, bool closing) {
+        add([id, what, pics, act, closing, arrowsShown, frames] {
+            const bool arrows = arrowsShown();
+            g_motion = tabMotionStats();
+            tabMotionTestFreeze(0.5);
+            act();
+            pump(250);
+            const TabMotionStats st = tabMotionStats();
+            const int played = closing ? st.folds - g_motion.folds : st.unfolds - g_motion.unfolds;
+            check(arrows && played == 1 && st.overlayShown && st.foldFrames > g_motion.foldFrames, id,
+                  L"tab bar with scroll arrows (%ls): %ls plays (played %d, skipped +%d, in one go +%d; %.1f of %d px)", arrows ? L"shown" : L"NOT shown",
+                  what, played, st.foldSkipped - g_motion.foldSkipped, st.foldBulk - g_motion.foldBulk, st.lastWidth, st.lastDx);
+            frames(pics);
+            return shot(pics);
+        });
+        add([] {
+            tabMotionTestFreeze(-1);
+            return until([] { return !tabMotionStats().overlayShown; }, 3000);
+        });
+    };
+    tabStep(L"RG3", L"closing the last tab", L"arrows-close-last", [] { nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE); }, true);
+    tabStep(L"RG4", L"opening a file (the bar scrolls to its tab)", L"arrows-open", [] {
+        writeFile(path(L"a-tab-opened-with-arrows.txt"), "new\r\n");
+        open(L"a-tab-opened-with-arrows.txt");
+    }, false);
+    add([] {
+        // the bar scrolled back to its start, on its second tab (closing it brings back the first, used before it)
+        const int v = views.viewOf(curSci());
+        views.activate(v, 0);
+        settle(300);
+        views.activate(v, 1);
+        settle(300);
+        return 100;
+    });
+    tabStep(L"RG5", L"closing the second tab (a hidden tab comes in from behind the arrows)", L"arrows-close-second",
+            [] { nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE); }, true);
+    add([] {
+        // a narrow window: a new tab has to be scrolled to
+        ::GetWindowRect(npp._nppHandle, &g_rgWindow);
+        ::MoveWindow(npp._nppHandle, g_rgWindow.left, g_rgWindow.top, 520, g_rgWindow.bottom - g_rgWindow.top, TRUE);
+        settle(300);
+        return 100;
+    });
+    tabStep(L"RG4b", L"opening a file in a narrow window (the bar scrolls a long way to its tab)", L"arrows-open-narrow", [] {
+        writeFile(path(L"a-tab-opened-narrow.txt"), "new\r\n");
+        open(L"a-tab-opened-narrow.txt");
+    }, false);
+    add([] {
+        ::MoveWindow(npp._nppHandle, g_rgWindow.left, g_rgWindow.top, g_rgWindow.right - g_rgWindow.left, g_rgWindow.bottom - g_rgWindow.top, TRUE);
+        settle(300);
+        return 100;
+    });
+    add([] {
+        // the quick note opens where it was left: same lines at the top, same caret
+        pressHotkey();
+        pump(300);
+        HWND ed = quickNoteEditor();
+        if (!ed) { check(false, L"RG6", L"the quick note opens"); return 100; }
+        std::string t;
+        for (int i = 0; i < 300; ++i) { char b[32]; snprintf(b, sizeof(b), "note line %03d\n", i); t += b; }
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(t.c_str()));
+        const LRESULT caret = posOf(ed, 130, 3);
+        sci(ed, SCI_SETSEL, caret, caret);
+        sci(ed, SCI_SETFIRSTVISIBLELINE, 120);
+        pump(100);
+        pressHotkey();   // hides it (and saves)
+        pump(400);
+        const bool gone = !quickNoteWindow();
+        pressHotkey();
+        pump(400);
+        ed = quickNoteEditor();
+        const int first = ed ? static_cast<int>(sci(ed, SCI_GETFIRSTVISIBLELINE)) : -1;
+        const LRESULT pos = ed ? sci(ed, SCI_GETCURRENTPOS) : -1;
+        check(gone && first == 120 && pos == caret, L"RG6", L"Ctrl+Alt+M hidden and shown again: the note shows line %d at the top (was 120), caret at %d (was %d)",
+              first, static_cast<int>(pos), static_cast<int>(caret));
+        pressHotkey();
+        pump(400);
+        ::SetForegroundWindow(npp._nppHandle);
+        focusEditor();
+        return 100;
+    });
+}
+
+void addDirectWriteSteps(const std::function<void(std::function<int()>)>& add)
+{
+    add([] {
+        std::string text;
+        for (int i = 0; i < 60; ++i) { char b[48]; snprintf(b, sizeof(b), "line %02d of the DirectWrite test\r\n", i); text += b; }
+        writeFile(path(L"dw.txt"), text);
+        writeFile(path(L"dw2.txt"), "the other document\r\n");
+        open(L"dw2.txt");
+        open(L"dw.txt");
+        focusEditor();
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        for (int v = 0; v < views.count(); ++v)
+            if (HWND s = views.sci(v)) sci(s, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITE);
+        settle(300);
+        const int tech = static_cast<int>(sci(curSci(), SCI_GETTECHNOLOGY));
+        check(tech == SC_TECHNOLOGY_DIRECTWRITE, L"DW0", L"the views draw with DirectWrite, as on Windows (technology %d)", tech);
+        return 100;
+    });
+    // (Edit > Cut is not tried here: Wine's Direct2D paints nothing and asks to paint again at once, so a held cut
+    // would never let go. The full run tries it with GDI.)
+    auto moveLine = [add](UINT cmd, const wchar_t* id, const wchar_t* what) {
+        add([cmd, id, what] {
+            HWND s = curSci();
+            focusEditor();
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 2));
+            g_motionBefore = motionStats(s);
+            slideTestFreeze(0.3);
+            tokCommand(cmd);
+            pump(200);
+            const MotionStats m = motionStats(s);
+            KexSlideInfo si{};
+            sci(s, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&si));
+            check(m.started[5] == g_motionBefore.started[5] + 1 && m.frames > g_motionBefore.frames, id,
+                  L"DirectWrite: %ls slides (started %d, frames +%d, refused +%d, skipped +%d, ended +%d, gap %.2f; slide stop reason %d)",
+                  what, m.started[5] - g_motionBefore.started[5], m.frames - g_motionBefore.frames, m.refused - g_motionBefore.refused,
+                  m.skipped - g_motionBefore.skipped, m.ended - g_motionBefore.ended, m.gap, si.stopReason);
+            slideTestFreeze(-1);
+            waitFor([s] { return !motionStats(s).active; }, 2000);
+            return 100;
+        });
+    };
+    moveLine(IDM_EDIT_LINE_DOWN, L"DW1", L"Ctrl+Shift+Down");
+    moveLine(IDM_EDIT_LINE_UP, L"DW2", L"Ctrl+Shift+Up");
+    add([] {
+        HWND s = curSci();
+        KexSlideInfo b{};
+        sci(s, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&b));
+        slideTestFreeze(0.5);
+        tokCommand(IDM_VIEW_TAB_PREV);
+        pump(200);
+        KexSlideInfo a{};
+        sci(s, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&a));
+        check(a.slides == b.slides + 1 && a.frames > b.frames, L"DW4", L"DirectWrite: switching tabs slides (slides +%d, frames +%d, stop reason %d)",
+              a.slides - b.slides, a.frames - b.frames, a.stopReason);
+        slideTestFreeze(-1);
+        pump(400);
+        tokCommand(IDM_VIEW_TAB_NEXT);
+        pump(400);
+        return 100;
     });
 }
 
@@ -4241,7 +4509,16 @@ void selfTestStart(const std::wstring& args)
     WNDCLASSW wc{}; wc.lpfnWndProc = testWndProc; wc.hInstance = hInst; wc.lpszClassName = L"KexSuiteTestWnd";
     ::RegisterClassW(&wc);
     g_testWnd = ::CreateWindowExW(0, L"KexSuiteTestWnd", L"test", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, hInst, nullptr);
-    buildSteps();
+    if (args.find(L"KexSuite_only=") != std::wstring::npos)
+    {
+        // just the DirectWrite steps (the editor as it draws on Windows) and the round's regression steps, then the result
+        auto add = [](std::function<int()> f) { g_steps.push_back(f); };
+        add([] { ::MoveWindow(npp._nppHandle, 20, 16, 960, 660, TRUE); return 300; });
+        addRegressionSteps(add);
+        addDirectWriteSteps(add);
+        add([] { tlog(L"RESULT %d passed, %d failed", g_pass, g_fail); tlog(L"DONE"); g_done = true; return 0; });
+    }
+    else buildSteps();
     g_nextAt = nowMs() + 800;
     ::SetTimer(nullptr, 0, 40, tick);
 }

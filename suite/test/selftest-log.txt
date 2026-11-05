@@ -88,13 +88,13 @@ PASS F2 overlay alive with 50 letters, bounding box (98,266)-(457,335) (Notepad+
 PASS F3 overlay is layered, click-through, non-activating, topmost (exstyle 0x80800a8)
 PASS F4 focus stays in the editor while letters fall
 SHOT 7 falling-letters-selection
-PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 216)
+PASS F5 all letters fell off the screen and the overlay hid itself (frames rendered so far: 141)
 PASS F6 Backspace x3: 3 letters spawned
 SHOT 8 falling-letters-backspace
 PASS F7 Edit > Cut of "Particle": 8 letters spawned
 PASS F8 undo of typed text does not rain letters (skipped undo deletes: 1)
 PASS F9 deleting off-screen lines spawns nothing
-PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 202 ms
+PASS F10 Select All + Delete of 3000 lines: 2205 visible letters grouped into 175 falling pieces (cap 200); total time incl. 200 ms wait 201 ms
 SHOT 9 falling-letters-huge-delete
 PASS F11 Replace All (text replaced) spawned 0 letters; NPPN_GLOBALMODIFIED seen 1 time(s)
 PASS F12 Windows animation effects off: no letters (respected by default)
@@ -102,7 +102,7 @@ PASS F13a c.txt cloned into the second view
 PASS F13 second view: 10 letters spawned from "second line"
 SHOT 10 falling-letters-second-view
 PASS C1 smooth caret on in Scintilla in both views, Notepad++'s caret style untouched (view1 on=1 style=0x1; view2 on=1 style=0x1; )
-INFO caret glide from (68.0,30.0) to (143.0,120.0): 14ms:(68.0,30.0) 28ms:(108.8,79.6) 40ms:(108.8,79.6) 55ms:(130.3,105.8) 69ms:(139.9,117.4) 84ms:(142.0,120.0) 98ms:(142.0,120.0) 111ms:(142.0,120.0) 125ms:(142.0,120.0) 139ms:(142.0,120.0) 154ms:(142.0,120.0) 168ms:(142.0,120.0) 
+INFO caret glide from (68.0,30.0) to (143.0,120.0): 17ms:(68.0,30.0) 36ms:(111.0,82.3) 54ms:(131.8,107.6) 73ms:(140.1,117.7) 86ms:(140.1,117.7) 100ms:(142.0,120.0) 113ms:(142.0,120.0) 128ms:(142.0,120.0) 142ms:(142.0,120.0) 156ms:(142.0,120.0) 171ms:(142.0,120.0) 
 PASS C2 caret glides through 4 intermediate positions and lands on the target (142.0,120.0)
 SHOT 11 caret-glide-frozen-midway
 PASS C3 smooth caret visible at (83,150), 15 px high
@@ -123,58 +123,58 @@ SHOT 15 caret-disabled-scintilla-caret-back
 PASS C12 caret back on from Preferences
 PASS C13 Blink "Never": the caret stays fully on (1.00..1.00 over 1.6 s)
 PASS C14 Blink "On and off": hard on and off as Notepad++'s caret (0 frames in between)
-PASS C15 Blink "Fade" (the default): fades in and out (15 frames in between)
+PASS C15 Blink "Fade" (the default): fades in and out (12 frames in between)
 PASS C16 the choice is remembered (Blink=0)
 PASS D1 per-desktop windows on; this is the first window
 INFO desktop copy expected: view1[d.txt,c.txt,b.py,*a.cpp,new 1] view2[*c.txt] view3[] view4[] focus view1
-INFO started notepad++.exe d1.txt with KEX_SELFTEST_OTHER_DESKTOP=0 (pid 1188): 1
+INFO started notepad++.exe d1.txt with KEX_SELFTEST_OTHER_DESKTOP=0 (pid 1184): 1
 PASS D2 notepad++.exe d1.txt with this window on the same desktop: it exited (code 0) and this window opened d1.txt (d1.txt)
-INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1372): 1
+INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1364): 1
   [kex] Live token styles: the styles of 1 tab(s) go with the copy
-  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1372)
+  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1364)
 SHOT 16 desktop-new-window
-PASS D3 notepad++.exe on a desktop without Notepad++: a new Notepad++ window (pid 1372) opened there, this one stayed
+PASS D3 notepad++.exe on a desktop without Notepad++: a new Notepad++ window (pid 1364) opened there, this one stayed
 PASS D4 the new window has the same tabs in every view, the same active tabs and the same active view ( view1:5/5 active 4 view2:1/1 active 1 view3:0/0 active 0 view4:0/0 active 0, focus view 1)
 PASS D5 a.cpp's caret is where it was in the first window (109, expected 109)
 PASS D6b the untitled tab's styles came along: "note" coloured (1), "line" a bold token (19284, weight 700), "second" italic (1)
 PASS D6 untitled tab new 1 copied: text "desk note", caret 12, unmodified (0), title "new 1 - Notepad++ KEX [Administrator]"
-PASS D7 the copy's temporary folder was removed (C:\users\root\Temp\KEX-Notepad++\desktop-copy-1372) and this window kept a.cpp active
+PASS D7 the copy's temporary folder was removed (C:\users\root\Temp\KEX-Notepad++\desktop-copy-1364) and this window kept a.cpp active
 PASS D7b the new window backed up typed text into its own folder (1 file(s) in backup\desktop-00000000-0000-0000-0000-0000000000a1) and saved its own session
-INFO started notepad++.exe d2.txt with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1992): 1
+INFO started notepad++.exe d2.txt with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 1984): 1
   [kex] Live token styles: the styles of 1 tab(s) go with the copy
-  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1992)
+  [kex] per-desktop: copied 6 tab(s) for a new window on another desktop (pid 1984)
 PASS D8 notepad++.exe d2.txt on a desktop without Notepad++: the copied tabs, then d2.txt last and active (6 of 6) ( view1:6/6 active 6 view2:1/1 active 1 view3:0/0 active 0 view4:0/0 active 0, focus view 1)
-INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 892): 1
+INFO started notepad++.exe with KEX_SELFTEST_OTHER_DESKTOP=1 (pid 884): 1
 PASS D9 Notepad++ started again on that desktop: its own session came back with the backed-up text ("typed on desktop A, then N")
 PASS D10 that window logs to its own kex-desktop-<id>.log (1943 bytes), so it doesn't overwrite kex.log
 PASS H1 global hotkey Ctrl+Alt+M registered
 INFO started notepad.exe as 'another program': 1
 INFO Notepad++ minimized=1, foreground is the other program: 1
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
 INFO SendInput Ctrl+Alt+M -> WM_HOTKEY delivered: yes
 PASS Q1 hotkey from another program while Notepad++ is minimized: quick note (320,190)-(960,610) centred on the screen (off by 0,0; WM_HOTKEY from real key events: yes)
 PASS Q2 the note is in front with the typing focus; Notepad++ stays minimized
 SHOT 17 quick-note
 PASS Q3 typing goes into the note: "note"
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000040A6A (came from 0000000000040A6A)
-PASS Q4 hotkey again: note gone, focus back to the other program, text saved to Z:\root\kexout\ci10\test\npp\kex-quicknote.txt ("note"; WM_HOTKEY: yes)
+  [kex] quick note: closed, focus to 0000000000040A6E (came from 0000000000040A6E)
+PASS Q4 hotkey again: note gone, focus back to the other program, text saved to Z:\root\kexbuild\pkg\kex-quicknote.txt ("note"; WM_HOTKEY: yes)
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
 PASS Q5 reopened with the text kept, caret at the end: "note"
-  [kex] quick note: closed, focus to 0000000000040A6A (came from 0000000000040A6A)
+  [kex] quick note: closed, focus to 0000000000040A6E (came from 0000000000040A6E)
 PASS Q6 Esc hides the note and gives the focus back
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000000000 (came from 0000000000040A6A)
+  [kex] quick note: closed, focus to 0000000000000000 (came from 0000000000040A6E)
 PASS Q7 clicked away, note still on screen: one press hides it and the other program keeps the focus
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
   [kex] WM_HOTKEY received
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000040A6A (came from 0000000000040A6A)
+  [kex] quick note: closed, focus to 0000000000040A6E (came from 0000000000040A6E)
 PASS Q8 covered by another window: a press brings it to front, the next hides it
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000010142
@@ -211,7 +211,7 @@ SHOT 19 quick-note-pinned
   [kex] quick note: opened at 80,70 640x420, previous window 0000000000010142
 PASS Q20 pinned: hidden and shown again, it comes back at (80,70)-(720,490)
   [kex] quick note: back to the middle, unpinned
-PASS Q21 clicking it again: the note glides back to the middle (at 229 px partway, off by 0,0 at the end) and is unpinned
+PASS Q21 clicking it again: the note glides back to the middle (at 287 px partway, off by 0,0 at the end) and is unpinned
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
   [kex] WM_HOTKEY received
@@ -219,28 +219,28 @@ PASS Q21 clicking it again: the note glides back to the middle (at 229 px partwa
 PASS Q22 unpinned: it opens in the middle again, (320,190)-(960,610)
   [kex] WM_HOTKEY received
   [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
-INFO shell window 00000000000E0A42 (a stand-in for Explorer's)
+INFO shell window 00000000000E0A46 (a stand-in for Explorer's)
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000000000
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 00000000000E0A42 (came from 0000000000000000)
+  [kex] quick note: closed, focus to 00000000000E0A46 (came from 0000000000000000)
   [kex] WM_HOTKEY received
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000000000
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 00000000000E0A42 (came from 0000000000000000)
-PASS Q23 on an empty desktop 2 with the last window of desktop 1 still named the foreground: the note opens here and, hidden, hands the focus to the desktop, never to desktop 1: ok another program on desktop 1, focus then to 00000000000e0a42 (the desktop); ok Notepad++ on desktop 1, focus then to 00000000000e0a42 (the desktop); 
+  [kex] quick note: closed, focus to 00000000000E0A46 (came from 0000000000000000)
+PASS Q23 on an empty desktop 2 with the last window of desktop 1 still named the foreground: the note opens here and, hidden, hands the focus to the desktop, never to desktop 1: ok another program on desktop 1, focus then to 00000000000e0a46 (the desktop); ok Notepad++ on desktop 1, focus then to 00000000000e0a46 (the desktop); 
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 0000000000040A6A (came from 0000000000040A6A)
+  [kex] quick note: closed, focus to 0000000000040A6E (came from 0000000000040A6E)
 PASS Q24 a program open on desktop 2 too: hidden, the note gives the focus back to it
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
   [kex] WM_HOTKEY received
-  [kex] quick note: closed, focus to 00000000000E0A42 (came from 0000000000040A6A)
+  [kex] quick note: closed, focus to 00000000000E0A46 (came from 0000000000040A6E)
   [kex] WM_HOTKEY received
-  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6A
-  [kex] quick note: closed, focus to 00000000000E0A42 (came from 0000000000040A6A)
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000040A6E
+  [kex] quick note: closed, focus to 00000000000E0A46 (came from 0000000000040A6E)
 PASS Q25 opened on desktop 2, hidden after a move to desktop 3: the focus stays on desktop 3 (hotkey ok, Esc ok)
 PASS Q26 the quick note's zoom is off by default
   [kex] quick note: opened at 320,190 640x420, previous window 0000000000010142
@@ -265,7 +265,7 @@ PASS T6 outside post-it mode the hot zone does nothing
   [kex] Copy flash: enabled
   [kex] Paint splash: enabled
 PASS W0 tab slide, flashes and paint splash on
-PASS W1 switching tabs slides the new document in from the left (started 1, 22 frames, held at 0.50; active 1, pictures 7, stopped early 3, technology 0)
+PASS W1 switching tabs slides the new document in from the left (started 1, 22 frames, held at 0.50; active 1, pictures 8, stopped early 4, technology 0)
 SHOT 22 tab-slide-half-way
 PASS W2 the slide ends with the new document in place (last frame at 1.00)
 PASS W3 switching back slides the other way (from the right)
@@ -296,19 +296,19 @@ PASS SW1 half a swipe: the tab on the right is half way in (at 0.50, tab 0 -> 1)
 SHOT 27 tab-swipe-half-way
 PASS SW2 fingers resting: the slide holds where they left it (0.50 after 450 ms)
 PASS SW3a the slide follows the fingers back (0.30)
-  [kex] Tab swipe: touchpad, 240 wheel units, let go at 0.30 (-9.4 swipes/s) -> slid back
+  [kex] Tab swipe: touchpad, 240 wheel units, let go at 0.30 (-7.4 swipes/s) -> slid back
 PASS SW3 let go before half way: it slides back to the first tab (tab 0)
 PASS SW3b the Ctrl+Tab order is as it was before the swipe (7 tabs)
-  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (8.6 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (7.6 swipes/s) -> switched
 PASS SW4 let go past half way: the switch finishes (tab 1, last frame at 1.00)
-  [kex] Tab swipe: touchpad, 160 wheel units, let go at 0.20 (6.2 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 160 wheel units, let go at 0.20 (6.0 swipes/s) -> switched
 PASS SW5 a short quick flick to the left switches to the tab on the left (tab 0)
 PASS SW6 swiping left on the first tab does nothing
   [kex] Tab swipe: wheel, 560 wheel units, let go at 0.70 (0.0 swipes/s) -> switched
 PASS SW7 without touchpad reports a pause in the swipe lets go (tab 1; begin(touch) start back begin(touch) start finish begin(touch) start finish begin(touch) let-go-early begin(wheel) start finish)
 PASS SW8 tilt wheel right: the next tab at once (tab 2)
 PASS SW9 where the line scrolls sideways the swipe scrolls it (x offset 48), no tab moves
-  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (7.6 swipes/s) -> switched
+  [kex] Tab swipe: touchpad, 560 wheel units, let go at 0.70 (5.6 swipes/s) -> switched
 PASS SW10 over the tab bar the swipe switches tabs even where the line could scroll (tab 3 from 4, under the pointer: SysTabControl32; begin(touch) start back begin(touch) start finish begin(touch) start finish begin(touch) let-go-early begin(wheel) start finish begin(wheel) begin(touch) text begin(touch) start finish)
   [kex] Touchpad tab swipe: disabled
 PASS SW11 touchpad tab swipe off: swiping does not switch tabs
@@ -316,12 +316,12 @@ PASS SW11 touchpad tab swipe off: swiping does not switch tabs
 PASS X1 Edit > Copy: the selection flashes (1 rectangle, 1 live)
 PASS X2 copying three lines flashes 3 rectangles
 PASS MO0 editing motion on by default (3 motions so far)
-PASS MO1 Edit > Cut: the text is picked up, then the line closes up (49 % of the way to go, 10 frames); no copy flash
+PASS MO1 Edit > Cut: the text is picked up, then the line closes up (49 % of the way to go, 9 frames); no copy flash
 SHOT 28 motion-cut-half-way
 PASS MO1b ... and it settles by itself (gap 0.000)
-PASS MO2 Delete on a selection in a line: wiped away (58 % to go)
+PASS MO2 Delete on a selection in a line: wiped away (82 % to go)
 SHOT 29 motion-delete-wipe-half-way
-PASS MO3 Delete across three lines: the text fades, the lines below glide up (17 % to go)
+PASS MO3 Delete across three lines: the text fades, the lines below glide up (19 % to go)
 SHOT 30 motion-delete-lines-half-way
 PASS MO4 a key pressed during the motion ends it at once (ended 1)
 PASS MO5 typing over a selection and deleting single characters: no motion
@@ -345,9 +345,13 @@ SHOT 37 motion-jump
 PASS MO15 small scrolls and a document just switched to: no jump slide
 PASS MO16 "Cut" unticked: no motion (0); a Delete 100 ms after a cut (within "editing fast", 400 ms): skipped, the text just goes (cuts 1, deletes 0, skipped 1)
 PASS MO17 KEX > Motion: 12 of 12 switches, each ticked as set; picking one switches it and stores it
-PASS MO18 KEX Settings > Motion: 12 of 12 motions with their tick and time
+PASS MO18 KEX Settings > Motion: 12 of 12 motions with their tick and speed (100 %: the designed time)
 SHOT 38 settings-motion-page
-PASS MO19 Sort set to 0 ms on the Motion page: sorting just reorders
+  [kex] Smooth caret: disabled
+  [kex] Smooth caret: enabled
+PASS MO19 Sort at 200 % on the Motion page: 170 ms (designed 340); all animations at 200 %: 85 ms, Cut 160 ms (designed 320); 900 % typed is kept at 400 %
+  [kex] Smooth caret: disabled
+  [kex] Smooth caret: enabled
 PASS P1 Style All Occurrences of Token: "red" splashes paint at its 4 occurrences (32 drops and washes)
 SHOT 39 paint-splash
 PASS P2 styling a token that already has that colour splashes nothing
@@ -355,7 +359,7 @@ PASS P3 Style One Token: one splash, on that occurrence only (1)
   [kex] Paint splash: disabled
 PASS P4 paint splash off: colouring splashes nothing
   [kex] Paint splash: enabled
-PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (4075 frames so far, 3.12 ms of drawing per frame lately, the last one 3.55 ms); Windows' compositor puts them on screen with the graphics card."
+PASS P5 KEX Effects page: "The falling letters, flashes and splashes are drawn on a thread of their own (2573 frames so far, 4.42 ms of drawing per frame lately, the last one 4.71 ms); Windows' compositor puts them on screen with the graphics card."
   [kex] Falling letters: disabled
 PASS E1 Falling letters off from Preferences: unticked and remembered, no letters left (the flashes and splashes keep the overlay)
   [kex] Falling letters: enabled
@@ -598,55 +602,55 @@ PASS L28 Clear all Styles takes the single bold/italic ranges away too
   [kex] Tab close and open: disabled
   [kex] Save glint: disabled
   [kex] Editing motion: disabled
-INFO PERF all KEX features on: 24.129 ms per key, 1.50% CPU idle; all off: 20.632 ms per key, 1.00% CPU idle
-INFO PERF smooth caret: drawn in 1.12 paints per key while typing, 0.0 a second while idle (glide and blink fades)
-INFO PERF text repaints per key: 1.12 with the features on, 1.00 with them off
-INFO PERF smooth caret's own code in Scintilla per key: 0.146 ms
+INFO PERF all KEX features on: 40.349 ms per key, 1.50% CPU idle; all off: 31.737 ms per key, 2.00% CPU idle
+INFO PERF smooth caret: drawn in 1.17 paints per key while typing, 0.0 a second while idle (glide and blink fades)
+INFO PERF text repaints per key: 1.17 with the features on, 1.00 with them off
+INFO PERF smooth caret's own code in Scintilla per key: 0.226 ms
   [kex] Falling letters: enabled
-INFO PERF only Falling letters                    19.928 ms per key (-0.704), 2.00% CPU idle (+1.00)
+INFO PERF only Falling letters                    33.175 ms per key (+1.439), 2.00% CPU idle (+0.00)
   [kex] Falling letters: disabled
   [kex] Smooth caret: enabled
-INFO PERF only Smooth caret                       19.029 ms per key (-1.603), 1.00% CPU idle (-0.00)
+INFO PERF only Smooth caret                       32.721 ms per key (+0.985), 1.50% CPU idle (-0.50)
   [kex] Smooth caret: disabled
   [kex] hotkey Ctrl+Alt+M: registered (error 0)
   [kex] Quick note (global hotkey): enabled
-INFO PERF only Quick note (global hotkey)         19.602 ms per key (-1.030), 1.00% CPU idle (-0.00)
+INFO PERF only Quick note (global hotkey)         32.085 ms per key (+0.348), 2.00% CPU idle (+0.00)
   [kex] Quick note (global hotkey): disabled
   [kex] F12 hover tabs: enabled
-INFO PERF only F12 hover tabs                     17.726 ms per key (-2.906), 1.50% CPU idle (+0.50)
+INFO PERF only F12 hover tabs                     29.821 ms per key (-1.916), 2.50% CPU idle (+0.50)
   [kex] F12 hover tabs: disabled
   [kex] A Notepad++ for each desktop: enabled
-INFO PERF only A Notepad++ for each desktop       18.354 ms per key (-2.278), 1.00% CPU idle (+0.00)
+INFO PERF only A Notepad++ for each desktop       32.012 ms per key (+0.275), 2.00% CPU idle (+0.00)
   [kex] A Notepad++ for each desktop: disabled
   [kex] Tab snapping: enabled
-INFO PERF only Tab snapping                       19.790 ms per key (-0.842), 1.50% CPU idle (+0.50)
+INFO PERF only Tab snapping                       36.866 ms per key (+5.129), 2.00% CPU idle (+0.00)
   [kex] Tab snapping: disabled
   [kex] JetBrains shortcuts: enabled
-INFO PERF only JetBrains shortcuts                18.856 ms per key (-1.776), 1.50% CPU idle (+0.50)
+INFO PERF only JetBrains shortcuts                31.548 ms per key (-0.189), 2.00% CPU idle (+0.00)
   [kex] JetBrains shortcuts: disabled
   [kex] Live token styles: enabled
-INFO PERF only Live token styles                  19.022 ms per key (-1.610), 1.50% CPU idle (+0.50)
+INFO PERF only Live token styles                  30.975 ms per key (-0.762), 2.00% CPU idle (+0.00)
   [kex] Live token styles: disabled
   [kex] Copy flash: enabled
-INFO PERF only Copy flash                         18.592 ms per key (-2.040), 1.00% CPU idle (-0.00)
+INFO PERF only Copy flash                         31.793 ms per key (+0.057), 1.50% CPU idle (-0.50)
   [kex] Copy flash: disabled
   [kex] Tab slide: enabled
-INFO PERF only Tab slide                          19.558 ms per key (-1.074), 1.50% CPU idle (+0.50)
+INFO PERF only Tab slide                          34.054 ms per key (+2.317), 2.00% CPU idle (+0.00)
   [kex] Tab slide: disabled
   [kex] Paint splash: enabled
-INFO PERF only Paint splash                       19.840 ms per key (-0.792), 1.00% CPU idle (-0.00)
+INFO PERF only Paint splash                       32.952 ms per key (+1.215), 2.00% CPU idle (+0.00)
   [kex] Paint splash: disabled
   [kex] Touchpad tab swipe: enabled
-INFO PERF only Touchpad tab swipe                 18.860 ms per key (-1.772), 1.00% CPU idle (-0.00)
+INFO PERF only Touchpad tab swipe                 30.084 ms per key (-1.653), 2.49% CPU idle (+0.50)
   [kex] Touchpad tab swipe: disabled
   [kex] Tab close and open: enabled
-INFO PERF only Tab close and open                 18.459 ms per key (-2.173), 1.00% CPU idle (-0.00)
+INFO PERF only Tab close and open                 29.498 ms per key (-2.238), 2.00% CPU idle (+0.00)
   [kex] Tab close and open: disabled
   [kex] Save glint: enabled
-INFO PERF only Save glint                         19.351 ms per key (-1.281), 1.00% CPU idle (-0.00)
+INFO PERF only Save glint                         29.166 ms per key (-2.571), 2.00% CPU idle (+0.00)
   [kex] Save glint: disabled
   [kex] Editing motion: enabled
-INFO PERF only Editing motion                     18.233 ms per key (-2.399), 1.50% CPU idle (+0.50)
+INFO PERF only Editing motion                     28.812 ms per key (-2.925), 2.00% CPU idle (+0.00)
   [kex] Editing motion: disabled
   [kex] Falling letters: enabled
   [kex] Smooth caret: enabled
@@ -664,6 +668,29 @@ INFO PERF only Editing motion                     18.233 ms per key (-2.399), 1.
   [kex] Tab close and open: enabled
   [kex] Save glint: enabled
   [kex] Editing motion: enabled
-PASS PERF1 the features' own work adds 3.497 ms per key and 0.50% CPU while idle; caret redraws 1.12 per key, 0.0 a second idle (total 24.129 vs 20.632 ms per key, 1.50% vs 1.00% idle)
-RESULT 300 passed, 0 failed
+PASS PERF1 the features' own work adds 8.612 ms per key and -0.50% CPU while idle; caret redraws 1.17 per key, 0.0 a second idle (total 40.349 vs 31.737 ms per key, 1.50% vs 2.00% idle)
+PASS RG1 word wrap on: a line moving down past a wrapped line slides (the long line takes 10 rows; started 1, frames +13, refused +0, skipped +0)
+SHOT 50 move-wrapped-RG1
+PASS RG2 word wrap on: the wrapped line itself moving down slides (the long line takes 10 rows; started 1, frames +14, refused +0, skipped +0)
+SHOT 51 move-wrapped-RG2
+PASS RG2b the bottom line in sight moving down: the view scrolls by 2 line(s) and the line slides (started 1, refused +0)
+SHOT 52 move-line-at-edge
+PASS RG3 tab bar with scroll arrows (shown): closing the last tab plays (played 1, skipped +0, in one go +0; 56.3 of 241 px)
+SHOT 53 arrows-close-last
+PASS RG4 tab bar with scroll arrows (shown): opening a file (the bar scrolls to its tab) plays (played 1, skipped +0, in one go +0; 198.6 of 205 px)
+SHOT 54 arrows-open
+PASS RG5 tab bar with scroll arrows (shown): closing the second tab (a hidden tab comes in from behind the arrows) plays (played 1, skipped +0, in one go +0; 19.8 of 85 px)
+SHOT 55 arrows-close-second
+PASS RG4b tab bar with scroll arrows (shown): opening a file in a narrow window (the bar scrolls a long way to its tab) plays (played 1, skipped +0, in one go +0; 176.3 of 182 px)
+SHOT 56 arrows-open-narrow
+  [kex] WM_HOTKEY received
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000010142
+  [kex] WM_HOTKEY received
+  [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
+  [kex] WM_HOTKEY received
+  [kex] quick note: opened at 320,190 640x420, previous window 0000000000010142
+PASS RG6 Ctrl+Alt+M hidden and shown again: the note shows line 120 at the top (was 120), caret at 1823 (was 1823)
+  [kex] WM_HOTKEY received
+  [kex] quick note: closed, focus to 0000000000010142 (came from 0000000000010142)
+RESULT 308 passed, 0 failed
 DONE

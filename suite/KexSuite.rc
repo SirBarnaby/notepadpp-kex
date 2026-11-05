@@ -11,6 +11,8 @@ CAPTION "KEX Settings"
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
     LISTBOX         IDC_KEX_PAGELIST, 10, 10, 100, 215, LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "All animations, speed (%):", -1, 115, 218, 92, 8
+    EDITTEXT        IDC_KEX_SPEED, 208, 216, 28, 12, ES_NUMBER
     PUSHBUTTON      "Close", IDC_KEX_CLOSE, 320, 215, 50, 14
 END
 
@@ -37,12 +39,12 @@ BEGIN
     GROUPBOX        "Smooth caret", -1, 4, 74, 452, 50
     AUTOCHECKBOX    "The caret glides to its new position", IDC_C_EN, 12, 87, 160, 10
     LTEXT           "", IDC_C_STATUS, 180, 88, 268, 9
-    LTEXT           "Glide (ms):", -1, 12, 105, 40, 8
-    EDITTEXT        IDC_C_GLIDE, 54, 103, 30, 12, ES_NUMBER
-    LTEXT           "Jump instead after (lines):", -1, 96, 105, 100, 8
-    EDITTEXT        IDC_C_SNAP, 198, 103, 26, 12, ES_NUMBER
-    LTEXT           "Blink:", -1, 236, 105, 22, 8
-    COMBOBOX        IDC_C_BLINK, 260, 103, 98, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Glide speed (%):", -1, 12, 105, 58, 8
+    EDITTEXT        IDC_C_GLIDE, 72, 103, 26, 12, ES_NUMBER
+    LTEXT           "Jump instead after (lines):", -1, 106, 105, 92, 8
+    EDITTEXT        IDC_C_SNAP, 200, 103, 24, 12, ES_NUMBER
+    LTEXT           "Blink:", -1, 234, 105, 22, 8
+    COMBOBOX        IDC_C_BLINK, 258, 103, 100, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     AUTOCHECKBOX    "Block caret in overtype", IDC_C_OVB, 366, 104, 86, 10
 
     GROUPBOX        "JetBrains shortcuts", -1, 4, 130, 452, 58
@@ -161,8 +163,8 @@ BEGIN
     LTEXT           "Opacity (%):", -1, 314, 132, 44, 8
     EDITTEXT        IDC_H_OPACITY, 360, 130, 28, 12, ES_NUMBER
     AUTOCHECKBOX    "Zoom in as it opens, out as it goes", IDC_H_ZOOM, 12, 146, 150, 10
-    LTEXT           "Zoom (ms):", -1, 170, 147, 40, 8
-    EDITTEXT        IDC_H_ZOOMMS, 212, 145, 28, 12, ES_NUMBER
+    LTEXT           "Zoom speed (%):", -1, 170, 147, 58, 8
+    EDITTEXT        IDC_H_ZOOMMS, 230, 145, 28, 12, ES_NUMBER
     LTEXT           "No title bar: drag the top strip to move it, the edges to resize it. The pin keeps it in place; pinned, it sends it back to the middle. Esc or the hotkey hides it and never hands the focus to another desktop. Ctrl+wheel zooms; Enter keeps the indentation.", -1, 12, 161, 436, 24
 
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
@@ -185,12 +187,12 @@ BEGIN
     LTEXT           "", IDC_F_STATUS, 264, 62, 184, 9
     AUTOCHECKBOX    "Saving a file sends a glint across its tab and the top of the page", IDC_GL_EN, 12, 74, 246, 10
     LTEXT           "", IDC_GL_STATUS, 264, 75, 184, 9
-    LTEXT           "Slide (ms):", -1, 12, 91, 38, 8
-    EDITTEXT        IDC_W_MS, 52, 89, 30, 12, ES_NUMBER
-    LTEXT           "Close and open (ms):", -1, 96, 91, 72, 8
-    EDITTEXT        IDC_F_MS, 170, 89, 30, 12, ES_NUMBER
-    LTEXT           "Glint (ms):", -1, 214, 91, 38, 8
-    EDITTEXT        IDC_GL_MS, 254, 89, 30, 12, ES_NUMBER
+    LTEXT           "Speed (%): slide", -1, 12, 91, 56, 8
+    EDITTEXT        IDC_W_MS, 70, 89, 28, 12, ES_NUMBER
+    LTEXT           "close and open", -1, 108, 91, 52, 8
+    EDITTEXT        IDC_F_MS, 162, 89, 28, 12, ES_NUMBER
+    LTEXT           "glint", -1, 200, 91, 18, 8
+    EDITTEXT        IDC_GL_MS, 220, 89, 28, 12, ES_NUMBER
 
     GROUPBOX        "Paint splash", -1, 4, 112, 452, 30
     AUTOCHECKBOX    "Giving a token a colour splashes paint", IDC_P_EN, 12, 125, 160, 10
@@ -210,7 +212,7 @@ BEGIN
     GROUPBOX        "Editing motion", -1, 4, 2, 452, 186
     AUTOCHECKBOX    "Edits move into place instead of jumping", IDC_M_EN, 12, 14, 200, 10
     LTEXT           "", IDC_M_STATUS, 220, 15, 228, 9
-    LTEXT           "Each one on or off, and how long it takes (ms):", -1, 12, 29, 300, 8
+    LTEXT           "Each one on or off, and its speed (%):", -1, 12, 29, 300, 8
     AUTOCHECKBOX    "Cut: picked up, then gone", 2710, 12, 43, 168, 10
     EDITTEXT        2730, 184, 42, 28, 12, ES_NUMBER
     AUTOCHECKBOX    "Move lines (Ctrl+Shift+Up/Down)", 2715, 232, 43, 168, 10
@@ -235,12 +237,12 @@ BEGIN
     EDITTEXT        2738, 184, 112, 28, 12, ES_NUMBER
     AUTOCHECKBOX    "Go to a far line: the page slides", 2719, 232, 113, 168, 10
     EDITTEXT        2739, 404, 112, 28, 12, ES_NUMBER
-    LTEXT           "New text stays lit for (ms):", -1, 12, 130, 96, 8
-    EDITTEXT        IDC_M_GLOW, 110, 128, 28, 12, ES_NUMBER
-    LTEXT           "Editing fast: no motion within (ms):", -1, 160, 130, 124, 8
-    EDITTEXT        IDC_M_RAPID, 286, 128, 28, 12, ES_NUMBER
-    LTEXT           "of the last one", -1, 318, 130, 80, 8
+    LTEXT           "New text's light, speed (%):", -1, 12, 130, 100, 8
+    EDITTEXT        IDC_M_GLOW, 114, 128, 28, 12, ES_NUMBER
+    LTEXT           "Editing fast: no motion within (ms):", -1, 156, 130, 124, 8
+    EDITTEXT        IDC_M_RAPID, 282, 128, 28, 12, ES_NUMBER
+    LTEXT           "of the last one", -1, 314, 130, 80, 8
     AUTOCHECKBOX    "In the quick note too", IDC_M_NOTE, 12, 146, 150, 10
-    LTEXT           "Short, with no bounce, after Apple's guidance on motion. A motion stops the moment you type, edit or scroll, so it never holds you up, and edits that come quickly one after another show without one. 0 ms switches one off too.", -1, 12, 162, 436, 24
+    LTEXT           "Short, with no bounce, after Apple's guidance on motion. A motion stops the moment you type, edit or scroll, so it never holds you up, and edits that come quickly one after another show without one. Speeds: 100 % is as designed, 200 % twice as fast, 50 % half as fast (25 to 400); the speed for all animations is at the bottom.", -1, 12, 162, 436, 24
     LTEXT           "", IDC_SUMMARY, 4, 192, 452, 9
 END

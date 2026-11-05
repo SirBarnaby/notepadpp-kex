@@ -120,16 +120,19 @@ next to it, and changes apply at once.
     twice, and deleting a selection flashes it red. Each can be switched off, and Strength (%)
     makes them fainter or brighter.
   * Tab slide (Effects): switching tabs slides the next document in from the side it is on,
-    like switching desktops in Windows 10. "Slide (ms)" sets its length.
+    like switching desktops in Windows 10. "Speed (%): slide" sets how fast it goes.
   * Tab close and open (Effects): a closed tab collapses and the tabs on its right slide over to
     close the gap, as in Chrome and Firefox; a new tab opens out. The document area changes at
     once; with Tab slide on, the document that takes a closed one's place slides in from its side.
-    "Close and open (ms)" sets the length.
+    "close and open" (%) sets how fast it goes.
   * Save glint (Effects): saving a file sends a glint across its tab, wherever the tab is. Only
     when the tab can't be seen (tab bar hidden, or scrolled away) does it run along the view's top.
   * Paint splash (Effects): giving text a colour (Style All Occurrences of Token, Style One
     Token, the token menu) splashes paint: the word lights up in its colour and drops fly off it.
     "Drops per token" sets how many.
+    Animation speeds are percentages of the designed speed: 100 % as designed, 200 % twice as
+    fast, 50 % half as fast (25 to 400). Each animation with a speed box has its own, and "All
+    animations, speed (%)" at the bottom of the KEX Settings window speeds them all up or down.
     The effects follow Windows' "Animation effects" setting unless you untick that. The falling
     letters, flashes and splashes are drawn on a thread of their own and put on screen by Windows'
     compositor; the tab slide and the caret are drawn by Notepad++'s own renderer (DirectWrite,

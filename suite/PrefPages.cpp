@@ -1,6 +1,7 @@
 // PrefPages.cpp - the KEX Settings window (KEX > Settings...): KEX's own settings, apart from Notepad++'s
 // Preferences but built the same way: the pages "Editing", "Tabs", "Windows", "Highlighting", "Quick Note",
-// "Effects" and "Motion" in a list on the left, the picked page on the right, a Close button, Notepad++'s dark mode.
+// "Effects" and "Motion" in a list on the left, the picked page on the right, the speed of all animations and a
+// Close button at the bottom, Notepad++'s dark mode.
 // Like the Preferences pages, every change takes effect at once; numbers apply half a second after the
 // last keystroke (or when the window closes).
 #include "KexSuite.h"
@@ -19,41 +20,42 @@ int g_page = 0;                 // the page showing (or shown last)
 const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects", L"Motion" };
 bool g_filling = false;
 
-struct IntField { int id; int module; const wchar_t* key; int def; };
+// a number box; an animation's speed (%) also names the time in ms it took over from and that time's default
+struct IntField { int id; int module; const wchar_t* key; int def; const wchar_t* oldMs = nullptr; int baseMs = 0; };
 const IntField kInts[] = {
     { IDC_L_GRAVITY, M_LETTERS, L"Gravity", 2200 },
     { IDC_L_MAX, M_LETTERS, L"MaxLetters", 200 },
     { IDC_L_SPIN, M_LETTERS, L"SpinDegPerSec", 260 },
     { IDC_L_DRIFT, M_LETTERS, L"DriftPxPerSec", 90 },
     { IDC_L_OPACITY, M_LETTERS, L"Opacity", 100 },
-    { IDC_C_GLIDE, M_CARET, L"GlideMs", 80 },
+    { IDC_C_GLIDE, M_CARET, L"GlideSpeed", 100, L"GlideMs", 80 },
     { IDC_C_SNAP, M_CARET, L"SnapAfterLines", 12 },
     { IDC_T_ZONE, M_TABS, L"HotZonePx", 6 },
     { IDC_T_DELAY, M_TABS, L"HideDelayMs", 350 },
     { IDC_G_TINT, M_GLASS, L"Tint", 40 },
     { IDC_H_OPACITY, M_HOTKEY, L"Opacity", 100 },
     { IDC_E_STRENGTH, M_FLASH, L"Strength", 100 },
-    { IDC_W_MS, M_SLIDE, L"DurationMs", 200 },
+    { IDC_W_MS, M_SLIDE, L"Speed", 100, L"DurationMs", 200 },
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
     { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
-    { IDC_F_MS, M_TABFOLD, L"DurationMs", 240 },
-    { IDC_GL_MS, M_GLINT, L"DurationMs", 420 },
-    { IDC_H_ZOOMMS, M_HOTKEY, L"ZoomOpenMs", 320 },
-    { IDC_M_GLOW, M_MOTION, L"GlowMs", 600 },
+    { IDC_F_MS, M_TABFOLD, L"Speed", 100, L"DurationMs", 240 },
+    { IDC_GL_MS, M_GLINT, L"Speed", 100, L"DurationMs", 420 },
+    { IDC_H_ZOOMMS, M_HOTKEY, L"ZoomSpeed", 100, L"ZoomOpenMs", 320 },
+    { IDC_M_GLOW, M_MOTION, L"GlowSpeed", 100, L"GlowMs", 600 },
     { IDC_M_RAPID, M_MOTION, L"RapidMs", 250 },
-    // the motions' times (KEXM_* order, kMotionDefs)
-    { IDC_M_MS0 + 0, M_MOTION, L"CutMs", 320 },
-    { IDC_M_MS0 + 1, M_MOTION, L"DeleteMs", 260 },
-    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesMs", 260 },
-    { IDC_M_MS0 + 3, M_MOTION, L"PasteMs", 260 },
-    { IDC_M_MS0 + 4, M_MOTION, L"UndoMs", 260 },
-    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineMs", 220 },
-    { IDC_M_MS0 + 6, M_MOTION, L"FindMs", 300 },
-    { IDC_M_MS0 + 7, M_MOTION, L"IndentMs", 220 },
-    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateMs", 240 },
-    { IDC_M_MS0 + 9, M_MOTION, L"JumpMs", 320 },
-    { IDC_M_MS0 + 10, M_MOTION, L"FoldMs", 240 },
-    { IDC_M_MS0 + 11, M_MOTION, L"SortMs", 340 },
+    // the motions' speeds (KEXM_* order, kMotionDefs)
+    { IDC_M_MS0 + 0, M_MOTION, L"CutSpeed", 100, L"CutMs", 320 },
+    { IDC_M_MS0 + 1, M_MOTION, L"DeleteSpeed", 100, L"DeleteMs", 260 },
+    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesSpeed", 100, L"DeleteLinesMs", 260 },
+    { IDC_M_MS0 + 3, M_MOTION, L"PasteSpeed", 100, L"PasteMs", 260 },
+    { IDC_M_MS0 + 4, M_MOTION, L"UndoSpeed", 100, L"UndoMs", 260 },
+    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineSpeed", 100, L"MoveLineMs", 220 },
+    { IDC_M_MS0 + 6, M_MOTION, L"FindSpeed", 100, L"FindMs", 300 },
+    { IDC_M_MS0 + 7, M_MOTION, L"IndentSpeed", 100, L"IndentMs", 220 },
+    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateSpeed", 100, L"DuplicateMs", 240 },
+    { IDC_M_MS0 + 9, M_MOTION, L"JumpSpeed", 100, L"JumpMs", 320 },
+    { IDC_M_MS0 + 10, M_MOTION, L"FoldSpeed", 100, L"FoldMs", 240 },
+    { IDC_M_MS0 + 11, M_MOTION, L"SortSpeed", 100, L"SortMs", 340 },
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -117,6 +119,12 @@ const int kStatus[M_COUNT] = { IDC_L_STATUS, IDC_C_STATUS, IDC_H_STATUS, IDC_T_S
                                IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS, IDC_F_STATUS, IDC_GL_STATUS, IDC_M_STATUS };
 
 bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
+
+int fieldValue(const IntField& f)
+{
+    const wchar_t* sec = modules[f.module]->key();
+    return f.oldMs ? animSpeed(sec, f.key, f.baseMs, f.oldMs) : settings.getInt(sec, f.key, f.def);
+}
 
 void fillStatus(HWND d)
 {
@@ -190,7 +198,7 @@ void fill(HWND d)
     for (int i = 0; i < M_COUNT; ++i)
         if (has(d, kEnable[i])) ::CheckDlgButton(d, kEnable[i], modules[i]->isEnabled() ? BST_CHECKED : BST_UNCHECKED);
     for (const IntField& f : kInts)
-        if (has(d, f.id)) ::SetDlgItemInt(d, f.id, static_cast<UINT>(settings.getInt(modules[f.module]->key(), f.key, f.def)), FALSE);
+        if (has(d, f.id)) ::SetDlgItemInt(d, f.id, static_cast<UINT>(fieldValue(f)), FALSE);
     for (const BoolField& f : kBools)
         if (has(d, f.id)) ::CheckDlgButton(d, f.id, settings.getInt(modules[f.module]->key(), f.key, f.def) ? BST_CHECKED : BST_UNCHECKED);
     if (has(d, IDC_FX_RESPECT))
@@ -250,9 +258,10 @@ void applyNumbers(HWND d)
     {
         if (!has(d, f.id)) continue;
         BOOL ok = FALSE;
-        UINT v = ::GetDlgItemInt(d, f.id, &ok, FALSE);
-        if (!ok || static_cast<int>(v) == settings.getInt(modules[f.module]->key(), f.key, f.def)) continue;
-        settings.setInt(modules[f.module]->key(), f.key, static_cast<int>(v));
+        int v = static_cast<int>(::GetDlgItemInt(d, f.id, &ok, FALSE));
+        if (f.oldMs) v = std::clamp(v, kSpeedMin, kSpeedMax);
+        if (!ok || v == fieldValue(f)) continue;
+        settings.setInt(modules[f.module]->key(), f.key, v);
         if (liveOption(f.id, f.module)) modules[f.module]->loadOptions();
         else changed[f.module] = true;
     }
@@ -408,10 +417,30 @@ void showPage(int p)
     ::ShowWindow(g_pages[p], SW_SHOW);
 }
 
+// The speed for all animations, typed at the bottom of the window: every feature takes its times again.
+void applySpeedAll(HWND d)
+{
+    BOOL ok = FALSE;
+    const int typed = static_cast<int>(::GetDlgItemInt(d, IDC_KEX_SPEED, &ok, FALSE));
+    if (!ok) return;
+    const int v = std::clamp(typed, kSpeedMin, kSpeedMax);
+    if (v != typed) ::SetDlgItemInt(d, IDC_KEX_SPEED, static_cast<UINT>(v), FALSE);
+    if (v == animSpeedAll()) return;
+    setAnimSpeedAll(v);
+    for (int m = 0; m < M_COUNT; ++m)
+    {
+        if (!modules[m] || !modules[m]->isEnabled()) continue;
+        if (m == M_CARET) restart(m);   // the caret takes its time when it starts
+        else modules[m]->loadOptions();
+    }
+}
+
 // the window closes: what is still typed in a number box counts, as it would half a second later
 void closeDialog()
 {
     if (!g_dialog) return;
+    ::KillTimer(g_dialog, TIMER_APPLY);
+    applySpeedAll(g_dialog);
     for (HWND p : g_pages)
         if (p) { ::KillTimer(p, TIMER_APPLY); applyNumbers(p); }
     nppMsg(NPPM_MODELESSDIALOG, MODELESSDIALOGREMOVE, reinterpret_cast<LPARAM>(g_dialog));
@@ -457,9 +486,13 @@ INT_PTR CALLBACK dialogProc(HWND d, UINT m, WPARAM w, LPARAM)
                 y = std::max<int>(mi.rcWork.top, std::min<int>(y, mi.rcWork.bottom - h0));
             }
             ::SetWindowPos(d, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            ::SetDlgItemInt(d, IDC_KEX_SPEED, static_cast<UINT>(animSpeedAll()), FALSE);
             showPage(g_page);
             return FALSE;
         }
+        case WM_TIMER:
+            if (w == TIMER_APPLY) { ::KillTimer(d, TIMER_APPLY); applySpeedAll(d); return TRUE; }
+            break;
         case WM_COMMAND:
             if (LOWORD(w) == IDC_KEX_PAGELIST && HIWORD(w) == LBN_SELCHANGE)
             {
@@ -467,12 +500,14 @@ INT_PTR CALLBACK dialogProc(HWND d, UINT m, WPARAM w, LPARAM)
                 if (sel >= 0) showPage(static_cast<int>(sel));
                 return TRUE;
             }
+            if (LOWORD(w) == IDC_KEX_SPEED && HIWORD(w) == EN_CHANGE) { ::SetTimer(d, TIMER_APPLY, 500, nullptr); return TRUE; }
             if (LOWORD(w) == IDCANCEL || LOWORD(w) == IDC_KEX_CLOSE) { closeDialog(); return TRUE; }
             break;
         case WM_CLOSE:
             closeDialog();
             return TRUE;
         case WM_DESTROY:
+            ::KillTimer(d, TIMER_APPLY);
             for (HWND& p : g_pages) p = nullptr;   // destroyed with it
             g_dialog = nullptr;
             break;

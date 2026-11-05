@@ -94,7 +94,7 @@ public:
         _zoom = settings.getInt(key(), L"Zoom", INT_MIN);
         _smoothCaret = settings.getInt(key(), L"SmoothCaret", 1) != 0;
         _zoomOpen = settings.getInt(key(), L"ZoomOpen", 0) != 0;
-        _zoomOpenMs = std::max(80, std::min(1500, settings.getInt(key(), L"ZoomOpenMs", 320)));
+        _zoomOpenMs = std::min(5120, animMs(320, animSpeed(key(), L"ZoomSpeed", 320, L"ZoomOpenMs")));
         _autoHide = settings.getInt(key(), L"HideWhenInactive", 0) != 0;
         _opacity = std::max(30, std::min(100, settings.getInt(key(), L"Opacity", 100)));
         const std::wstring f = noteFileSetting();
@@ -299,6 +299,7 @@ private:
         load();
         applyEffects();
         layout();
+        restoreView();
 
         const bool appear = _fade || _zoomOpen;
         if (_layered) { _alpha = appear ? 0 : maxAlpha(); ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA); }
@@ -350,6 +351,7 @@ private:
         settings.setInt(key(), L"X", r.left);
         settings.setInt(key(), L"Y", r.top);
         if (_sci) settings.setInt(key(), L"Zoom", static_cast<int>(sci(_sci, SCI_GETZOOM)));
+        saveView();
         loadOptions();
         stopGlide();
         _closing = true;
@@ -392,7 +394,7 @@ private:
     void destroyNote(bool saveFirst)
     {
         if (!_note) return;
-        if (saveFirst && !_closing) save();
+        if (saveFirst && !_closing) { save(); saveView(); }
         stopGlide();
         HWND n = _note;
         if (!_closing && ::GetForegroundWindow() == n) handFocusOn();
@@ -411,7 +413,7 @@ private:
 
     void fadeStep()
     {
-        double t = std::min(1.0, (nowMs() - _fadeT0) / FADE_MS);
+        double t = std::min(1.0, (nowMs() - _fadeT0) / (FADE_MS * animScale()));
         double e = 1.0 - (1.0 - t) * (1.0 - t);
         _alpha = static_cast<int>(std::lround(_alphaFrom + (_alphaTo - _alphaFrom) * e));
         ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA);
@@ -629,7 +631,7 @@ private:
     void glideStep(bool finish)
     {
         if (_glideT0 < 0 || !_note) return;
-        const double t = (nowMs() - _glideT0) / 1000.0, w = 2.0 * 3.14159265358979 / GLIDE_RESPONSE_S;
+        const double t = (nowMs() - _glideT0) / 1000.0 / animScale(), w = 2.0 * 3.14159265358979 / GLIDE_RESPONSE_S;
         double p = 1.0 - (1.0 + w * t) * std::exp(-w * t);
         if (finish || p > 0.998) p = 1.0;
         const int x = static_cast<int>(std::lround(_glideFrom.x + (_glideTarget.x - _glideFrom.x) * p));
@@ -961,6 +963,41 @@ private:
         _fileTime = writeTime(path);
         if (!_fileError.empty()) log(L"quick note: %ls: %ls", path.c_str(), _fileError.c_str());
         updateMargins();
+    }
+
+    // Where the note was scrolled to, and its caret: it opens there again next time (the text unchanged since).
+    // The first line is kept as a line of the text and how far into it (wrapped), so a new width or zoom
+    // still shows the same text at the top.
+    void saveView()
+    {
+        if (!_sci) return;
+        const LRESULT first = sci(_sci, SCI_GETFIRSTVISIBLELINE);
+        const LRESULT line = sci(_sci, SCI_DOCLINEFROMVISIBLE, first);
+        settings.setInt(key(), L"ViewLine", static_cast<int>(line));
+        settings.setInt(key(), L"ViewSubLine", static_cast<int>(first - sci(_sci, SCI_VISIBLEFROMDOCLINE, line)));
+        settings.setInt(key(), L"ViewX", static_cast<int>(sci(_sci, SCI_GETXOFFSET)));
+        settings.setInt(key(), L"Caret", static_cast<int>(sci(_sci, SCI_GETCURRENTPOS)));
+        settings.setInt(key(), L"Anchor", static_cast<int>(sci(_sci, SCI_GETANCHOR)));
+        settings.setInt(key(), L"ViewLength", static_cast<int>(sci(_sci, SCI_GETLENGTH)));
+    }
+
+    // Back where it was left. Text changed by another program since (another length): the end, as before.
+    bool restoreView()
+    {
+        if (!_sci) return false;
+        const LRESULT len = sci(_sci, SCI_GETLENGTH);
+        const int was = settings.getInt(key(), L"ViewLength", -1);
+        if (was < 0 || was != len) return false;
+        const LRESULT caret = std::clamp<LRESULT>(settings.getInt(key(), L"Caret", 0), 0, len);
+        const LRESULT anchor = std::clamp<LRESULT>(settings.getInt(key(), L"Anchor", static_cast<int>(caret)), 0, len);
+        sci(_sci, SCI_SETSEL, anchor, caret);
+        const LRESULT lines = sci(_sci, SCI_GETLINECOUNT);
+        const LRESULT line = std::clamp<LRESULT>(settings.getInt(key(), L"ViewLine", 0), 0, lines - 1);
+        const LRESULT sub = std::clamp<LRESULT>(settings.getInt(key(), L"ViewSubLine", 0), 0, sci(_sci, SCI_WRAPCOUNT, line) - 1);
+        sci(_sci, SCI_SETFIRSTVISIBLELINE, sci(_sci, SCI_VISIBLEFROMDOCLINE, line) + sub);
+        if (!_wrap) sci(_sci, SCI_SETXOFFSET, std::max(0, settings.getInt(key(), L"ViewX", 0)));
+        sci(_sci, SCI_CHOOSECARETX);
+        return true;
     }
 
     void save()
