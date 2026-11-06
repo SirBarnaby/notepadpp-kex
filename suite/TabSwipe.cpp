@@ -231,7 +231,7 @@ public:
     {
         _sensitivity = std::max(25, std::min(400, settings.getInt(key(), L"Sensitivity", 100)));
         _reverse = settings.getInt(key(), L"Reverse", 0) != 0;
-        _settleMs = std::min(3200, animMs(220, animSpeed(key(), L"Speed", 220, L"DurationMs")));
+        _settleMs = animMs(key(), kSpeedSwipe);
     }
 
     bool selfCheck(std::wstring& why) override
@@ -545,7 +545,7 @@ private:
         _from = _pos;
         _to = target;
         _t0 = now;
-        _ms = std::max(60.0 / 220.0, std::abs(_to - _from)) * _settleMs;   // a short way back: 60 ms at the designed speed
+        _ms = std::max(60.0 / kSpeedSwipe.baseMs, std::abs(_to - _from)) * _settleMs;   // a short way back: 60 ms at the designed speed
         ::SetTimer(hwnd(), TIMER_TICK, TICK_MS, nullptr);
     }
 
@@ -650,7 +650,7 @@ private:
     intptr_t _origBuf = 0, _newBuf = 0;
     std::vector<std::pair<intptr_t, long>> _order;
     std::vector<Sample> _history;
-    int _sensitivity = 100, _settleMs = 220;
+    int _sensitivity = 100, _settleMs = kSpeedSwipe.baseMs;
     bool _reverse = false;
 };
 

@@ -31,7 +31,6 @@ namespace {
 
 const int HOTKEY_ID = 0x4B45;
 const UINT_PTR TIMER_FADE = 1, TIMER_SAVE = 2, TIMER_TAKEOVER = 3, TIMER_GLIDE = 4, TIMER_ZOOM = 5;
-const double FADE_MS = 150.0;
 const int FRAME96 = 7;                 // the edge around the text: the sides and bottom resize it
 const int TOP96 = 16;                  // the strip along the top: moves it, holds the grip and the pin
 const int PIN96 = 22;                  // the pin button's width
@@ -94,9 +93,9 @@ public:
         _zoom = settings.getInt(key(), L"Zoom", INT_MIN);
         _smoothCaret = settings.getInt(key(), L"SmoothCaret", 1) != 0;
         _zoomOpen = settings.getInt(key(), L"ZoomOpen", 0) != 0;
-        _zoomOpenMs = std::min(5120, animMs(320, animSpeed(key(), L"ZoomSpeed", 320, L"ZoomOpenMs")));
-        _fadeMs = animMs(FADE_MS, animSpeed(key(), L"FadeSpeed"));
-        _glideStretch = animMs(1000, animSpeed(key(), L"GlideSpeed")) / 1000.0;
+        _zoomOpenMs = animMs(key(), kSpeedNoteZoom);
+        _fadeMs = animMs(key(), kSpeedNoteFade);
+        _glideStretch = animStretch(animSpeed(key(), kSpeedNoteGlide));
         s_stats.fadeMs = _fadeMs;
         s_stats.glideMs = static_cast<int>(std::lround(GLIDE_RESPONSE_S * 1000.0 * _glideStretch));
         _autoHide = settings.getInt(key(), L"HideWhenInactive", 0) != 0;
@@ -363,8 +362,8 @@ private:
         HWND to = nullptr;
         if (giveFocusBack) to = handFocusOn();
         log(L"quick note: closed, focus to %p (came from %p)", to, _prevFg);
-        if (_layered && _zoomOpen && zoomBegin(false)) destroyNote(false);   // the picture of it zooms out
-        else if (_layered && _fade) fadeTo(0);
+        const bool zooming = _layered && _zoomOpen && zoomBegin(false);   // a picture of it zooms out in its place
+        if (!zooming && _layered && _fade) fadeTo(0);
         else destroyNote(false);
     }
 
@@ -417,8 +416,8 @@ private:
 
     void fadeStep()
     {
-        double t = std::min(1.0, (nowMs() - _fadeT0) / _fadeMs);
-        double e = 1.0 - (1.0 - t) * (1.0 - t);
+        const double t = std::min(1.0, (nowMs() - _fadeT0) / _fadeMs);
+        const double e = 1.0 - (1.0 - t) * (1.0 - t);
         _alpha = static_cast<int>(std::lround(_alphaFrom + (_alphaTo - _alphaFrom) * e));
         ::SetLayeredWindowAttributes(_note, 0, static_cast<BYTE>(_alpha), LWA_ALPHA);
         if (t < 1.0) return;
@@ -977,31 +976,31 @@ private:
         if (!_sci) return;
         const LRESULT first = sci(_sci, SCI_GETFIRSTVISIBLELINE);
         const LRESULT line = sci(_sci, SCI_DOCLINEFROMVISIBLE, first);
-        settings.setInt(key(), L"ViewLine", static_cast<int>(line));
-        settings.setInt(key(), L"ViewSubLine", static_cast<int>(first - sci(_sci, SCI_VISIBLEFROMDOCLINE, line)));
-        settings.setInt(key(), L"ViewX", static_cast<int>(sci(_sci, SCI_GETXOFFSET)));
-        settings.setInt(key(), L"Caret", static_cast<int>(sci(_sci, SCI_GETCURRENTPOS)));
-        settings.setInt(key(), L"Anchor", static_cast<int>(sci(_sci, SCI_GETANCHOR)));
-        settings.setInt(key(), L"ViewLength", static_cast<int>(sci(_sci, SCI_GETLENGTH)));
+        wchar_t v[192];
+        swprintf(v, 192, L"%lld %lld %lld %lld %lld %lld %lu %lu", static_cast<long long>(line),
+                 static_cast<long long>(first - sci(_sci, SCI_VISIBLEFROMDOCLINE, line)), static_cast<long long>(sci(_sci, SCI_GETXOFFSET)),
+                 static_cast<long long>(sci(_sci, SCI_GETCURRENTPOS)), static_cast<long long>(sci(_sci, SCI_GETANCHOR)),
+                 static_cast<long long>(sci(_sci, SCI_GETLENGTH)), _fileTime.dwLowDateTime, _fileTime.dwHighDateTime);
+        settings.setStr(key(), L"View", v);   // one setting: closing writes it once
     }
 
-    // Back where it was left. Text changed by another program since (another length): the end, as before.
-    bool restoreView()
+    // Back where it was left. The text changed since (another length, or the file written by another program): the end, as before.
+    void restoreView()
     {
-        if (!_sci) return false;
+        if (!_sci) return;
+        long long line = 0, sub = 0, x = 0, caret = 0, anchor = 0, was = -1;
+        unsigned long timeLo = 0, timeHi = 0;
+        if (swscanf(settings.getStr(key(), L"View").c_str(), L"%lld %lld %lld %lld %lld %lld %lu %lu", &line, &sub, &x, &caret, &anchor, &was,
+                    &timeLo, &timeHi) != 8)
+            return;
         const LRESULT len = sci(_sci, SCI_GETLENGTH);
-        const int was = settings.getInt(key(), L"ViewLength", -1);
-        if (was < 0 || was != len) return false;
-        const LRESULT caret = std::clamp<LRESULT>(settings.getInt(key(), L"Caret", 0), 0, len);
-        const LRESULT anchor = std::clamp<LRESULT>(settings.getInt(key(), L"Anchor", static_cast<int>(caret)), 0, len);
-        sci(_sci, SCI_SETSEL, anchor, caret);
-        const LRESULT lines = sci(_sci, SCI_GETLINECOUNT);
-        const LRESULT line = std::clamp<LRESULT>(settings.getInt(key(), L"ViewLine", 0), 0, lines - 1);
-        const LRESULT sub = std::clamp<LRESULT>(settings.getInt(key(), L"ViewSubLine", 0), 0, sci(_sci, SCI_WRAPCOUNT, line) - 1);
-        sci(_sci, SCI_SETFIRSTVISIBLELINE, sci(_sci, SCI_VISIBLEFROMDOCLINE, line) + sub);
-        if (!_wrap) sci(_sci, SCI_SETXOFFSET, std::max(0, settings.getInt(key(), L"ViewX", 0)));
+        if (was != len || timeLo != _fileTime.dwLowDateTime || timeHi != _fileTime.dwHighDateTime) return;
+        sci(_sci, SCI_SETSEL, static_cast<WPARAM>(std::clamp<LRESULT>(anchor, 0, len)), std::clamp<LRESULT>(caret, 0, len));
+        line = std::clamp<long long>(line, 0, sci(_sci, SCI_GETLINECOUNT) - 1);
+        sub = std::clamp<long long>(sub, 0, sci(_sci, SCI_WRAPCOUNT, static_cast<WPARAM>(line)) - 1);
+        sci(_sci, SCI_SETFIRSTVISIBLELINE, static_cast<WPARAM>(sci(_sci, SCI_VISIBLEFROMDOCLINE, static_cast<WPARAM>(line)) + sub));
+        if (!_wrap) sci(_sci, SCI_SETXOFFSET, static_cast<WPARAM>(std::max<long long>(0, x)));
         sci(_sci, SCI_CHOOSECARETX);
-        return true;
     }
 
     void save()
@@ -1185,7 +1184,7 @@ private:
     bool _keepText = true, _fade = true, _closing = false, _dirty = false, _loading = false, _layered = false;
     bool _lineNumbers = false, _wrap = true, _caretLine = false, _onTop = true, _remember = false;
     bool _smoothCaret = true, _autoHide = false, _zoomOpen = false, _zoomOpening = false;
-    int _zoomOpenMs = 320;
+    int _zoomOpenMs = kSpeedNoteZoom.baseMs;
     HWND _zoomOverlay = nullptr;
     Sprite _zoomPic;
     Surface _zoomFrame;
@@ -1199,7 +1198,7 @@ private:
     HWND _note = nullptr, _sci = nullptr, _prevFg = nullptr, _tip = nullptr;
     int _alpha = 255, _alphaFrom = 0, _alphaTo = 255;
     double _fadeT0 = 0, _glideStretch = 1.0;   // the glide back to the middle: what its designed time is multiplied by
-    int _fadeMs = 150;
+    int _fadeMs = kSpeedNoteFade.baseMs;
     bool _hover = false, _pressed = false;
     std::wstring _tipText;
     POINT _glideFrom{}, _glideTarget{};

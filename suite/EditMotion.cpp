@@ -18,21 +18,6 @@ namespace kex {
 
 static_assert(kMotionCount == KEXM_COUNT, "one setting for each of the core's motions");
 
-const MotionDef kMotionDefs[kMotionCount] = {
-    { L"Cut", 320, L"Cut: picked up, then gone" },
-    { L"Delete", 260, L"Delete in a line: wiped away" },
-    { L"DeleteLines", 260, L"Delete across lines: fades, the rest closes up" },
-    { L"Paste", 260, L"Paste: room is made, the text lights up" },
-    { L"Undo", 260, L"Undo and redo: what changes shows" },
-    { L"MoveLine", 220, L"Move lines up or down: they slide" },
-    { L"Find", 300, L"Find: a ring closes onto the match" },
-    { L"Indent", 220, L"Indent several lines: they glide" },
-    { L"Duplicate", 240, L"Duplicate a line: the copy slides out" },
-    { L"Jump", 320, L"Go to a far line: the page slides there" },
-    { L"Fold", 240, L"Fold and unfold: the lines slide" },
-    { L"Sort", 340, L"Sort lines: each glides to its place" },
-};
-
 namespace {
 
 class EditMotion;
@@ -47,12 +32,10 @@ public:
     {
         for (int k = 0; k < kMotionCount; ++k)
         {
-            const MotionDef& d = kMotionDefs[k];
-            _on[k] = settings.getInt(key(), d.key, 1) != 0;
-            _ms[k] = std::min(3000, animMs(d.ms, animSpeed(key(), (std::wstring(d.key) + L"Speed").c_str(), d.ms, (std::wstring(d.key) + L"Ms").c_str(),
-                                                           kMotionDefaultSpeed[k])));
+            _on[k] = settings.getInt(key(), kMotionDefs[k].key, 1) != 0;
+            _ms[k] = std::min(kMotionMaxMs, animMs(key(), kMotionDefs[k].speed));
         }
-        _glowMs = std::min(3000, animMs(600, animSpeed(key(), L"GlowSpeed", 600, L"GlowMs")));
+        _glowMs = std::min(kMotionMaxMs, animMs(key(), kSpeedMotionGlow));
         _rapidMs = std::max(0, std::min(3000, settings.getInt(key(), L"RapidMs", kMotionRapidMs)));
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _inNote = settings.getInt(key(), L"InQuickNote", 1) != 0;
@@ -160,7 +143,14 @@ MotionStats motionStats(HWND s)
     st.skipped = info.skipped; st.refused = info.refused; st.ended = info.ended; st.frames = info.frames;
     st.lastKind = info.lastKind; st.fraction = info.fraction; st.gap = info.gap; st.style = info.style;
     st.ringFrames = info.ringFrames; st.jumpLines = info.jumpLines; st.lines = info.lines; st.caretX = info.caretX;
+    st.renderMs = info.renderMs; st.presentMs = info.presentMs; st.renders = info.renders; st.reuses = info.reuses;
     return st;
+}
+
+void motionTestEveryFrame(bool on)
+{
+    for (int v = 0; v < views.count(); ++v)
+        if (HWND s = views.sci(v)) ::SendMessageW(s, SCI_KEX_SLIDETEST, static_cast<WPARAM>(-2), on ? 1 : 0);
 }
 
 } // namespace kex

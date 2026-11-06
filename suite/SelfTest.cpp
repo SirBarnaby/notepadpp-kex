@@ -15,6 +15,7 @@
 #include <cstdarg>
 #include <cwchar>
 #include <cmath>
+#include <utility>
 
 namespace kex {
 
@@ -973,16 +974,58 @@ std::vector<int> stylesOf(HWND s)
     return v;
 }
 
-void addRegressionSteps(const std::function<void(std::function<int()>)>& add);
+using StepAdder = std::function<void(std::function<int()>)>;   // adds one step
+void addRegressionSteps(const StepAdder& add);
+void addMotionCostSteps(const StepAdder& add);
+
+// More tabs than the tab bar has room for: it shows its scroll arrows.
+std::wstring overflowTabName(int i)
+{
+    wchar_t n[64]; swprintf(n, 64, L"a-tab-with-a-rather-long-name-%02d.txt", i);
+    return n;
+}
+void openOverflowTabs()
+{
+    for (int i = 1; i <= 16; ++i)
+    {
+        const std::wstring n = overflowTabName(i);
+        writeFile(path(n.c_str()), "overflow\r\n");
+        open(n.c_str());
+    }
+}
+bool tabArrowsShown(HWND bar)
+{
+    HWND ud = ::FindWindowExW(bar, nullptr, UPDOWN_CLASSW, nullptr);
+    return ud && ::IsWindowVisible(ud);
+}
+// the current view's tab motion at 10, 30, 50, 70 and 90 %, saved for a look at it (frame-<what>-N0.bmp); then held half-way
+void saveTabFrames(const wchar_t* what)
+{
+    for (int k = 1; k <= 9; k += 2)
+    {
+        tabMotionTestFreeze(k / 10.0);
+        pump(60);
+        wchar_t n[64]; swprintf(n, 64, L"frame-%ls-%d0.bmp", what, k);
+        tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
+    }
+    tabMotionTestFreeze(0.5);
+    pump(60);
+}
+
+// a number typed into a box of a KEX Settings page (or the window), taken as it is half a second after the last keystroke
+void typeNumber(HWND page, int id, int value)
+{
+    if (!page) return;
+    ::SetDlgItemInt(page, id, static_cast<UINT>(value), FALSE);
+    ::SendMessageW(page, WM_TIMER, 1, 0);
+}
 
 // The animations that followed only the speed for all until each got a speed box of its own.
-struct SpeedBox { int page; int id; };
-const SpeedBox kOwnSpeeds[] = { { PAGE_EDITING, IDC_L_SPEED }, { PAGE_EDITING, IDC_C_FADE }, { PAGE_TABS, IDC_S_SPEED }, { PAGE_TABS, IDC_SW_MS },
-                                { PAGE_NOTE, IDC_H_FADEMS }, { PAGE_NOTE, IDC_H_GLIDEMS }, { PAGE_EFFECTS, IDC_E_MS }, { PAGE_EFFECTS, IDC_P_MS } };
-const int kOwnSpeedModules[] = { M_LETTERS, M_CARET, M_HOTKEY, M_SNAP, M_SWIPE, M_FLASH, M_SPLASH };
-bool g_ownSpeedWasOn[M_COUNT] = {};
-// typed into every one of those boxes, a page at a time, each page's taken as half a second after its last keystroke
-// (taking them fills every page again)
+struct SpeedBox { int module; int id; };
+const SpeedBox kOwnSpeeds[] = { { M_LETTERS, IDC_L_SPEED }, { M_CARET, IDC_C_FADE }, { M_SNAP, IDC_S_SPEED }, { M_SWIPE, IDC_SW_MS },
+                                { M_HOTKEY, IDC_H_FADEMS }, { M_HOTKEY, IDC_H_GLIDEMS }, { M_FLASH, IDC_E_MS }, { M_SPLASH, IDC_P_MS } };
+bool g_ownSpeedTurnedOn[M_COUNT] = {};   // the features the steps switched on for them
+// typed into every one of those boxes, a page at a time (taking one page's boxes fills every page again)
 void typeOwnSpeeds(int percent)
 {
     for (int page : { PAGE_EDITING, PAGE_TABS, PAGE_NOTE, PAGE_EFFECTS })
@@ -990,7 +1033,7 @@ void typeOwnSpeeds(int percent)
         HWND p = prefPage(page);
         if (!p) continue;
         for (const SpeedBox& b : kOwnSpeeds)
-            if (b.page == page) ::SetDlgItemInt(p, b.id, static_cast<UINT>(percent), FALSE);
+            if (pageOfModule(b.module) == page) ::SetDlgItemInt(p, b.id, static_cast<UINT>(percent), FALSE);
         ::SendMessageW(p, WM_TIMER, 1, 0);
     }
 }
@@ -1007,7 +1050,7 @@ OwnTimes ownTimes()
 
 void buildSteps()
 {
-    auto add = [](std::function<int()> f) { g_steps.push_back(f); };
+    auto add = [](std::function<int()> f) { g_steps.push_back(std::move(f)); };
 
     // ---- setup ---------------------------------------------------------------------------
     add([] {
@@ -2373,15 +2416,7 @@ void buildSteps()
               && st.foldFrames > g_motion.foldFrames && st.lastDrop > 0 && st.lastWidth > st.lastDx * 0.9f, L"TF1",
               L"opening f1.txt: the tabs on its right have made room (%.1f of %d px) and the tab rises into it (%d px still to go; held at %.2f, skipped %d)",
               st.lastWidth, st.lastDx, st.lastDrop, st.lastFraction, st.foldSkipped - g_motion.foldSkipped);
-        for (int k = 1; k <= 9; k += 2)   // the motion at 10, 30, 50, 70 and 90%, for a look at it
-        {
-            tabMotionTestFreeze(k / 10.0);
-            pump(60);
-            wchar_t n[64]; swprintf(n, 64, L"frame-tab-open-%d0.bmp", k);
-            tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
-        }
-        tabMotionTestFreeze(0.5);
-        pump(60);
+        saveTabFrames(L"tab-open");
         return shot(L"tab-unfold-half-way");
     });
     add([] {
@@ -2413,15 +2448,7 @@ void buildSteps()
               st.lastDrop, st.lastWidth, st.lastDx);
         check(!sl.active && sl.slides == g_fadeSlides && sl.afterClose == g_slideCloses + 1, L"TF3b",
               L"%ls takes the closed tab's place at once: the document neither slides nor fades, only the tab moves", curName().c_str());
-        for (int k = 1; k <= 9; k += 2)   // the motion at 10, 30, 50, 70 and 90%, for a look at it
-        {
-            tabMotionTestFreeze(k / 10.0);
-            pump(60);
-            wchar_t n[64]; swprintf(n, 64, L"frame-tab-close-%d0.bmp", k);
-            tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
-        }
-        tabMotionTestFreeze(0.5);
-        pump(60);
+        saveTabFrames(L"tab-close");
         return shot(L"tab-close-fold");
     });
     add([] {
@@ -2484,20 +2511,10 @@ void buildSteps()
         check(g_untilOk, L"TF7", L"the glint passes and its window goes");
         // a bar with more tabs than room (scroll arrows): the glint still goes across the tab, not along the view
         views.activate(0, 0);
-        for (int i = 1; i <= 16; ++i)
-        {
-            wchar_t n[64]; swprintf(n, 64, L"scroll-arrows-tab-%02d.txt", i);
-            writeFile(path(n), "tab\r\n");
-            open(n);
-        }
+        openOverflowTabs();
         pump(400);
         HWND bar = views.tabBar(0);
-        bool arrows = false;
-        for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
-        {
-            wchar_t cls[32] = {};
-            if (::IsWindowVisible(c) && ::GetClassNameW(c, cls, 31) && ::lstrcmpiW(cls, UPDOWN_CLASSW) == 0) arrows = true;
-        }
+        const bool arrows = tabArrowsShown(bar);
         HWND s = curSci();
         sci(s, SCI_DOCUMENTEND);
         sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
@@ -2518,8 +2535,8 @@ void buildSteps()
         waitFor([] { return !tabMotionStats().overlayShown; }, 2000);
         for (int i = 1; i <= 16; ++i)
         {
-            wchar_t n[64]; swprintf(n, 64, L"scroll-arrows-tab-%02d.txt", i);
-            switchTo(n);
+            const std::wstring n = overflowTabName(i);
+            switchTo(n.c_str());
             if (curName() == n) nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
         }
         views.activate(1, 0);
@@ -2761,20 +2778,20 @@ void buildSteps()
         HWND s = curSci();
         sci(s, SCI_COLOURISE, 0, -1);
         // out of the box: every motion at the speed the user tuned it to, "editing fast" within 50 ms
+        auto tunedMs = [](int k) { return std::min(kMotionMaxMs, animMs(kMotionDefs[k].speed.baseMs, kMotionDefs[k].speed.defPercent)); };
         int tuned = 0;
         for (int k = 0; k < kMotionCount; ++k)
-            if (motionMs(k) == std::min(3000, animMs(kMotionDefs[k].ms, kMotionDefaultSpeed[k]))) ++tuned;
+            if (motionMs(k) == tunedMs(k)) ++tuned;
         const int rapidDefault = settings.getInt(modules[M_MOTION]->key(), L"RapidMs", -1);
         // the steps run at the designed times (100 %) and come quickly: each its own motion
-        for (int k = 0; k < kMotionCount; ++k) settings.setInt(modules[M_MOTION]->key(), (std::wstring(kMotionDefs[k].key) + L"Speed").c_str(), 100);
+        for (const MotionDef& d : kMotionDefs) settings.setInt(modules[M_MOTION]->key(), d.speed.key, 100);
         settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
         modules[M_MOTION]->loadOptions();
         settle(200);
         const MotionStats st = motionStats(s);
         check(modules[M_MOTION]->isEnabled() && !st.active && tuned == kMotionCount && rapidDefault == -1, L"MO0",
               L"editing motion on by default (%d motions so far), %d of %d at their default speeds (Cut %d ms, Paste %d ms), editing fast within %d ms",
-              st.total, tuned, kMotionCount, std::min(3000, animMs(kMotionDefs[0].ms, kMotionDefaultSpeed[0])), std::min(3000, animMs(kMotionDefs[3].ms, kMotionDefaultSpeed[3])),
-              kMotionRapidMs);
+              st.total, tuned, kMotionCount, tunedMs(0), tunedMs(3), kMotionRapidMs);
         return 100;
     });
     add([] {
@@ -3098,7 +3115,7 @@ void buildSteps()
         {
             BOOL ok = FALSE;
             const UINT ms = ::GetDlgItemInt(p, IDC_M_MS0 + k, &ok, FALSE);
-            if ((::IsDlgButtonChecked(p, IDC_M_ON0 + k) == BST_CHECKED) == motionOn(k) && ok && ms == 100 && motionMs(k) == kMotionDefs[k].ms) ++boxes;
+            if ((::IsDlgButtonChecked(p, IDC_M_ON0 + k) == BST_CHECKED) == motionOn(k) && ok && ms == 100 && motionMs(k) == kMotionDefs[k].speed.baseMs) ++boxes;
         }
         check(boxes == kMotionCount, L"MO18", L"KEX Settings > Motion: %d of %d motions with their tick and speed (100 %%: the designed time)", boxes, kMotionCount);
         return shot(L"settings-motion-page");
@@ -3107,21 +3124,21 @@ void buildSteps()
         // a speed typed on the page reaches the editor: Sort at 200 % takes half its time; all animations at 200 %
         // (the box at the bottom of the window) halve it again, and every other animation's time with it
         HWND p = prefPage(PAGE_MOTION);
-        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 200, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+        typeNumber(p, IDC_M_MS0 + 11, 200);
         pump(100);
         const int sortMs = motionMs(11);
         HWND d = settingsDialog();
-        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 200, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        typeNumber(d, IDC_KEX_SPEED, 200);
         pump(100);
         const int sortAll = motionMs(11), cutAll = motionMs(0);
-        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 900, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }   // more than the most: 400
+        typeNumber(p, IDC_M_MS0 + 11, 900);   // more than the most: 400
         pump(100);
         const int capped = settings.getInt(modules[M_MOTION]->key(), L"SortSpeed", -1);
-        check(settings.getInt(modules[M_MOTION]->key(), L"SortSpeed", -1) == 400 && sortMs == 170 && sortAll == 85 && cutAll == 160 && animSpeedAll() == 200,
+        check(capped == 400 && sortMs == 170 && sortAll == 85 && cutAll == 160 && animSpeedAll() == 200,
               L"MO19", L"Sort at 200 %% on the Motion page: %d ms (designed 340); all animations at 200 %%: %d ms, Cut %d ms (designed 320); 900 %% typed is kept at %d %%",
               sortMs, sortAll, cutAll, capped);
-        if (p) { ::SetDlgItemInt(p, IDC_M_MS0 + 11, 100, FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
-        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 100, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        typeNumber(p, IDC_M_MS0 + 11, 100);
+        typeNumber(d, IDC_KEX_SPEED, 100);
         if (d) ::SendMessageW(d, WM_CLOSE, 0, 0);
         HWND s = curSci();
         settings.setInt(modules[M_MOTION]->key(), L"RapidMs", kMotionRapidMs);
@@ -4248,26 +4265,25 @@ void buildSteps()
     });
 }
 
-// The views draw with DirectWrite, as Notepad++ does on Windows (under Wine it falls back to GDI by itself):
-// the editing motion and the tab slide on that path. Run alone with KexSuite_only=directwrite.
 // Every animation has a speed of its own, besides the speed for all (round 11b): the ones that had only the speed for all.
-void addOwnSpeedSteps(const std::function<void(std::function<int()>)>& add)
+void addOwnSpeedSteps(const StepAdder& add)
 {
     add([] {
         // ---- every animation has a speed of its own (the ones that followed only the speed for all before) ----
         // the box on its page shows 100 %; 200 % typed there halves its time; the speed for all at 200 % halves it again
-        for (int m : kOwnSpeedModules)
-        {
-            g_ownSpeedWasOn[m] = modules[m]->isEnabled();
-            if (!g_ownSpeedWasOn[m]) setModuleEnabled(m, true, false);
-        }
+        for (const SpeedBox& b : kOwnSpeeds)
+            if (!modules[b.module]->isEnabled())
+            {
+                g_ownSpeedTurnedOn[b.module] = true;
+                setModuleEnabled(b.module, true, false);
+            }
         openSettings(PAGE_EDITING);
         pump(300);
         int shown = 0;
         for (const SpeedBox& b : kOwnSpeeds)
         {
             BOOL ok = FALSE;
-            HWND p = prefPage(b.page);
+            HWND p = prefPage(pageOfModule(b.module));
             if (p && ::GetDlgItem(p, b.id) && ::GetDlgItemInt(p, b.id, &ok, FALSE) == 100 && ok) ++shown;
         }
         const int boxes = static_cast<int>(std::size(kOwnSpeeds));
@@ -4283,14 +4299,14 @@ void addOwnSpeedSteps(const std::function<void(std::function<int()>)>& add)
               L"swipe settle %d ms (220), quick note fade %d ms (150), glide to the middle %d ms (320)",
               fs.speed[fx::K_LETTER], fs.speed[fx::K_FLASH], fs.speed[fx::K_DROP], own.caretFade, own.snapGlide, own.swipeSettle, own.noteFade, own.noteGlide);
         HWND d = settingsDialog();
-        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 200, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        typeNumber(d, IDC_KEX_SPEED, 200);
         focusEditor();
         pump(150);
         const OwnTimes all = ownTimes();
         check(animSpeedAll() == 200 && fx::stats().speed[fx::K_FLASH] == 200 && all == OwnTimes{ 35, 30, 55, 38, 80 },
               L"SP3", L"and all animations at 200 %%: caret fade %d ms, tab snapping %d ms, swipe settle %d ms, quick note fade %d ms, glide %d ms",
               all.caretFade, all.snapGlide, all.swipeSettle, all.noteFade, all.noteGlide);
-        if (d) { ::SetDlgItemInt(d, IDC_KEX_SPEED, 100, FALSE); ::SendMessageW(d, WM_TIMER, 1, 0); }
+        typeNumber(d, IDC_KEX_SPEED, 100);
         openSettings(PAGE_EFFECTS);   // in front again (Wine puts the window under Notepad++ when the editor takes the focus)
         return 300;
     });
@@ -4302,7 +4318,7 @@ void addOwnSpeedSteps(const std::function<void(std::function<int()>)>& add)
         focusEditor();
         lettersFreezeAfter(-1);
         auto flashAt = [s](int percent, int waitMs) {
-            if (HWND p = prefPage(PAGE_EFFECTS)) { ::SetDlgItemInt(p, IDC_E_MS, static_cast<UINT>(percent), FALSE); ::SendMessageW(p, WM_TIMER, 1, 0); }
+            typeNumber(prefPage(PAGE_EFFECTS), IDC_E_MS, percent);
             until([] { return flashStats().live == 0; }, 2000);
             sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 1, 8));
             const FlashStats before = flashStats();
@@ -4316,15 +4332,15 @@ void addOwnSpeedSteps(const std::function<void(std::function<int()>)>& add)
         check(fast.live == 0 && slow.live >= 1, L"SP4", L"copy flash at 400 %%: %d left after 260 ms; at 25 %%: %d still showing after 500 ms", fast.live, slow.live);
         typeOwnSpeeds(100);
         if (HWND d = settingsDialog()) ::SendMessageW(d, WM_CLOSE, 0, 0);
-        for (int m : kOwnSpeedModules)
-            if (!g_ownSpeedWasOn[m]) setModuleEnabled(m, false, false);
+        for (int m = 0; m < M_COUNT; ++m)
+            if (std::exchange(g_ownSpeedTurnedOn[m], false)) setModuleEnabled(m, false, false);
         return until([] { return flashStats().live == 0; }, 3000);
     });
 }
 
 // Motions that did not play on the user's PC (round 11): a line moved past or as a wrapped line, a tab closed and
 // opened with the tab bar showing its scroll arrows, and the quick note opening where it was left.
-void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
+void addRegressionSteps(const StepAdder& add)
 {
     add([] {
         std::string text;
@@ -4405,34 +4421,13 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
         waitFor([s] { return !motionStats(s).active; }, 2000);
         tokCommand(IDM_EDIT_UNDO);
         settle(200);
-        // more tabs than the bar has room for: it shows its scroll arrows
-        for (int i = 0; i < 16; ++i)
-        {
-            wchar_t n[64]; swprintf(n, 64, L"a-tab-with-a-rather-long-name-%02d.txt", i);
-            writeFile(path(n), "overflow\r\n");
-            open(n);
-        }
+        openOverflowTabs();
         settle(300);
         return 100;
     });
-    auto arrowsShown = [] {
-        HWND ud = ::FindWindowExW(views.tabBar(views.viewOf(curSci())), nullptr, UPDOWN_CLASSW, nullptr);
-        return ud && ::IsWindowVisible(ud);
-    };
-    auto frames = [](const wchar_t* what) {
-        for (int k = 1; k <= 9; k += 2)
-        {
-            tabMotionTestFreeze(k / 10.0);
-            pump(60);
-            wchar_t n[64]; swprintf(n, 64, L"frame-%ls-%d0.bmp", what, k);
-            tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
-        }
-        tabMotionTestFreeze(0.5);
-        pump(60);
-    };
-    auto tabStep = [add, arrowsShown, frames](const wchar_t* id, const wchar_t* what, const wchar_t* pics, std::function<void()> act, bool closing) {
-        add([id, what, pics, act, closing, arrowsShown, frames] {
-            const bool arrows = arrowsShown();
+    auto tabStep = [add](const wchar_t* id, const wchar_t* what, const wchar_t* pics, const std::function<void()>& act, bool closing) {
+        add([id, what, pics, act, closing] {
+            const bool arrows = tabArrowsShown(views.tabBar(views.viewOf(curSci())));
             g_motion = tabMotionStats();
             tabMotionTestFreeze(0.5);
             act();
@@ -4442,7 +4437,7 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
             check(arrows && played == 1 && st.overlayShown && st.foldFrames > g_motion.foldFrames, id,
                   L"tab bar with scroll arrows (%ls): %ls plays (played %d, skipped +%d, in one go +%d; %.1f of %d px)", arrows ? L"shown" : L"NOT shown",
                   what, played, st.foldSkipped - g_motion.foldSkipped, st.foldBulk - g_motion.foldBulk, st.lastWidth, st.lastDx);
-            frames(pics);
+            saveTabFrames(pics);
             return shot(pics);
         });
         add([] {
@@ -4523,26 +4518,22 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
             sci(s, SCI_SETFIRSTVISIBLELINE, 0);
             sci(s, SCI_SETXOFFSET, 0);   // the view may be a narrow one of four: nothing here scrolls it sideways
             const int line = paste ? 3 : 5;
-            float fromX = 0, toX = 0;   // where the caret is before the edit, and where it ends up
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, line, 4));
+            settle(300);
+            const float toX = caretStats().mainX;   // where the caret ends up after the edit
             if (paste)
             {
                 const std::string clip = "PASTED words";
                 sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
-                sci(s, SCI_SETEMPTYSELECTION, posOf(s, line, 4));
-                settle(300);
-                toX = caretStats().mainX;
                 tokCommand(IDM_EDIT_PASTE);
                 settle(800);
             }
             else
             {
-                sci(s, SCI_SETEMPTYSELECTION, posOf(s, line, 4));
-                settle(300);
-                toX = caretStats().mainX;
                 sci(s, SCI_SETSEL, posOf(s, line, 4), posOf(s, line, 18));   // selected rightwards: the caret at its end
                 settle(300);
             }
-            fromX = caretStats().mainX;
+            const float fromX = caretStats().mainX;   // and where it is before
             // the caret glides slowly (320 ms) and doesn't blink, the motion holds near its start
             settings.setInt(modules[M_CARET]->key(), L"GlideSpeed", 25);
             modules[M_CARET]->loadOptions();
@@ -4555,9 +4546,8 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
             const MotionStats m = motionStats(s);
             const int kind = paste ? 4 : 1;
             check(m.active && m.started[kind] == g_motionBefore.started[kind] + 1 && m.caretX <= fromX + 1.5f && m.caretX >= toX - 1.5f, id,
-                  paste ? L"undo right after a paste: the caret shows between where it was and where it goes, never past them (x %.0f, was %.0f, goes to %.0f; text %.0f %% to go)"
-                        : L"Delete on a selection made rightwards: the caret shows between where it was and where it goes (x %.0f, was %.0f, goes to %.0f; text %.0f %% to go)",
-                  m.caretX, fromX, toX, m.gap * 100.0);
+                  L"%ls: the caret shows between where it was and where it goes, never past them (x %.0f, was %.0f, goes to %.0f; text %.0f %% to go)",
+                  paste ? L"undo right after a paste" : L"Delete on a selection made rightwards", m.caretX, fromX, toX, m.gap * 100.0);
             return shot(paste ? L"undo-after-paste-caret" : L"delete-selection-caret");
         });
         add([paste] {
@@ -4573,10 +4563,102 @@ void addRegressionSteps(const std::function<void(std::function<int()>)>& add)
     };
     caretRides(L"RG7", true);
     caretRides(L"RG7b", false);
+    add([] {
+        // Scintilla's own caret (the smooth caret off) is held back from the motion's picture too: at its place, on top
+        open(L"rg.txt");
+        HWND s = curSci();
+        focusEditor();
+        const bool caretWas = modules[M_CARET]->isEnabled();
+        if (caretWas) setModuleEnabled(M_CARET, false, false);
+        const LRESULT period = sci(s, SCI_GETCARETPERIOD);
+        sci(s, SCI_SETCARETPERIOD, 0);   // never blinks off
+        sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+        sci(s, SCI_SETXOFFSET, 0);
+        const intptr_t at = posOf(s, 3, 4);
+        const std::string clip = "PASTED words";
+        sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
+        sci(s, SCI_SETEMPTYSELECTION, at);
+        settle(300);
+        tokCommand(IDM_EDIT_PASTE);
+        settle(800);
+        slideTestFreeze(0.05);
+        g_motionBefore = motionStats(s);
+        tokCommand(IDM_EDIT_UNDO);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        const float place = static_cast<float>(sci(s, SCI_POINTXFROMPOSITION, 0, at));
+        check(m.active && m.started[4] == g_motionBefore.started[4] + 1 && std::abs(m.caretX - place) <= 2.0f, L"RG7c",
+              L"smooth caret off, undo right after a paste: Scintilla's own caret shows at its place over the moving text (x %.0f, its place %.0f; text %.0f %% to go)",
+              m.caretX, place, m.gap * 100.0);
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_SETCARETPERIOD, static_cast<WPARAM>(period));
+        if (caretWas) setModuleEnabled(M_CARET, true, false);
+        settle(200);
+        return 100;
+    });
     addOwnSpeedSteps(add);
+    addMotionCostSteps(add);
 }
 
-void addDirectWriteSteps(const std::function<void(std::function<int()>)>& add)
+// What an editing motion's frames cost (the speed pass after round 11): run in the focused mode and the full suite.
+void addMotionCostSteps(const StepAdder& add)
+{
+    add([] {
+        // an editing motion's frames: the view's picture is painted for its first frame (and again only when the view
+        // changes), the others are put together from it; against painting it for every frame, as before
+        std::string text;
+        for (int i = 1; i <= 80; ++i) text += "static int value" + std::to_string(i) + " = " + std::to_string(i * 7) + ";   // a line of the motion speed test\r\n";
+        writeFile(path(L"perf-motion.cpp"), text);
+        open(L"perf-motion.cpp");
+        focusEditor();
+        HWND s = curSci();
+        sci(s, SCI_COLOURISE, 0, -1);
+        settings.setInt(modules[M_MOTION]->key(), L"PasteSpeed", 25);   // a long paste: about a second of frames
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        settle(200);
+        struct Cost { int frames = 0, renders = 0; double ms = 0, renderMs = 0; };
+        auto paste = [s](bool everyFrame) {
+            motionTestEveryFrame(everyFrame);
+            const std::string clip = "pasted words, pasted words\r\nand a second line of them\r\n";
+            sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 0));
+            settle(300);
+            const MotionStats a = motionStats(s);
+            tokCommand(IDM_EDIT_PASTE);
+            waitFor([s] { return !motionStats(s).active; }, 4000);
+            const MotionStats b = motionStats(s);
+            Cost c;
+            c.frames = b.renders + b.reuses - a.renders - a.reuses;
+            c.renders = b.renders - a.renders;
+            c.renderMs = (b.renderMs - a.renderMs) / std::max(1, c.frames);
+            c.ms = c.renderMs + (b.presentMs - a.presentMs) / std::max(1, c.frames);
+            tokCommand(IDM_EDIT_UNDO);
+            waitFor([s] { return !motionStats(s).active; }, 4000);
+            settle(200);
+            return c;
+        };
+        const Cost every = paste(true);
+        const Cost once = paste(false);
+        motionTestEveryFrame(false);
+        tlog(L"INFO PERF editing motion, a frame: %.2f ms with the view painted once (%d of %d frames painted it, %.2f ms of that), "
+             L"%.2f ms painting it for every frame (%.2f ms of that)", once.ms, once.renders, once.frames, once.renderMs, every.ms, every.renderMs);
+        check(once.frames >= 10 && once.renders * 4 <= once.frames && every.renders == every.frames && every.frames >= 10, L"PERF2",
+              L"an editing motion paints the view once and puts its frames together from it: %d of %d frames painted it (%.2f ms a frame), "
+              L"against %d of %d (%.2f ms a frame)", once.renders, once.frames, once.ms, every.renders, every.frames, every.ms);
+        settings.setInt(modules[M_MOTION]->key(), L"PasteSpeed", 100);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", kMotionRapidMs);
+        modules[M_MOTION]->loadOptions();
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(200);
+        return 100;
+    });
+}
+
+// The views draw with DirectWrite, as Notepad++ does on Windows (under Wine it falls back to GDI by itself):
+// the editing motion and the tab slide on that path. Run alone with KexSuite_only=directwrite.
+void addDirectWriteSteps(const StepAdder& add)
 {
     add([] {
         std::string text;
@@ -4688,7 +4770,7 @@ void selfTestStart(const std::wstring& args)
     if (args.find(L"KexSuite_only=") != std::wstring::npos)
     {
         // just the DirectWrite steps (the editor as it draws on Windows) and the round's regression steps, then the result
-        auto add = [](std::function<int()> f) { g_steps.push_back(f); };
+        auto add = [](std::function<int()> f) { g_steps.push_back(std::move(f)); };
         add([] { ::MoveWindow(npp._nppHandle, 20, 16, 960, 660, TRUE); return 300; });
         addRegressionSteps(add);
         addDirectWriteSteps(add);

@@ -23,9 +23,10 @@ public:
 
     void loadOptions() override
     {
-        _glideMs = std::min(1000, animMs(80, animSpeed(key(), L"GlideSpeed", 80, L"GlideMs")));
+        _glideMs = std::min(1000, animMs(key(), kSpeedCaretGlide));
         _snapLines = std::max(1, std::min(255, settings.getInt(key(), L"SnapAfterLines", 12)));
-        _fadeMs = std::min(4000, animMs(140, animSpeed(key(), L"FadeSpeed")));   // the blink's fades
+        _fadeMs = animMs(key(), kSpeedCaretFade);
+        static_assert(kSpeedCaretFade.baseMs * kSpeedStretchMax <= 0xFFF, "the slowest fade fits KEXCARET_FADEMS");
         // how it blinks: 0 fades, 1 on and off like Notepad++'s caret, 2 not at all (once a checkbox, FadeBlink)
         _blink = settings.getInt(key(), L"Blink", -1);
         if (_blink < 0 || _blink > 2)
@@ -95,7 +96,7 @@ public:
     int glideMs() const { return _glideMs; }
 
 private:
-    int _glideMs = 80, _snapLines = 12, _blink = 0, _fadeMs = 140;
+    int _glideMs = kSpeedCaretGlide.baseMs, _snapLines = 12, _blink = 0, _fadeMs = kSpeedCaretFade.baseMs;
     bool _overtypeBlock = true;
     std::vector<HWND> _applied;
 };

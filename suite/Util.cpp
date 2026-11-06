@@ -195,25 +195,27 @@ void setAnimSpeedAll(int percent)
     g_animSpeed.store(percent, std::memory_order_relaxed);
 }
 
-int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs, const wchar_t* oldMsKey, int defPercent)
+int animSpeed(const wchar_t* sec, const SpeedDef& s)
 {
-    int pct = settings.getInt(sec, key, -1);
-    if (pct < 0 && oldMsKey)
+    int pct = settings.getInt(sec, s.key, -1);
+    if (pct < 0 && s.oldMsKey)
     {
         // a time set before speeds were percentages: the same time (0, which switched some off, is the fastest)
-        const int old = settings.getInt(sec, oldMsKey, -1);
-        if (old > 0) pct = static_cast<int>(std::lround(baseMs * 100.0 / old));
+        const int old = settings.getInt(sec, s.oldMsKey, -1);
+        if (old > 0) pct = static_cast<int>(std::lround(s.baseMs * 100.0 / old));
         else if (old == 0) pct = kSpeedMax;
     }
-    return std::clamp(pct < 0 ? defPercent : pct, kSpeedMin, kSpeedMax);
+    return std::clamp(pct < 0 ? s.defPercent : pct, kSpeedMin, kSpeedMax);
 }
 
-double animScale() { return 100.0 / animSpeedAll(); }
+double animStretch(int percent)
+{
+    return 100.0 / std::clamp(percent, kSpeedMin, kSpeedMax) * 100.0 / animSpeedAll();
+}
 
 int animMs(double baseMs, int percent)
 {
-    percent = std::clamp(percent, kSpeedMin, kSpeedMax);
-    return std::max(1, static_cast<int>(std::lround(baseMs * 100.0 / percent * animScale())));
+    return std::max(1, static_cast<int>(std::lround(baseMs * animStretch(percent))));
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -62,6 +62,11 @@ bool animationsAllowed(bool respect)
     return !respect || !::SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0) || anim;
 }
 
+bool itemRect(HWND bar, int i, RECT& r)
+{
+    return i >= 0 && ::SendMessageW(bar, TCM_GETITEMRECT, i, reinterpret_cast<LPARAM>(&r)) != 0;
+}
+
 // How much of a tab bar can be seen, from its top: 0 when none. Notepad++ sizes the tab control to the whole
 // pane and lays the view over its lower part, or over all of it with the tab bar hidden (and in F12 post-it
 // mode). One row of tabs only (scroll arrows or not).
@@ -76,7 +81,7 @@ int barStrip(HWND bar)
     if (rc.right < 8 || rc.bottom < 8) return 0;
     int strip = rc.bottom;
     RECT it{};
-    if (::SendMessageW(bar, TCM_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&it)) && it.bottom > 0) strip = std::min<int>(strip, it.bottom + 3);
+    if (itemRect(bar, 0, it) && it.bottom > 0) strip = std::min<int>(strip, it.bottom + 3);
     POINT org{ 0, 0 };
     ::ClientToScreen(bar, &org);
     for (int v = 0; v < views.count(); ++v)
@@ -90,19 +95,20 @@ int barStrip(HWND bar)
     return strip >= 8 ? strip : 0;
 }
 
-// Where a tab bar's scroll arrows start (shown when there are more tabs than room), or w without them.
+// A tab bar's scroll arrows (shown when there are more tabs than room), in the bar's client coordinates.
+bool arrowsRect(HWND bar, RECT& r)
+{
+    HWND ud = ::FindWindowExW(bar, nullptr, UPDOWN_CLASSW, nullptr);
+    if (!ud || !::IsWindowVisible(ud) || !::GetWindowRect(ud, &r)) return false;
+    ::MapWindowPoints(nullptr, bar, reinterpret_cast<POINT*>(&r), 2);
+    return true;
+}
+
+// Where they start, or w without them.
 int arrowsLeft(HWND bar, int w)
 {
-    for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
-    {
-        wchar_t cls[32] = {};
-        if (!::IsWindowVisible(c) || !::GetClassNameW(c, cls, 31) || ::lstrcmpiW(cls, UPDOWN_CLASSW) != 0) continue;
-        RECT ur{};
-        ::GetWindowRect(c, &ur);
-        ::MapWindowPoints(nullptr, bar, reinterpret_cast<POINT*>(&ur), 2);
-        return std::clamp<int>(ur.left, 0, w);
-    }
-    return w;
+    RECT ur{};
+    return arrowsRect(bar, ur) ? std::clamp<int>(ur.left, 0, w) : w;
 }
 
 // The part of a tab bar that can be seen, any layout (several rows, scroll arrows, tabs down the side):
@@ -134,17 +140,9 @@ RECT barVisible(HWND bar)
 RECT tabShows(HWND bar, int idx, const RECT& vis)
 {
     RECT it{}, none{};
-    if (!::SendMessageW(bar, TCM_GETITEMRECT, idx, reinterpret_cast<LPARAM>(&it))) return none;
-    RECT clip = vis;
-    for (HWND c = ::GetWindow(bar, GW_CHILD); c; c = ::GetWindow(c, GW_HWNDNEXT))
-    {
-        wchar_t cls[32] = {};
-        if (!::IsWindowVisible(c) || !::GetClassNameW(c, cls, 31) || ::lstrcmpiW(cls, UPDOWN_CLASSW) != 0) continue;
-        RECT ur{};
-        ::GetWindowRect(c, &ur);
-        ::MapWindowPoints(nullptr, bar, reinterpret_cast<POINT*>(&ur), 2);
-        if (ur.top < it.bottom && ur.bottom > it.top) clip.right = std::min(clip.right, ur.left);
-    }
+    if (!itemRect(bar, idx, it)) return none;
+    RECT clip = vis, ur{};
+    if (arrowsRect(bar, ur) && ur.top < it.bottom && ur.bottom > it.top) clip.right = std::min(clip.right, ur.left);
     RECT r{};
     if (!::IntersectRect(&r, &it, &clip) || r.right - r.left < 4 || r.bottom - r.top < 4) return none;
     return r;
@@ -204,13 +202,14 @@ struct BarFx {
     bool closing = true;
     int index = -1, dx = 0;         // the tab, and the room it takes (to the next tab's start)
     int x0b = 0, x0a = 0;           // where the tabs on its left end: before, and now
-    int rightOfB = 0, rightOfA = 0; // where the tabs on its right start: before, and now
     int rightB = 0, rightA = 0;
     int tabW = 0, tabTop = 0;       // the tab itself: its width, and where it starts from the bar's top
     bool head = false, tail = false;// tabs on its left / right, which glide (without any, there is only background)
     std::vector<uint32_t> back;     // one column of the bar's background, top to bottom
     double holdStart = 0, start = 0;
     bool folding = false;
+    int rightOfB() const { return x0b + (closing ? dx : 0); }   // where the tabs on its right start: before, and now
+    int rightOfA() const { return x0a + (closing ? 0 : dx); }
     // glints
     std::vector<Glint> glints;
     bool shown = false;
@@ -230,7 +229,7 @@ int backgroundColumn(HWND bar, int right)
     const int n = static_cast<int>(::SendMessageW(bar, TCM_GETITEMCOUNT, 0, 0));
     if (n == 0) return right / 2;
     RECT last{};
-    if (!::SendMessageW(bar, TCM_GETITEMRECT, n - 1, reinterpret_cast<LPARAM>(&last)) || last.right + 12 >= right) return -1;
+    if (!itemRect(bar, n - 1, last) || last.right + 12 >= right) return -1;
     return (last.right + right) / 2;
 }
 
@@ -389,22 +388,37 @@ void foldSkipped(const wchar_t* why, int a = 0, int b = 0)
     if (logged < 20) { ++logged; log(L"tab close/open not played: %ls (%d, %d)", why, a, b); }
 }
 
-bool itemRect(HWND bar, int i, RECT& r)
+// The tab's room (to the next tab's start), its width and where it starts from the bar's top.
+void measureTab(HWND bar, int i, const RECT& it, BarFx& b)
 {
-    return i >= 0 && ::SendMessageW(bar, TCM_GETITEMRECT, i, reinterpret_cast<LPARAM>(&r)) != 0;
+    RECT next{};
+    b.dx = (itemRect(bar, i + 1, next) && next.left > it.left) ? next.left - it.left : it.right - it.left;
+    b.tabW = it.right - it.left;
+    b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
 }
 
-// Tabs that glide by shift as p goes from 0 to 1: drawn as they were (columns [b0, b1) of the bar before) and,
-// over that, as they are (columns [a0, a1) now), each where the glide has them. Where the bar scrolls by the
-// change, tabs leave on one side as the ones the bar shows now come in on the other. A scroll further than the
-// bar is wide glides one bar's width: the tabs between are never seen.
-void glide(BarFx& b, int b0, int b1, int a0, int a1, int shift, double p, int clip)
+// A glide no further than the bar is wide: the tabs between are never seen.
+int clampShift(const BarFx& b, int shift)
 {
     const int span = std::max(1, std::min(b.rightA, b.rightB));
-    shift = std::clamp(shift, -span, span);
+    return std::clamp(shift, -span, span);
+}
+
+// Tabs that glide by shift as p goes from 0 to 1, left of the scroll arrows (as they are now): drawn as they were
+// (columns [b0, b1) of the bar before) and, over that, as they are (columns [a0, a1) now), each where the glide has
+// them. Where the bar scrolls by the change, tabs leave on one side as the ones the bar shows now come in on the other.
+void glide(BarFx& b, int b0, int b1, int a0, int a1, int shift, double p)
+{
+    shift = clampShift(b, shift);
     const int offB = static_cast<int>(std::lround(shift * p)), offA = offB - shift;
-    blitColumns(b.frame, b.before, b0, std::min(b1, b.rightB), offB, clip, b.h);
-    blitColumns(b.frame, b.after, a0, std::min(a1, b.rightA), offA, clip, b.h);
+    b1 = std::min({ b1, b.rightB, b.before.w });
+    a1 = std::min({ a1, b.rightA, b.after.w });
+    b0 = std::max(b0, 0);
+    a0 = std::max(a0, 0);
+    // the bar as it was shows only where the bar as it is doesn't cover it (on a bar without scroll arrows, only
+    // the room the tab leaves or takes)
+    if (b0 + offB < a0 + offA || b1 + offB > a1 + offA || a1 <= a0) blitColumns(b.frame, b.before, b0, b1, offB, b.rightA, b.h);
+    blitColumns(b.frame, b.after, a0, a1, offA, b.rightA, b.h);
 }
 
 class TabFold : public Module {
@@ -414,7 +428,7 @@ public:
 
     void loadOptions() override
     {
-        _ms = std::min(3840, animMs(240, animSpeed(key(), L"Speed", 240, L"DurationMs")));
+        _ms = animMs(key(), kSpeedFold);
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
     }
 
@@ -469,18 +483,13 @@ public:
         {
             // a tab out of sight (scrolled away behind the arrows) just goes
             if (!itemRect(bar, index, it) || it.right <= 0 || it.left >= b.rightB) { foldSkipped(L"the closed tab is scrolled out of sight", it.left, b.rightB); return; }
-            RECT next{};
             b.x0b = it.left;
-            b.dx = (itemRect(bar, index + 1, next) && next.left > it.left) ? next.left - it.left : it.right - it.left;
-            b.tabW = it.right - it.left;
-            b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
-            b.rightOfB = b.x0b + b.dx;
+            measureTab(bar, index, it, b);
         }
         else
         {
             if (index < n && itemRect(bar, index, it)) b.x0b = it.left;
             else b.x0b = (n > 0 && itemRect(bar, n - 1, it)) ? it.right : 0;
-            b.rightOfB = b.x0b;
         }
         if (!grab(bar, b.before, b.w, b.h)) return;
         b.back.clear();
@@ -521,18 +530,13 @@ public:
             b.tail = b.index < n;
             ok = b.tail ? itemRect(bar, b.index, it) : itemRect(bar, b.index - 1, it);
             b.x0a = b.tail ? it.left : it.right;
-            b.rightOfA = b.x0a;
         }
         else
         {
-            RECT next{};
             ok = itemRect(bar, b.index, it);
             b.x0a = it.left;
-            b.dx = (itemRect(bar, b.index + 1, next) && next.left > it.left) ? next.left - it.left : it.right - it.left;
-            b.tabW = it.right - it.left;
-            b.tabTop = std::max(0, static_cast<int>(it.top) - 2);
+            measureTab(bar, b.index, it, b);
             b.tail = b.index + 1 < n;
-            b.rightOfA = b.x0a + b.dx;
             ok = ok && b.x0a + b.tabW > 0 && b.x0a < b.rightA;   // a new tab out of sight: the bar just changes
         }
         if (!ok || b.dx <= 0 || b.tabW <= 0 || b.rightA <= 0 || b.rightB <= 0)
@@ -564,8 +568,7 @@ public:
         // opens first and the tab rises into it. Both sides of it glide on the same spring.
         const double p = b.closing ? springOut((t - 0.2) / 0.8) : springOut(t / 0.7);
         s_stats.lastWidth = static_cast<float>(b.dx * (b.closing ? 1.0 - p : p));
-        const int span = std::max(1, std::min(b.rightA, b.rightB));
-        const int shiftL = std::clamp(b.x0a - b.x0b, -span, span);
+        const int shiftL = clampShift(b, b.x0a - b.x0b);
         const int offL = static_cast<int>(std::lround(shiftL * p));
         // the tab, whole and upright, moved down: sinking below the bar's edge (accelerating away), or rising
         // from below it (settling softly), and carried along with the tabs on its left
@@ -581,9 +584,9 @@ public:
         }
         // the tabs on either side, gliding (whole pixels: text never blurs); with none on the right, the background
         // is already in place (copying it would slide the selected tab's edge along)
-        if (b.head) glide(b, 0, b.x0b, 0, b.x0a, b.x0a - b.x0b, p, clip);
+        if (b.head) glide(b, 0, b.x0b, 0, b.x0a, b.x0a - b.x0b, p);
         else blitColumns(b.frame, b.after, 0, b.x0a, 0, clip, b.h);   // the bar's margin
-        if (b.tail) glide(b, b.rightOfB, b.rightB, b.rightOfA, b.rightA, b.rightOfA - b.rightOfB, p, clip);
+        if (b.tail) glide(b, b.rightOfB(), b.rightB, b.rightOfA(), b.rightA, b.rightOfA() - b.rightOfB(), p);
         ++s_stats.foldFrames;
         return true;
     }
@@ -612,7 +615,7 @@ private:
     }
 
     std::vector<HWND> _bars;
-    int _ms = 180;
+    int _ms = kSpeedFold.baseMs;
     bool _respect = true;
 };
 
@@ -627,7 +630,7 @@ public:
     void loadOptions() override
     {
         _respect = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
-        _ms = std::min(6720, animMs(420, animSpeed(key(), L"Speed", 420, L"DurationMs")));
+        _ms = animMs(key(), kSpeedGlint);
         s_stats.glintMs = static_cast<int>(_ms);
     }
 
@@ -794,7 +797,7 @@ private:
     }
 
     bool _respect = true;
-    double _lastStart = 0, _ms = 420;
+    double _lastStart = 0, _ms = kSpeedGlint.baseMs;
 };
 
 void Motion::settled(HWND bar)

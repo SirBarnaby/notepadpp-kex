@@ -1,4 +1,4 @@
-From 67988a076e8e21e2080e9fc564e5793da498286c Mon Sep 17 00:00:00 2001
+From a6edade4f92d9fd126c94567f583b3ef326422b8 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -82,16 +82,16 @@ Claude-Session: https://claude.ai/code/session_01KLNHuTvRwta8ebaSJBmh3h
  PowerEditor/src/menuCmdID.h                   |    21 +
  PowerEditor/src/resource.h                    |     7 +-
  PowerEditor/src/winmain.cpp                   |    11 +
- scintilla/include/KexScintilla.h              |   143 +
+ scintilla/include/KexScintilla.h              |   148 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 19783 +++++++++-------
- scintilla/src/Editor.h                        |  1678 +-
+ scintilla/src/Editor.cxx                      | 19826 +++++++++-------
+ scintilla/src/Editor.h                        |  1688 +-
  scintilla/src/KexSurface.h                    |    21 +
  scintilla/win32/ScintillaWin.cxx              |  8785 +++----
  scintilla/win32/SurfaceD2D.cxx                |    59 +-
  scintilla/win32/SurfaceGDI.cxx                |    18 +-
- 46 files changed, 19035 insertions(+), 14673 deletions(-)
+ 46 files changed, 19093 insertions(+), 14673 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
@@ -5402,10 +5402,10 @@ index a675012..77021db 100644
  			// First of all, destroy static object NppParameters
 diff --git a/scintilla/include/KexScintilla.h b/scintilla/include/KexScintilla.h
 new file mode 100644
-index 0000000..ad7fed8
+index 0000000..b893693
 --- /dev/null
 +++ b/scintilla/include/KexScintilla.h
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,148 @@
 +// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret, the tab slide, the motion of
 +// edits, and glass.
 +//
@@ -5463,7 +5463,8 @@ index 0000000..ad7fed8
 +	                     // 4 stopped (SCI_KEX_SLIDE 0), 5 the drawing target was dropped, 6 nothing was painted
 +	int held;            // the slide is set up to stay where SCI_KEX_SLIDEPOS puts it
 +};
-+// Self-test only: wParam = fraction in thousandths to stop the slide at (-1 = run normally).
++// Self-test only: wParam = fraction in thousandths to stop the slide at (-1 = run normally). wParam -2: lParam 1 paints
++// the view's picture again for every frame of a motion, as before it was kept (to compare the speed), 0 keeps it.
 +#define SCI_KEX_SLIDETEST 0x4B48
 +// A slide started with lParam 0 (held): wParam = how far the new document is in, in ten-thousandths of the
 +// view's width (0 = only the old picture, 10000 = only the new document). lParam 1 ends the slide there:
@@ -5516,6 +5517,10 @@ index 0000000..ad7fed8
 +	int jumpLines;            // the last jump: lines between the old and the new first line (negative: up)
 +	int lines;                // the last line motion: lines that moved (move line, indent, fold, sort)
 +	float caretX;             // the last edit motion's frame: where the main caret showed (client x)
++	float renderMs;           // time spent on the motions' frames: painting the view's picture, and putting the frame together
++	float presentMs;
++	int renders;              // frames that painted the view's picture, and frames that used it as it was
++	int reuses;
 +};
 +
 +// Glass (Notepad++ KEX's see-through editor). wParam: KEXGLASS_* flags (0 = off); lParam: the colour (0xBBGGRR) that is to
@@ -5630,10 +5635,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..228c9f0 100644
+index 1465bac..530530b 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,10604 @@
+@@ -1,9179 +1,10647 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -15265,6 +15270,7 @@ index 1465bac..228c9f0 100644
 +
 +	if ((rc.bottom > rc.top) && (rc.right > rc.left)) {
 +		wMain.InvalidateRectangle(rc);
++		kexPictureStale = true;
 +	}
 +}
 +
@@ -15279,6 +15285,7 @@ index 1465bac..228c9f0 100644
 +	//Platform::DebugPrintf("Redraw all\n");
 +	const PRectangle rcClient = GetClientRectangle();
 +	wMain.InvalidateRectangle(rcClient);
++	kexPictureStale = true;
 +	if (HasMarginWindow()) {
 +		wMargin.InvalidateAll();
 +	} else if (paintState == PaintState::notPainting) {
@@ -16747,11 +16754,17 @@ index 1465bac..228c9f0 100644
 +	Surface *target = surfaceWindow;
 +	PRectangle area = rcArea;
 +	const KexTarget kexTarget = KexPaintTarget(surfaceWindow, rcArea, rcClient, &target, &area);
++	// A motion's frames after its first: the view's picture is still as it is (nothing in it moves, the carets go on
++	// top), so only the frame is put together. Anything else that changes the view paints it again.
++	const bool kexMotionFrame = kexTarget == KexTarget::slide && kexSlideDir == 4;
++	const bool kexReuse = kexMotionFrame && KexCaretsOnTop(kexTarget) && !kexPictureStale && !kexPictureEveryFrame &&
++		kexPictureTop == topLine && kexPictureX == xOffset && kexRingStartMs < 0;
++	const double kexT0 = kexMotionFrame ? KexNowMs() : 0;
 +
 +	if (!view.bufferedDraw)
 +		target->SetClip(area);
 +
-+	if (paintState != PaintState::abandoned) {
++	if (paintState != PaintState::abandoned && !kexReuse) {
 +		if (vs.marginInside) {
 +			PaintSelMargin(target, area);
 +			PRectangle rcRightMargin = rcClient;
@@ -16785,18 +16798,26 @@ index 1465bac..228c9f0 100644
 +		return;
 +	}
 +
-+	view.kexSeen.clear();
-+	view.PaintText(target, *this, vs, area, rcClient);
-+	if (kexOn) {
-+		// a motion's pictures are painted without the carets, which go on top of each frame once it is put together:
-+		// so a caret moves only by its own glide, and not with the text around it as well (an undo just after a
-+		// paste threw the caret far to the right, the way the text after it came from). The page sliding to a far
-+		// line keeps its caret in the picture.
-+		kexCaretsHeld.clear();
-+		kexCaretsLater = (kexTarget == KexTarget::slide || kexTarget == KexTarget::capture) && kexSlideDir == 4 &&
-+			kexMotion.kind != KexMotionKind::jump;
-+		KexPaintCarets(target, area, rcClient);
++	// A motion's pictures are painted without the carets, which go on top of each frame once it is put together:
++	// so a caret moves only by its own glide, and not with the text around it as well (an undo just after a paste
++	// threw the caret far to the right, the way the text after it came from). Scintilla's own caret too.
++	kexCaretsHeld.clear();
++	kexCaretsLater = KexCaretsOnTop(kexTarget);
++	if (!kexReuse) {
++		if (kexMotionFrame) {
++			kexPictureStale = false;
++			kexPictureTop = topLine;
++			kexPictureX = xOffset;
++		}
++		view.kexCollect = kexOn || kexCaretsLater;
++		view.kexSeen.clear();
++		view.PaintText(target, *this, vs, area, rcClient);
++		view.kexCollect = kexOn;
 +	}
++	if (kexOn)
++		KexPaintCarets(target, area);
++	else if (kexCaretsLater)
++		KexHoldStockCarets();
 +	if (kexRingStartMs >= 0 && kexTarget != KexTarget::capture)
 +		KexPaintRing(target, area);
 +
@@ -16810,7 +16831,13 @@ index 1465bac..228c9f0 100644
 +	if (!view.bufferedDraw)
 +		target->PopClip();
 +
++	const double kexT1 = kexMotionFrame ? KexNowMs() : 0;
 +	KexPresent(kexTarget, surfaceWindow, target, rcArea, rcClient);
++	if (kexMotionFrame) {
++		kexMotionStats.renderMs += kexT1 - kexT0;
++		kexMotionStats.presentMs += KexNowMs() - kexT1;
++		++(kexReuse ? kexMotionStats.reuses : kexMotionStats.renders);
++	}
 +
 +	NotifyPainted();
 +}
@@ -16875,7 +16902,7 @@ index 1465bac..228c9f0 100644
 +
 +// After the text is painted: take the carets EditView recorded as new targets, then draw every caret
 +// at its animated position, and time the next frame.
-+void Editor::KexPaintCarets(Surface *surface, PRectangle rcArea, PRectangle rcClient) {
++void Editor::KexPaintCarets(Surface *surface, PRectangle rcArea) {
 +	const double now = KexNowMs();
 +	const size_t n = sel.Count();
 +	if (vs.lineHeight != kexLineHeight) {
@@ -16917,9 +16944,7 @@ index 1465bac..228c9f0 100644
 +	}
 +	double nextBlink = -1;
 +	const float alpha = KexBlinkAlpha(now, &nextBlink);
-+	PRectangle rcText = rcClient;
-+	rcText.left = static_cast<XYPOSITION>(vs.textStart);
-+	rcText.right -= vs.rightMarginWidth;
++	const PRectangle rcText = GetTextRectangle();
 +	const PRectangle rcClip(std::max(rcText.left, rcArea.left), std::max(rcText.top, rcArea.top),
 +		std::min(rcText.right, rcArea.right), std::min(rcText.bottom, rcArea.bottom));
 +	bool gliding = false;
@@ -16950,7 +16975,7 @@ index 1465bac..228c9f0 100644
 +		if (a > 0.004f && rc.Intersects(rcClip)) {
 +			const ColourRGBA colour(t.colour, static_cast<unsigned int>(a * 255.0f + 0.5f));
 +			if (kexCaretsLater)
-+				kexCaretsHeld.push_back({ rc, colour });
++				kexCaretsHeld.push_back({ rc, colour, t.main });
 +			else
 +				surface->FillRectangle(rc, Fill(colour));
 +		}
@@ -16974,23 +16999,37 @@ index 1465bac..228c9f0 100644
 +	kexStats.workMs += KexNowMs() - now;
 +}
 +
++// Scintilla's own carets (the smooth caret off), recorded instead of painted into a motion's picture: held back
++// as they are, blinking as Scintilla's own (a block one shows the character through it, as the smooth one does).
++void Editor::KexHoldStockCarets() {
++	const bool on = caret.active && caret.on;
++	const XYPOSITION top = static_cast<XYPOSITION>(topLine) * vs.lineHeight;
++	for (const KexCaretTarget &t : view.kexSeen) {
++		if (t.blinks && !on)
++			continue;
++		const XYPOSITION x = t.x + vs.textStart - xOffset;
++		kexCaretsHeld.push_back({ PRectangle(x, t.y - top, x + t.w, t.y - top + t.h), ColourRGBA(t.colour, t.block ? 140 : 255), t.main });
++	}
++}
++
 +// The carets held back from a motion's picture, on top of the frame put together from it.
-+void Editor::KexDrawHeldCarets(Surface *surfaceWindow, PRectangle rcClient) {
++void Editor::KexDrawHeldCarets(Surface *surfaceWindow) {
 +	kexCaretsLater = false;
 +	if (kexCaretsHeld.empty())
 +		return;
-+	PRectangle rcText = rcClient;
-+	rcText.left = static_cast<XYPOSITION>(vs.textStart);
-+	rcText.right -= vs.rightMarginWidth;
-+	surfaceWindow->SetClip(rcText);
-+	for (const KexHeldCaret &c : kexCaretsHeld)
++	surfaceWindow->SetClip(GetTextRectangle());
++	for (const KexHeldCaret &c : kexCaretsHeld) {
 +		surfaceWindow->FillRectangle(c.rc, Fill(c.colour));
++		if (c.main && kexSlideDir == 4)
++			kexMotionStats.caretX = static_cast<float>(c.rc.left);	// where the main caret showed in the motion
++	}
 +	surfaceWindow->PopClip();
 +	kexCaretsHeld.clear();
 +}
 +
 +// Repaint where carets were drawn and where they are now, so the next paint draws the next frame.
 +void Editor::KexInvalidate() {
++	const bool stale = kexPictureStale;	// the carets alone: a motion's picture holds none
 +	const double now = KexNowMs();
 +	for (const PRectangle &rc : kexOnScreen)
 +		RedrawRect(PRectangle(rc.left - 1, rc.top - 1, rc.right + 1, rc.bottom + 1));
@@ -17003,6 +17042,7 @@ index 1465bac..228c9f0 100644
 +		const XYPOSITION y = t.y - static_cast<XYPOSITION>(topLine) * vs.lineHeight;
 +		RedrawRect(PRectangle(x - 1, y - 1, x + t.w + 1, y + t.h + 1));
 +	}
++	kexPictureStale = stale;
 +}
 +
 +// ---- KEX tab slide (KexScintilla.h) ----
@@ -17034,6 +17074,7 @@ index 1465bac..228c9f0 100644
 +			kexSlideNew = surfaceWindow->AllocatePixMap(width, height);
 +			kexNewWidth = width;
 +			kexNewHeight = height;
++			kexPictureStale = true;
 +		}
 +		if (!kexSlideNew || !kexSlideNew->Initialised()) {
 +			KexEndSlide(true, 3);
@@ -17076,7 +17117,7 @@ index 1465bac..228c9f0 100644
 +	if (mode == KexTarget::capture) {
 +		// the old picture is taken; the screen keeps showing it until the new document is painted
 +		surfaceWindow->Copy(rcClient, Point(rcClient.left, rcClient.top), *target);
-+		KexDrawHeldCarets(surfaceWindow, rcClient);
++		KexDrawHeldCarets(surfaceWindow);
 +		kexSlideCapture = false;
 +		kexSlideStart = -1;
 +		++kexSlideStats.captures;
@@ -17084,7 +17125,7 @@ index 1465bac..228c9f0 100644
 +	}
 +	if (kexSlideDir == 4) {
 +		KexPresentMotion(surfaceWindow, rcClient);
-+		KexDrawHeldCarets(surfaceWindow, rcClient);
++		KexDrawHeldCarets(surfaceWindow);
 +		return;
 +	}
 +	// slide: the old picture moves out, the new one follows it in
@@ -17250,6 +17291,7 @@ index 1465bac..228c9f0 100644
 +	kexMotion = KexMotionState();
 +	kexMotion.kind = kind;
 +	kexMotion.open = true;
++	kexPictureStale = true;
 +	kexMotion.topLine = topLine;
 +	kexMotion.xOffset = xOffset;
 +	kexMotion.lineHeight = vs.lineHeight;
@@ -17351,17 +17393,16 @@ index 1465bac..228c9f0 100644
 +	switch (static_cast<int>(kind)) {
 +	case KEXM_MOVELINE: {
 +		// the moved lines and the line they pass, as they are now: all shown (not folded away); a wrapped line
-+		// takes several rows and moves as one band
++		// takes several rows and moves as one band (their rows are measured with the move, KexPresentMotion)
 +		const Sci::Line from = kexMotion.lineFrom + std::min(0, kexMotion.lineDelta);
 +		const Sci::Line to = kexMotion.lineTo + std::max(0, kexMotion.lineDelta);
-+		if (from < 0 || to > pdoc->LinesTotal())
++		if (from < 0 || to > pdoc->LinesTotal() || from >= to)
 +			return false;
 +		for (Sci::Line line = from; line < to; ++line) {
 +			if (!pcs->GetVisible(line))
 +				return false;
 +		}
-+		*rows = static_cast<int>(pcs->DisplayFromDoc(to) - pcs->DisplayFromDoc(from));
-+		return *rows > 0;
++		return true;
 +	}
 +	case KEXM_INDENT:
 +	case KEXM_SORT:
@@ -17579,11 +17620,6 @@ index 1465bac..228c9f0 100644
 +	kexMotionStats.gap = static_cast<float>(1.0 - closed);
 +	const XYPOSITION dx = std::round((1.0 - closed) * (xo - xn));
 +	const XYPOSITION dy = std::round((1.0 - closed) * (yo - yn));
-+	// where the main caret shows: on top of the frame where it is, or, painted into the new picture on the edit's line
-+	// after it, moved with the text after the edit
-+	kexMotionStats.caretX = kexStats.mainX;
-+	if (!kexCaretsLater && closed < 1.0 && kexStats.visible && std::abs(kexStats.mainY - yn) < 1 && kexStats.mainX >= xn)
-+		kexMotionStats.caretX += static_cast<float>(dx);
 +	const XYPOSITION clipTop = m.style == KexEditStyle::peel ? m.peelTop : 0;
 +	auto clip = [&](PRectangle rc) noexcept {
 +		rc.left = std::max(rc.left, left);
@@ -21370,7 +21406,9 @@ index 1465bac..228c9f0 100644
 +		case TickReason::caret:
 +			caret.on = !caret.on;
 +			if (caret.active && !kexOn) {	// KEX: the smooth caret blinks on its own timer
++				const bool stale = kexPictureStale;	// a motion's picture holds no caret
 +				InvalidateCaret();
++				kexPictureStale = stale;
 +			}
 +			break;
 +		case TickReason::kexCaret:
@@ -21380,7 +21418,9 @@ index 1465bac..228c9f0 100644
 +			if ((kexSlideOld && kexSlideDir) || kexRingStartMs >= 0) {
 +				if (kexRingStartMs >= 0 && !KexRingLive())
 +					kexRingStartMs = -1;	// this paint takes the ring away
++				const bool stale = kexPictureStale;	// the next frame: the view itself is as it was
 +				Redraw();
++				kexPictureStale = stale;
 +			} else {
 +				FineTickerCancel(TickReason::kexSlide);
 +			}
@@ -22481,6 +22521,10 @@ index 1465bac..228c9f0 100644
 +			info->jumpLines = kexMotionStats.jumpLines;
 +			info->lines = kexMotionStats.lines;
 +			info->caretX = kexMotionStats.caretX;
++			info->renderMs = static_cast<float>(kexMotionStats.renderMs);
++			info->presentMs = static_cast<float>(kexMotionStats.presentMs);
++			info->renders = kexMotionStats.renders;
++			info->reuses = kexMotionStats.reuses;
 +		}
 +		return (kexSlideDir == 4 && (kexSlideOld || kexSlideCapture)) || KexRingLive() ? 1 : 0;
 +	case SCI_KEX_GETSLIDEINFO:
@@ -22506,6 +22550,10 @@ index 1465bac..228c9f0 100644
 +		Redraw();
 +		return 1;
 +	case SCI_KEX_SLIDETEST:
++		if (static_cast<intptr_t>(wParam) == -2) {
++			kexPictureEveryFrame = lParam != 0;
++			return 0;
++		}
 +		kexSlideFreeze = static_cast<intptr_t>(wParam) < 0 ? -1.0 : static_cast<double>(wParam) / 1000.0;
 +		if (kexSlideOld)
 +			Redraw();
@@ -25418,10 +25466,10 @@ index 1465bac..228c9f0 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..494e2d0 100644
+index 85c1410..246bb6e 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
-@@ -1,762 +1,916 @@
+@@ -1,762 +1,926 @@
 -// Scintilla source code edit control
 -/** @file Editor.h
 - ** Defines the main editor class.
@@ -26396,7 +26444,7 @@ index 85c1410..494e2d0 100644
 +	XYPOSITION kexLineHeight = 0;
 +	double kexBlinkStart = 0;
 +	std::vector<KexCaret> kexCarets;
-+	struct KexHeldCaret { PRectangle rc; ColourRGBA colour; };
++	struct KexHeldCaret { PRectangle rc; ColourRGBA colour; bool main; };
 +	bool kexCaretsLater = false;		// this paint is a motion's picture: the carets go on top of its frame
 +	std::vector<KexHeldCaret> kexCaretsHeld;
 +	std::vector<PRectangle> kexOnScreen;	// client rectangles where a caret was drawn since the last tick
@@ -26408,8 +26456,9 @@ index 85c1410..494e2d0 100644
 +	static double KexNowMs();
 +	KexCaretTarget KexCurrent(const KexCaret &c, double now) const;
 +	float KexBlinkAlpha(double now, double *nextChangeMs) const;
-+	void KexPaintCarets(Surface *surface, PRectangle rcArea, PRectangle rcClient);
-+	void KexDrawHeldCarets(Surface *surfaceWindow, PRectangle rcClient);
++	void KexPaintCarets(Surface *surface, PRectangle rcArea);
++	void KexDrawHeldCarets(Surface *surfaceWindow);
++	void KexHoldStockCarets();
 +	void KexTick();
 +	void KexInvalidate();
 +	bool kexNoBlink = false;	// the caret never blinks
@@ -26431,6 +26480,9 @@ index 85c1410..494e2d0 100644
 +		float lastFraction = 0;
 +	} kexSlideStats;
 +	enum class KexTarget { direct, frame, slide, capture };
++	bool KexCaretsOnTop(KexTarget target) const noexcept {	// a motion's picture, not the page sliding to a far line (it keeps its caret)
++		return (target == KexTarget::slide || target == KexTarget::capture) && kexSlideDir == 4 && kexMotion.kind != KexMotionKind::jump;
++	}
 +	KexTarget KexPaintTarget(Surface *surfaceWindow, PRectangle rcArea, PRectangle rcClient, Surface **target, PRectangle *area);
 +	void KexPresent(KexTarget mode, Surface *surfaceWindow, Surface *target, PRectangle rcArea, PRectangle rcClient);
 +	bool KexStartSlide(int direction, int ms);
@@ -26483,7 +26535,13 @@ index 85c1410..494e2d0 100644
 +		int started[KEXM_COUNT] = {};
 +		int skipped = 0, refused = 0, ended = 0, frames = 0, lastKind = -1, style = 0, ringFrames = 0, jumpLines = 0, lines = 0;
 +		float fraction = 0, gap = 0, caretX = 0;
++		double renderMs = 0, presentMs = 0;
++		int renders = 0, reuses = 0;
 +	} kexMotionStats;
++	// the view's picture for a motion's frames: painted for its first frame and again only when the view changes
++	bool kexPictureStale = true, kexPictureEveryFrame = false;
++	Sci::Line kexPictureTop = -1;
++	XYPOSITION kexPictureX = -1;
 +	// find ring: a search's result, then the selection set to it
 +	Sci::Position kexFoundStart = -1, kexFoundEnd = -1;
 +	double kexFoundAt = -1e9;
@@ -26493,7 +26551,7 @@ index 85c1410..494e2d0 100644
 +	bool KexMotionBegin(KexMotionKind kind);
 +	void KexMotionClose();
 +	void KexMotionRecord(const DocModification &mh);
-+	bool KexMotionSize(KexMotionKind kind, int *ms) const noexcept;
++	bool KexMotionSize(KexMotionKind kind, int *rows) const noexcept;
 +	virtual bool KexPaintNow() { return false; }	// paint the view now (the platform's UpdateWindow)
 +	void KexPresentMotion(Surface *surfaceWindow, PRectangle rcClient);
 +	void KexFillRows(Surface *surface, PRectangle rc);
@@ -27128,7 +27186,7 @@ index 0000000..fb5c99f
 +
 +#endif
 diff --git a/scintilla/win32/ScintillaWin.cxx b/scintilla/win32/ScintillaWin.cxx
-index 1da0dcc..18f830c 100644
+index 1da0dcc..bcd7b19 100644
 --- a/scintilla/win32/ScintillaWin.cxx
 +++ b/scintilla/win32/ScintillaWin.cxx
 @@ -1,4202 +1,4583 @@
@@ -34049,7 +34107,7 @@ index 1da0dcc..18f830c 100644
 +
 +		case 0x4B46: {	// SCI_KEX_SLIDE (KexScintilla.h)
 +				// KEX tab slide: the picture of what the view shows is taken now, before the document changes
-+				sptr_t started = Editor::WndProc(iMessage, wParam, lParam);
++				sptr_t started = ScintillaBase::WndProc(iMessage, wParam, lParam);
 +				if (started) {
 +					::UpdateWindow(MainHWND());
 +					if (kexSlideCapture) {

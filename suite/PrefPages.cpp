@@ -20,50 +20,51 @@ int g_page = 0;                 // the page showing (or shown last)
 const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects", L"Motion" };
 bool g_filling = false;
 
-// a number box; an animation's speed (%), and where it took over from a time in ms, that time's key and default
-struct IntField { int id; int module; const wchar_t* key; int def; bool speed = false; const wchar_t* oldMs = nullptr; int baseMs = 0; };
+// a number box, or an animation's own speed (%) (KexSuite.h)
+struct IntField { int id = 0; int module = 0; const wchar_t* key = nullptr; int def = 0; const SpeedDef* speed = nullptr; };
+constexpr IntField speedBox(int id, int module, const SpeedDef& s) { return { id, module, s.key, s.defPercent, &s }; }
 const IntField kInts[] = {
     { IDC_L_GRAVITY, M_LETTERS, L"Gravity", 2200 },
     { IDC_L_MAX, M_LETTERS, L"MaxLetters", 200 },
     { IDC_L_SPIN, M_LETTERS, L"SpinDegPerSec", 260 },
     { IDC_L_DRIFT, M_LETTERS, L"DriftPxPerSec", 90 },
     { IDC_L_OPACITY, M_LETTERS, L"Opacity", 100 },
-    { IDC_L_SPEED, M_LETTERS, L"Speed", 100, true },
-    { IDC_C_GLIDE, M_CARET, L"GlideSpeed", 100, true, L"GlideMs", 80 },
+    speedBox(IDC_L_SPEED, M_LETTERS, kSpeedLetters),
+    speedBox(IDC_C_GLIDE, M_CARET, kSpeedCaretGlide),
     { IDC_C_SNAP, M_CARET, L"SnapAfterLines", 12 },
-    { IDC_C_FADE, M_CARET, L"FadeSpeed", 100, true },
+    speedBox(IDC_C_FADE, M_CARET, kSpeedCaretFade),
     { IDC_T_ZONE, M_TABS, L"HotZonePx", 6 },
     { IDC_T_DELAY, M_TABS, L"HideDelayMs", 350 },
     { IDC_G_TINT, M_GLASS, L"Tint", 40 },
     { IDC_H_OPACITY, M_HOTKEY, L"Opacity", 100 },
     { IDC_E_STRENGTH, M_FLASH, L"Strength", 100 },
-    { IDC_E_MS, M_FLASH, L"Speed", 100, true },
-    { IDC_W_MS, M_SLIDE, L"Speed", 100, true, L"DurationMs", 200 },
+    speedBox(IDC_E_MS, M_FLASH, kSpeedFlash),
+    speedBox(IDC_W_MS, M_SLIDE, kSpeedSlide),
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
-    { IDC_P_MS, M_SPLASH, L"Speed", 100, true },
+    speedBox(IDC_P_MS, M_SPLASH, kSpeedSplash),
     { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
-    { IDC_SW_MS, M_SWIPE, L"Speed", 100, true, L"DurationMs", 220 },
-    { IDC_S_SPEED, M_SNAP, L"Speed", 100, true },
-    { IDC_F_MS, M_TABFOLD, L"Speed", 100, true, L"DurationMs", 240 },
-    { IDC_GL_MS, M_GLINT, L"Speed", 100, true, L"DurationMs", 420 },
-    { IDC_H_ZOOMMS, M_HOTKEY, L"ZoomSpeed", 100, true, L"ZoomOpenMs", 320 },
-    { IDC_H_FADEMS, M_HOTKEY, L"FadeSpeed", 100, true },
-    { IDC_H_GLIDEMS, M_HOTKEY, L"GlideSpeed", 100, true },
-    { IDC_M_GLOW, M_MOTION, L"GlowSpeed", 100, true, L"GlowMs", 600 },
+    speedBox(IDC_SW_MS, M_SWIPE, kSpeedSwipe),
+    speedBox(IDC_S_SPEED, M_SNAP, kSpeedSnap),
+    speedBox(IDC_F_MS, M_TABFOLD, kSpeedFold),
+    speedBox(IDC_GL_MS, M_GLINT, kSpeedGlint),
+    speedBox(IDC_H_ZOOMMS, M_HOTKEY, kSpeedNoteZoom),
+    speedBox(IDC_H_FADEMS, M_HOTKEY, kSpeedNoteFade),
+    speedBox(IDC_H_GLIDEMS, M_HOTKEY, kSpeedNoteGlide),
+    speedBox(IDC_M_GLOW, M_MOTION, kSpeedMotionGlow),
     { IDC_M_RAPID, M_MOTION, L"RapidMs", kMotionRapidMs },
-    // the motions' speeds (KEXM_* order, kMotionDefs), each from its own default
-    { IDC_M_MS0 + 0, M_MOTION, L"CutSpeed", kMotionDefaultSpeed[0], true, L"CutMs", 320 },
-    { IDC_M_MS0 + 1, M_MOTION, L"DeleteSpeed", kMotionDefaultSpeed[1], true, L"DeleteMs", 260 },
-    { IDC_M_MS0 + 2, M_MOTION, L"DeleteLinesSpeed", kMotionDefaultSpeed[2], true, L"DeleteLinesMs", 260 },
-    { IDC_M_MS0 + 3, M_MOTION, L"PasteSpeed", kMotionDefaultSpeed[3], true, L"PasteMs", 260 },
-    { IDC_M_MS0 + 4, M_MOTION, L"UndoSpeed", kMotionDefaultSpeed[4], true, L"UndoMs", 260 },
-    { IDC_M_MS0 + 5, M_MOTION, L"MoveLineSpeed", kMotionDefaultSpeed[5], true, L"MoveLineMs", 220 },
-    { IDC_M_MS0 + 6, M_MOTION, L"FindSpeed", kMotionDefaultSpeed[6], true, L"FindMs", 300 },
-    { IDC_M_MS0 + 7, M_MOTION, L"IndentSpeed", kMotionDefaultSpeed[7], true, L"IndentMs", 220 },
-    { IDC_M_MS0 + 8, M_MOTION, L"DuplicateSpeed", kMotionDefaultSpeed[8], true, L"DuplicateMs", 240 },
-    { IDC_M_MS0 + 9, M_MOTION, L"JumpSpeed", kMotionDefaultSpeed[9], true, L"JumpMs", 320 },
-    { IDC_M_MS0 + 10, M_MOTION, L"FoldSpeed", kMotionDefaultSpeed[10], true, L"FoldMs", 240 },
-    { IDC_M_MS0 + 11, M_MOTION, L"SortSpeed", kMotionDefaultSpeed[11], true, L"SortMs", 340 },
+    // the motions' speeds, in KEXM_* order
+    speedBox(IDC_M_MS0 + 0, M_MOTION, kMotionDefs[0].speed),
+    speedBox(IDC_M_MS0 + 1, M_MOTION, kMotionDefs[1].speed),
+    speedBox(IDC_M_MS0 + 2, M_MOTION, kMotionDefs[2].speed),
+    speedBox(IDC_M_MS0 + 3, M_MOTION, kMotionDefs[3].speed),
+    speedBox(IDC_M_MS0 + 4, M_MOTION, kMotionDefs[4].speed),
+    speedBox(IDC_M_MS0 + 5, M_MOTION, kMotionDefs[5].speed),
+    speedBox(IDC_M_MS0 + 6, M_MOTION, kMotionDefs[6].speed),
+    speedBox(IDC_M_MS0 + 7, M_MOTION, kMotionDefs[7].speed),
+    speedBox(IDC_M_MS0 + 8, M_MOTION, kMotionDefs[8].speed),
+    speedBox(IDC_M_MS0 + 9, M_MOTION, kMotionDefs[9].speed),
+    speedBox(IDC_M_MS0 + 10, M_MOTION, kMotionDefs[10].speed),
+    speedBox(IDC_M_MS0 + 11, M_MOTION, kMotionDefs[11].speed),
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -105,12 +106,13 @@ const BoolField kBools[] = {
 };
 // one box on the Effects page for all of its animations: "Not when Windows animation effects are off"
 const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT, M_MOTION };
-// options the feature reads again at once: no restart (which would close the quick note, or take the token styles away)
+// options the feature reads again at once: no restart (which would close the quick note, or take the token styles away);
+// every speed is one of them
 bool liveOption(int id, int module)
 {
-    return module == M_TOKENS || module == M_MOTION || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE ||
-           id == IDC_H_ZOOM || id == IDC_H_ZOOMMS || id == IDC_H_FADEMS || id == IDC_H_GLIDEMS || id == IDC_E_STRENGTH || id == IDC_E_MS ||
-           id == IDC_W_MS || id == IDC_P_DROPS || id == IDC_P_MS || id == IDC_L_SPEED || id == IDC_S_SPEED || id == IDC_C_FADE || id == IDC_C_BLINK || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT;
+    return module == M_TOKENS || module == M_MOTION || module == M_CARET || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT ||
+           id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE || id == IDC_H_ZOOM || id == IDC_E_STRENGTH ||
+           id == IDC_P_DROPS;
 }
 // a drop-down list: the setting is the index of the picked item
 struct ComboField { int id; int module; const wchar_t* key; int def; const wchar_t* items; };
@@ -131,7 +133,7 @@ bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
 int fieldValue(const IntField& f)
 {
     const wchar_t* sec = modules[f.module]->key();
-    return f.speed ? animSpeed(sec, f.key, f.baseMs, f.oldMs, f.def) : settings.getInt(sec, f.key, f.def);
+    return f.speed ? animSpeed(sec, *f.speed) : settings.getInt(sec, f.key, f.def);
 }
 
 void fillStatus(HWND d)
@@ -270,7 +272,7 @@ void applyNumbers(HWND d)
         if (f.speed) v = std::clamp(v, kSpeedMin, kSpeedMax);
         if (!ok || v == fieldValue(f)) continue;
         settings.setInt(modules[f.module]->key(), f.key, v);
-        if (liveOption(f.id, f.module)) modules[f.module]->loadOptions();
+        if (f.speed || liveOption(f.id, f.module)) modules[f.module]->loadOptions();
         else changed[f.module] = true;
     }
     if (has(d, IDC_H_FILE))
@@ -436,11 +438,7 @@ void applySpeedAll(HWND d)
     if (v == animSpeedAll()) return;
     setAnimSpeedAll(v);
     for (int m = 0; m < M_COUNT; ++m)
-    {
-        if (!modules[m] || !modules[m]->isEnabled()) continue;
-        if (m == M_CARET) restart(m);   // the caret takes its time when it starts
-        else modules[m]->loadOptions();
-    }
+        if (modules[m] && modules[m]->isEnabled()) modules[m]->loadOptions();
 }
 
 // the window closes: what is still typed in a number box counts, as it would half a second later

@@ -72,8 +72,10 @@ public:
         _old = ::SelectObject(_dc, _bmp);
         ::BitBlt(_dc, 0, 0, _w, _h, screen, r.left, r.top, SRCCOPY | CAPTUREBLT);
         ::ReleaseDC(nullptr, screen);
+        // the point grabbed: under the cursor, on the tab (a quick pull may only start the drag once the cursor is well
+        // out of the tab bar, and the tab still comes to the cursor)
         POINT c; ::GetCursorPos(&c);
-        _grab = POINT{ c.x - r.left, c.y - r.top };
+        _grab = POINT{ std::clamp<LONG>(c.x - r.left, 0, _w - 1), std::clamp<LONG>(c.y - r.top, 0, _h - 1) };
         _home = r;
         _bar = tabBar;
         _animate = animate;
@@ -122,7 +124,7 @@ public:
             log(L"tab lift: drag cancelled with Esc");
             return;
         }
-        double t = _animate ? std::min(1.0, (nowMs() - _start) / (LIFT_MS * s_stretch)) : 1.0;
+        const double t = _animate ? std::min(1.0, (nowMs() - _start) / (LIFT_MS * s_stretch)) : 1.0;
         const double e = 1 - (1 - t) * (1 - t) * (1 - t);   // ease out
         const double scale = 1 + (LIFT_SCALE - 1) * e;
         const int lift = static_cast<int>(::MulDiv(3, dpiOf(_wnd), 96) * e + 0.5);
@@ -214,7 +216,7 @@ public:
     {
         _animate = settings.getInt(key(), L"Animate", 1) != 0;
         _liftOn = settings.getInt(key(), L"LiftTab", 1) != 0;
-        s_stretch = animMs(1000, animSpeed(key(), L"Speed")) / 1000.0;
+        s_stretch = animStretch(animSpeed(key(), kSpeedSnap));
     }
 
     bool selfCheck(std::wstring& why) override

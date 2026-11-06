@@ -61,10 +61,28 @@ double nowMs();   // QueryPerformanceCounter in ms
 const int kSpeedMin = 25, kSpeedMax = 400;
 int animSpeedAll();
 void setAnimSpeedAll(int percent);
-// one animation's own speed (sec/key), taken from its time in ms (oldMsKey) where only that was set so far
-int animSpeed(const wchar_t* sec, const wchar_t* key, int baseMs = 0, const wchar_t* oldMsKey = nullptr, int defPercent = 100);
+// One animation's own speed: its setting, the designed time it divides (ms), the setting in ms it took over from (before
+// speeds were percentages) and its default. The feature and its box in KEX Settings both read it from here.
+struct SpeedDef { const wchar_t* key; int baseMs; const wchar_t* oldMsKey = nullptr; int defPercent = 100; };
+inline constexpr int kSpeedStretchMax = (100 / kSpeedMin) * (100 / kSpeedMin);   // both speeds at their slowest
+inline constexpr SpeedDef kSpeedLetters{ L"Speed", 0 };                          // the effects' thread scales their age
+inline constexpr SpeedDef kSpeedFlash{ L"Speed", 0 };
+inline constexpr SpeedDef kSpeedSplash{ L"Speed", 0 };
+inline constexpr SpeedDef kSpeedCaretGlide{ L"GlideSpeed", 80, L"GlideMs" };
+inline constexpr SpeedDef kSpeedCaretFade{ L"FadeSpeed", 140 };                  // the blink's fades
+inline constexpr SpeedDef kSpeedSnap{ L"Speed", 0 };                             // stretches the lift, drop and glide
+inline constexpr SpeedDef kSpeedSlide{ L"Speed", 200, L"DurationMs" };
+inline constexpr SpeedDef kSpeedSwipe{ L"Speed", 220, L"DurationMs" };           // the settle after the fingers lift
+inline constexpr SpeedDef kSpeedFold{ L"Speed", 240, L"DurationMs" };
+inline constexpr SpeedDef kSpeedGlint{ L"Speed", 420, L"DurationMs" };
+inline constexpr SpeedDef kSpeedNoteZoom{ L"ZoomSpeed", 320, L"ZoomOpenMs" };
+inline constexpr SpeedDef kSpeedNoteFade{ L"FadeSpeed", 150 };
+inline constexpr SpeedDef kSpeedNoteGlide{ L"GlideSpeed", 0 };                   // stretches the spring to the middle
+inline constexpr SpeedDef kSpeedMotionGlow{ L"GlowSpeed", 600, L"GlowMs" };
+int animSpeed(const wchar_t* sec, const SpeedDef& s);   // the speed set for it (%)
+double animStretch(int percent = 100);   // what a designed time is multiplied by at that speed and the speed for all
 int animMs(double baseMs, int percent = 100);   // a designed time at that speed and the speed for all, in ms (1 at least)
-double animScale();                              // what a designed time is multiplied by: 100 / the speed for all
+inline int animMs(const wchar_t* sec, const SpeedDef& s) { return animMs(s.baseMs, animSpeed(sec, s)); }
 bool rectsIntersect(const RECT& a, const RECT& b);
 
 // A hidden message-only window that forwards to a member function.
@@ -226,19 +244,34 @@ FlashStats flashStats();
 // Editing motion (EditMotion.cpp): the editor animates its own edits (KexScintilla.h, SCI_KEX_SETMOTIONS), each
 // with its own switch and time, in the order of the core's KEXM_* kinds.
 const int kMotionCount = 12;
-struct MotionDef { const wchar_t* key; int ms; const wchar_t* menu; };
-extern const MotionDef kMotionDefs[kMotionCount];
-// each motion's speed (%) until it is set, as the user tuned them (2026-11-05), and "editing fast" (ms)
-inline constexpr int kMotionDefaultSpeed[kMotionCount] = { 180, 200, 300, 400, 250, 250, 100, 270, 330, 100, 100, 100 };
-inline constexpr int kMotionRapidMs = 50;
+struct MotionDef { const wchar_t* key; const wchar_t* menu; SpeedDef speed; };
+// the default speeds are the user's tuning (2026-11-05)
+inline constexpr MotionDef kMotionDefs[kMotionCount] = {
+    { L"Cut", L"Cut: picked up, then gone", { L"CutSpeed", 320, L"CutMs", 180 } },
+    { L"Delete", L"Delete in a line: wiped away", { L"DeleteSpeed", 260, L"DeleteMs", 200 } },
+    { L"DeleteLines", L"Delete across lines: fades, the rest closes up", { L"DeleteLinesSpeed", 260, L"DeleteLinesMs", 300 } },
+    { L"Paste", L"Paste: room is made, the text lights up", { L"PasteSpeed", 260, L"PasteMs", 400 } },
+    { L"Undo", L"Undo and redo: what changes shows", { L"UndoSpeed", 260, L"UndoMs", 250 } },
+    { L"MoveLine", L"Move lines up or down: they slide", { L"MoveLineSpeed", 220, L"MoveLineMs", 250 } },
+    { L"Find", L"Find: a ring closes onto the match", { L"FindSpeed", 300, L"FindMs", 100 } },
+    { L"Indent", L"Indent several lines: they glide", { L"IndentSpeed", 220, L"IndentMs", 270 } },
+    { L"Duplicate", L"Duplicate a line: the copy slides out", { L"DuplicateSpeed", 240, L"DuplicateMs", 330 } },
+    { L"Jump", L"Go to a far line: the page slides there", { L"JumpSpeed", 320, L"JumpMs", 100 } },
+    { L"Fold", L"Fold and unfold: the lines slide", { L"FoldSpeed", 240, L"FoldMs", 100 } },
+    { L"Sort", L"Sort lines: each glides to its place", { L"SortSpeed", 340, L"SortMs", 100 } },
+};
+inline constexpr int kMotionMaxMs = 3000;   // the core's limit for one motion
+inline constexpr int kMotionRapidMs = 50;   // "editing fast" (ms), as the user tuned it
 void applyMotions(HWND sciHwnd);       // an editor made later (the quick note) gets the motions too
 bool motionOn(int kind);
 int motionMs(int kind);   // its time now, from the speeds
 void setMotionOn(int kind, bool on);   // KEX > Motion's switches
 struct MotionStats { bool active = false; int started[kMotionCount] = {}; int total = 0, skipped = 0, refused = 0, ended = 0, frames = 0, lastKind = -1;
                      float fraction = 0, gap = 0; int style = 0, ringFrames = 0, jumpLines = 0, lines = 0;
-                     float caretX = 0; };   // the last edit motion's frame: where the main caret showed
+                     float caretX = 0;      // the last edit motion's frame: where the main caret showed
+                     float renderMs = 0, presentMs = 0; int renders = 0, reuses = 0; };   // the frames' cost (KexMotionInfo)
 MotionStats motionStats(HWND sciHwnd);
+void motionTestEveryFrame(bool on);   // self-test: paint the view's picture for every frame of a motion (to compare)
 struct SplashStats { int splashes = 0, lastTokens = 0, live = 0, spawned = 0; };
 SplashStats splashStats();
 struct SlideStats { int seen = 0, started = 0, skipped = 0, lastDir = 0, afterClose = 0; bool active = false;

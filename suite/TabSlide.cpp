@@ -26,7 +26,7 @@ public:
 
     void loadOptions() override
     {
-        _ms = std::min(3200, animMs(200, animSpeed(key(), L"Speed", 200, L"DurationMs")));
+        _ms = animMs(key(), kSpeedSlide);
         _respectAnim = settings.getInt(key(), L"RespectSystemAnimationSetting", 1) != 0;
         _onClose = settings.getInt(key(), L"SlideOnClose", 0) != 0;
     }
@@ -101,7 +101,7 @@ public:
         return !::SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0) || anim;
     }
 
-    int _ms = 200;
+    int _ms = kSpeedSlide.baseMs;
     bool _respectAnim = true, _onClose = false;
     int _seen = 0, _started = 0, _skipped = 0, _lastDir = 0, _afterClose = 0;
     intptr_t _closing = 0;
