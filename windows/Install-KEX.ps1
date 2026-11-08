@@ -185,7 +185,7 @@ function Remove-OldPlugin($npp) {
 }
 
 # Windows keeps showing an exe's old icon (Start menu, taskbar pins) from its icon cache; refresh it
-# so the KEX badge, or the plain icon after an uninstall, shows at once.
+# so the KEX icon, or the plain icon after an uninstall, shows at once.
 function Update-IconCache {
     $tool = Join-Path $env:SystemRoot 'System32\ie4uinit.exe'
     if (Test-Path $tool) { Start-Process $tool -ArgumentList '-show' -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue }

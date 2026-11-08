@@ -6,7 +6,7 @@
 # Steps: clone that version, run codemod.py (adds views 3 and 4 to every per-view settings pair,
 # including pairs added upstream since), then apply the hand-written patch with a 3-way merge.
 # base/ holds the files the patch was written against, so git can merge even across versions.
-# kex-icon.py then puts the KEX badge on that version's app icon, and the KEX suite (../suite) is
+# kex-icon.py then makes the app icon from the KEX logo (kex-logo.png), and the KEX suite (../suite) is
 # copied in as PowerEditor/src/KexSuite and built into notepad++.exe.
 # Exits 2 on a merge conflict, with the conflicting files listed; 4 if the build fails.
 set -euo pipefail
@@ -33,10 +33,9 @@ if ! git log -1 --format=%s | grep -q '^KEX'; then
     exit 2
   fi
 fi
-# the app icon with the KEX badge, drawn on this release's own icon (kex-icon.py needs Pillow)
+# the app icon, made from the KEX logo (kex-icon.py needs Pillow)
 ICO=PowerEditor/src/icons/npp.ico
-git show "HEAD:$ICO" > "$W/npp-upstream.ico"
-python3 "$HERE/kex-icon.py" "$W/npp-upstream.ico" "$W/npp-kex.ico"
+python3 "$HERE/kex-icon.py" "$HERE/kex-logo.png" "$W/npp-kex.ico"
 if ! cmp -s "$W/npp-kex.ico" "$ICO"; then cp "$W/npp-kex.ico" "$ICO"; touch PowerEditor/src/Notepad_plus.rc; fi
 # the suite is our own code, not a patch: always take the current copy
 SUITE="$HERE/../suite"

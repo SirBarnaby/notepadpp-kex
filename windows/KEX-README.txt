@@ -4,7 +4,7 @@ Notepad++ KEX
 This is the official Notepad++ portable package of the same version, except that notepad++.exe
 is built from Notepad++'s source with the KEX patch: four views, snap-out windows and the KEX
 features below, built in. It calls itself "Notepad++ KEX" in the title bar, the taskbar and the
-About box, and its icon is Notepad++'s own with a small sparkle badge in the corner. (plugins\KexSuite is an empty leftover for older update scripts; Notepad++
+About box, and has its own app icon. (plugins\KexSuite is an empty leftover for older update scripts; Notepad++
 KEX ignores it and Install-KEX.cmd removes it.)
 The updater folder is removed and disableNppAutoUpdate.xml is present, so an official update
 can't silently replace the KEX build. (The official notepad++.exe would drop the four views.)

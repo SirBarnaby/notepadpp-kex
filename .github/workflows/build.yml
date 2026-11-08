@@ -9,7 +9,7 @@ on:
     - cron: '23 5 * * *'
   push:
     branches: [main]
-    paths-ignore: ['README.md', 'assets/**']
+    paths-ignore: ['README.md', 'CHANGELOG.md', 'assets/**']
   workflow_dispatch:
     inputs:
       version:
@@ -115,13 +115,19 @@ jobs:
           else
             echo "::warning::The KEX_SIGNING_KEY secret isn't set, so this build is unsigned and installed copies won't install it."
           fi
+          # the release text: how to install, then the newest section of the patch notes
+          notes="$RUNNER_TEMP/release-notes.md"
+          { echo "Notepad++ $ver (official $TAG source) with the KEX patch built in. Download the zip, right-click it > Properties > Unblock, extract it, and read KEX-README.txt."
+            echo
+            awk '/^## /{n++} n==1' CHANGELOG.md
+            echo "All patch notes: [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md)"; } > "$notes"
           if gh release view "$TAG-kex" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             [ -f "$zip.sig" ] || gh release delete-asset "$TAG-kex" "$(basename "$zip").sig" -y -R "$GITHUB_REPOSITORY" 2>/dev/null || true
             gh release upload "$TAG-kex" "${files[@]}" --clobber -R "$GITHUB_REPOSITORY"
+            gh release edit "$TAG-kex" --notes-file "$notes" -R "$GITHUB_REPOSITORY"
           else
             gh release create "$TAG-kex" "${files[@]}" -R "$GITHUB_REPOSITORY" --latest="$LATEST" \
-              --title "Notepad++ $ver KEX" \
-              --notes "Notepad++ $ver (official $TAG source) with the KEX four-view patch and the KEX Suite plugin. Download the zip, right-click it > Properties > Unblock, extract it, and read KEX-README.txt."
+              --title "Notepad++ $ver KEX" --notes-file "$notes"
           fi
           gh issue list -R "$GITHUB_REPOSITORY" --state open --search "KEX build failed for Notepad++ $TAG in:title" --json number -q '.[].number' |
             while read -r n; do gh issue close "$n" -R "$GITHUB_REPOSITORY" -c "Fixed: $TAG-kex is published."; done

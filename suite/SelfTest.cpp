@@ -4,6 +4,7 @@
 // <testdir>\selftest-log.txt. "SHOT n name" lines ask the harness (test/run-selftest.sh) for a
 // screenshot; the step machine waits for <testdir>\ackN before going on.
 // Optional argument: KexSuite_testdir=C:\path (default: <plugin config dir>\KexSuite-selftest).
+// KexSuite_demo=all (or scene names) records the README's GIFs instead of testing (see addDemoSteps).
 #include "Overlay.h"
 #include "Effects.h"
 #include "KexSuiteRes.h"
@@ -16,6 +17,7 @@
 #include <cwchar>
 #include <cmath>
 #include <utility>
+#include <atomic>
 
 namespace kex {
 
@@ -1208,7 +1210,7 @@ void buildSteps()
         focusEditor();
         return 300;
     });
-    // ---- the name "Notepad++ KEX" and the badged icon ----------------------------------------
+    // ---- the name "Notepad++ KEX" and the KEX icon -------------------------------------------
     add([] {
         wchar_t cls[32] = {};
         ::GetClassNameW(npp._nppHandle, cls, 31);
@@ -1218,11 +1220,14 @@ void buildSteps()
         const std::wstring desc = exeVersionString(L"FileDescription"), product = exeVersionString(L"ProductName");
         check(desc == L"Notepad++ KEX" && product == L"Notepad++ KEX", L"B2",
               L"notepad++.exe describes itself as \"%ls\" (product \"%ls\"), the name the taskbar and Task Manager show", desc.c_str(), product.c_str());
-        // the badge: a violet-blue disc in the bottom-right corner, here outside its white sparkle
+        // the KEX logo: at 32 px Notepad++'s own icon has a dark "N" at (9,9) where the KEX logo's page is white,
+        // and the corner at (21,27) is the logo's green grass (the old badge there was violet-blue)
         HICON icon = reinterpret_cast<HICON>(::GetClassLongPtrW(npp._nppHandle, GCLP_HICON));
-        COLORREF c = icon ? iconPixel(icon, 21, 27) : 0;
-        const int r = GetRValue(c), g = GetGValue(c), b = GetBValue(c);
-        check(icon && b > 180 && b - g > 70 && r > g, L"B3", L"the app icon carries the KEX badge (32 px icon at 21,27: rgb %d,%d,%d)", r, g, b);
+        const COLORREF page = icon ? iconPixel(icon, 9, 9) : 0, grass = icon ? iconPixel(icon, 21, 27) : 0;
+        const int pr = GetRValue(page), pg = GetGValue(page), pb = GetBValue(page);
+        const int gr = GetRValue(grass), gg = GetGValue(grass), gb = GetBValue(grass);
+        check(icon && std::min({ pr, pg, pb }) > 220 && gg > gr + 60 && gg > gb + 60, L"B3",
+              L"the app icon is the KEX logo (32 px icon: page at 9,9 rgb %d,%d,%d; grass at 21,27 rgb %d,%d,%d)", pr, pg, pb, gr, gg, gb);
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_ABOUT);
         return 600;
     });
@@ -4721,6 +4726,607 @@ void addDirectWriteSteps(const StepAdder& add)
     });
 }
 
+// ---- GIF recording: KexSuite_demo ---------------------------------------------------------------
+// -pluginMessage="KexSuite_selftest=1;KexSuite_demo=all;KexSuite_testdir=DIR" plays short scenes of the
+// features at a person's pace and records each one from the screen into DIR\<scene>.kexrec, for the
+// README's GIFs (suite/test/kexrec2gif.py makes the GIF). KexSuite_demo can also name scenes: "motion,tabs".
+// The pointer is drawn into the frames where a scene puts it, so the real mouse never moves, and the edits
+// are made with Notepad++'s own commands, so nothing depends on keyboard focus.
+
+std::atomic<int> g_ptrX{ -100000 }, g_ptrY{ -100000 }, g_ptrShape{ 0 };   // the drawn pointer (screen px): 0 arrow, 1 I-beam
+
+// The screen inside a rectangle, about 50 times a second. A frame is written only when something changed,
+// as the rectangle that changed XORed with what was there before, so a zip of the file is small.
+// File: "KEXREC1\n", int32 width, height; then per frame uint32 ms, int32 x, y, w, h and w*h uint32 pixels
+// (0x00RRGGBB, XOR with the frame before); the last record has w = h = 0 and the time the recording ended.
+class ScreenRecorder {
+public:
+    bool start(const std::wstring& file, const RECT& rc)
+    {
+        _rc = rc; _w = rc.right - rc.left; _h = rc.bottom - rc.top;
+        if (_w <= 0 || _h <= 0 || _thread) return false;
+        _f = _wfopen(file.c_str(), L"wb");
+        if (!_f) return false;
+        setvbuf(_f, nullptr, _IOFBF, 1 << 22);
+        fwrite("KEXREC1\n", 1, 8, _f);
+        const int32_t size[2] = { _w, _h };
+        fwrite(size, sizeof(int32_t), 2, _f);
+        _prev.assign(static_cast<size_t>(_w) * _h, 0xFF000000u);   // differs from every first-frame pixel
+        _stop = false; _frames = 0; _grabMs = 0;
+        _thread = ::CreateThread(nullptr, 0, run, this, 0, nullptr);
+        if (!_thread) { fclose(_f); _f = nullptr; }
+        return _thread != nullptr;
+    }
+    int stop()
+    {
+        if (!_thread) return 0;
+        _stop = true;
+        ::WaitForSingleObject(_thread, 10000);
+        ::CloseHandle(_thread); _thread = nullptr;
+        fclose(_f); _f = nullptr;
+        return _frames;
+    }
+    double grabMs() const { return _grabMs; }
+
+private:
+    static DWORD WINAPI run(void* p) { static_cast<ScreenRecorder*>(p)->loop(); return 0; }
+
+    void writeFrame(uint32_t ms, int x, int y, int w, int h, const uint32_t* px)
+    {
+        const int32_t head[4] = { x, y, w, h };
+        fwrite(&ms, sizeof(ms), 1, _f);
+        fwrite(head, sizeof(int32_t), 4, _f);
+        _row.resize(static_cast<size_t>(w));
+        for (int r = y; r < y + h; ++r)
+        {
+            const size_t at = static_cast<size_t>(r) * _w + x;
+            for (int c = 0; c < w; ++c) { _row[c] = px[at + c] ^ _prev[at + c]; _prev[at + c] = px[at + c]; }
+            fwrite(_row.data(), sizeof(uint32_t), _row.size(), _f);
+        }
+    }
+
+    void loop()
+    {
+        using Period = UINT(WINAPI*)(UINT);
+        HMODULE winmm = ::LoadLibraryW(L"winmm.dll");
+        auto beginPeriod = winmm ? reinterpret_cast<Period>(reinterpret_cast<void*>(::GetProcAddress(winmm, "timeBeginPeriod"))) : nullptr;
+        auto endPeriod = winmm ? reinterpret_cast<Period>(reinterpret_cast<void*>(::GetProcAddress(winmm, "timeEndPeriod"))) : nullptr;
+        if (beginPeriod) beginPeriod(1);   // Sleep() to the millisecond
+        HDC screen = ::GetDC(nullptr), mem = ::CreateCompatibleDC(screen);
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader); bi.bmiHeader.biWidth = _w; bi.bmiHeader.biHeight = -_h;
+        bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HBITMAP dib = ::CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HGDIOBJ old = ::SelectObject(mem, dib);
+        HCURSOR cursor[2] = { ::LoadCursorW(nullptr, IDC_ARROW), ::LoadCursorW(nullptr, IDC_IBEAM) };
+        POINT hot[2] = {};
+        for (int i = 0; i < 2; ++i)
+        {
+            ICONINFO ii{};
+            if (!::GetIconInfo(cursor[i], &ii)) continue;
+            hot[i] = POINT{ static_cast<LONG>(ii.xHotspot), static_cast<LONG>(ii.yHotspot) };
+            if (ii.hbmMask) ::DeleteObject(ii.hbmMask);
+            if (ii.hbmColor) ::DeleteObject(ii.hbmColor);
+        }
+        uint32_t* px = static_cast<uint32_t*>(bits);
+        const double t0 = nowMs();
+        double next = t0, grabTotal = 0;
+        int grabs = 0;
+        while (!_stop && px)
+        {
+            const double g0 = nowMs();
+            ::BitBlt(mem, 0, 0, _w, _h, screen, _rc.left, _rc.top, SRCCOPY | CAPTUREBLT);
+            const int k = g_ptrShape == 1 ? 1 : 0, x = g_ptrX, y = g_ptrY;
+            if (x > -100000) ::DrawIconEx(mem, x - _rc.left - hot[k].x, y - _rc.top - hot[k].y, cursor[k], 0, 0, 0, nullptr, DI_NORMAL);
+            ::GdiFlush();
+            const size_t n = static_cast<size_t>(_w) * _h;
+            for (size_t i = 0; i < n; ++i) px[i] &= 0x00FFFFFFu;
+            grabTotal += nowMs() - g0; ++grabs;
+            int top = -1, bottom = -1, left = _w, right = -1;
+            for (int r = 0; r < _h; ++r)
+            {
+                const uint32_t* a = px + static_cast<size_t>(r) * _w;
+                const uint32_t* b = _prev.data() + static_cast<size_t>(r) * _w;
+                if (!memcmp(a, b, sizeof(uint32_t) * _w)) continue;
+                if (top < 0) top = r;
+                bottom = r;
+                int c0 = 0, c1 = _w - 1;
+                while (c0 < left && a[c0] == b[c0]) ++c0;
+                while (c1 > right && a[c1] == b[c1]) --c1;
+                left = std::min(left, c0); right = std::max(right, c1);
+            }
+            if (top >= 0)
+            {
+                writeFrame(static_cast<uint32_t>(g0 - t0), left, top, right - left + 1, bottom - top + 1, px);
+                ++_frames;
+            }
+            next += 20;
+            const double now = nowMs();
+            if (next > now) ::Sleep(static_cast<DWORD>(next - now));
+            else next = now;
+        }
+        const uint32_t end = static_cast<uint32_t>(nowMs() - t0);
+        const int32_t none[4] = {};
+        fwrite(&end, sizeof(end), 1, _f);
+        fwrite(none, sizeof(int32_t), 4, _f);
+        _grabMs = grabs ? grabTotal / grabs : 0;
+        ::SelectObject(mem, old); ::DeleteObject(dib); ::DeleteDC(mem); ::ReleaseDC(nullptr, screen);
+        if (endPeriod) endPeriod(1);
+    }
+
+    RECT _rc{};
+    int _w = 0, _h = 0;
+    FILE* _f = nullptr;
+    HANDLE _thread = nullptr;
+    std::atomic<bool> _stop{ false };
+    std::vector<uint32_t> _prev, _row;
+    int _frames = 0;
+    double _grabMs = 0;
+};
+ScreenRecorder g_rec;
+std::wstring g_demoScenes;   // KexSuite_demo's value
+std::wstring g_demoFiles;    // where the scenes' documents are
+double g_dpiScale = 1.0;
+
+bool demoWanted(const wchar_t* scene)
+{
+    if (g_demoScenes == L"all") return true;
+    const std::wstring list = L"," + g_demoScenes + L",";
+    return list.find(std::wstring(L",") + scene + L",") != std::wstring::npos;
+}
+int px(int v) { return static_cast<int>(std::lround(v * g_dpiScale)); }
+
+// a window's rectangle as it shows (Windows 10 adds invisible borders around it for resizing)
+RECT shownRect(HWND w)
+{
+    RECT r{};
+    ::GetWindowRect(w, &r);
+    using GetAttr = HRESULT(WINAPI*)(HWND, DWORD, PVOID, DWORD);
+    static GetAttr get = [] {
+        HMODULE m = ::LoadLibraryW(L"dwmapi.dll");
+        return m ? reinterpret_cast<GetAttr>(reinterpret_cast<void*>(::GetProcAddress(m, "DwmGetWindowAttribute"))) : nullptr;
+    }();
+    RECT f{};
+    if (get && SUCCEEDED(get(w, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, &f, sizeof(f))) && f.right > f.left) r = f;
+    return r;
+}
+void recordStart(const wchar_t* scene, HWND target)
+{
+    for (int v = 0; v < views.count(); ++v) if (HWND s = views.sci(v)) ::UpdateWindow(s);
+    pump(150);
+    const RECT r = shownRect(target);
+    const bool ok = g_rec.start(path((std::wstring(scene) + L".kexrec").c_str()), r);
+    tlog(L"DEMO %ls: recording %ls %ls", scene, rectStr(r).c_str(), ok ? L"" : L"FAILED to start");
+}
+void recordStop(const wchar_t* scene)
+{
+    const int frames = g_rec.stop();
+    tlog(L"DEMO %ls: %d frames, %.1f ms a grab", scene, frames, g_rec.grabMs());
+}
+
+// the drawn pointer: an I-beam over a view's text, an arrow elsewhere
+int shapeAt(POINT p)
+{
+    for (int v = 0; v < views.count(); ++v)
+    {
+        HWND s = views.sci(v);
+        if (!s || !::IsWindowVisible(s)) continue;
+        RECT r = clientOnScreen(s);
+        int margins = 0;
+        for (int m = 0; m < 5; ++m) margins += static_cast<int>(sci(s, SCI_GETMARGINWIDTHN, m));
+        r.left += margins;
+        r.right -= ::GetSystemMetrics(SM_CXVSCROLL);
+        if (::PtInRect(&r, p)) return 1;
+    }
+    return 0;
+}
+void pointerAt(POINT p) { g_ptrShape = shapeAt(p); g_ptrX = p.x; g_ptrY = p.y; }
+// glides there as a hand moves a mouse: slow, fast, slow
+void pointerTo(POINT p, int ms = 450)
+{
+    const POINT a{ g_ptrX, g_ptrY };
+    if (a.x <= -100000 || ms <= 0) { pointerAt(p); return; }
+    const double t0 = nowMs();
+    for (;;)
+    {
+        const double u = std::min(1.0, (nowMs() - t0) / ms);
+        const double e = u < 0.5 ? 4 * u * u * u : 1 - std::pow(-2 * u + 2, 3) / 2;
+        pointerAt(POINT{ static_cast<LONG>(std::lround(a.x + (p.x - a.x) * e)), static_cast<LONG>(std::lround(a.y + (p.y - a.y) * e)) });
+        if (u >= 1) break;
+        pump(8);
+    }
+}
+// a point in a view's text: line, column (the middle of that character cell)
+POINT textPoint(HWND s, int line, int col)
+{
+    const intptr_t pos = posOf(s, line, col);
+    POINT p{ static_cast<LONG>(sci(s, SCI_POINTXFROMPOSITION, 0, pos)), static_cast<LONG>(sci(s, SCI_POINTYFROMPOSITION, 0, pos)) };
+    p.y += static_cast<LONG>(sci(s, SCI_TEXTHEIGHT, line)) / 2;
+    ::ClientToScreen(s, &p);
+    return p;
+}
+RECT tabOnScreen(int v, int idx)
+{
+    HWND bar = views.tabBar(v);
+    RECT r{};
+    ::SendMessageW(bar, TCM_GETITEMRECT, static_cast<WPARAM>(idx), reinterpret_cast<LPARAM>(&r));
+    ::MapWindowPoints(bar, nullptr, reinterpret_cast<POINT*>(&r), 2);
+    return r;
+}
+int tabIndexOf(int v, const wchar_t* name)
+{
+    for (int i = 0; i < views.nbFiles(v); ++i)
+        if (fileNameOf(bufferPath(views.bufferId(v, i))) == name) return i;
+    return -1;
+}
+POINT tabCentre(const wchar_t* name)
+{
+    const RECT r = tabOnScreen(0, std::max(0, tabIndexOf(0, name)));
+    return POINT{ (r.left + r.right) / 2 - px(8), (r.top + r.bottom) / 2 + px(2) };
+}
+POINT tabCloseButton(const wchar_t* name)
+{
+    const RECT r = tabOnScreen(0, std::max(0, tabIndexOf(0, name)));
+    return POINT{ r.right - px(12), (r.top + r.bottom) / 2 + px(1) };
+}
+// typed as a person types: a little uneven
+void typeText(HWND s, const char* text, int msPerChar = 85)
+{
+    static unsigned seed = 7;
+    for (const char* c = text; *c; ++c)
+    {
+        if (*c == '\n') sci(s, SCI_NEWLINE);
+        else ::SendMessageW(s, WM_CHAR, static_cast<WPARAM>(static_cast<unsigned char>(*c)), 1);
+        seed = seed * 1103515245u + 12345u;
+        pump(msPerChar / 2 + static_cast<int>((seed >> 16) % static_cast<unsigned>(msPerChar)));
+    }
+}
+void selectLine(HWND s, int line)
+{
+    sci(s, SCI_SETSEL, sci(s, SCI_POSITIONFROMLINE, line), sci(s, SCI_POSITIONFROMLINE, line + 1));
+}
+int lineWith(HWND s, const char* text)
+{
+    const intptr_t lines = sci(s, SCI_GETLINECOUNT);
+    for (intptr_t l = 0; l < lines; ++l)
+        if (lineText(s, l).find(text) != std::string::npos) return static_cast<int>(l);
+    return 0;
+}
+intptr_t posIn(HWND s, int line, const char* word)
+{
+    const size_t at = lineText(s, line).find(word);
+    return sci(s, SCI_POSITIONFROMLINE, line) + static_cast<intptr_t>(at == std::string::npos ? 0 : at);
+}
+void cmd(UINT id) { nppMsg(NPPM_MENUCOMMAND, 0, id); }
+void caretTo(HWND s, intptr_t pos) { sci(s, SCI_SETEMPTYSELECTION, pos); }
+void demoSwitch(const wchar_t* name)
+{
+    nppMsg(NPPM_SWITCHTOFILE, 0, reinterpret_cast<LPARAM>((g_demoFiles + L"\\" + name).c_str()));
+    sci(curSci(), SCI_SETFOCUS, 1);   // the caret shows as in a focused editor, whatever window has the focus
+}
+const char* demoText(const wchar_t* name);
+// a scene's document as it starts: its first text, unchanged, at the top, nothing moving
+void resetDoc(const wchar_t* name)
+{
+    demoSwitch(name);
+    HWND s = curSci();
+    const char* text = demoText(name);
+    if (docText(s) != text)
+    {
+        sci(s, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(text));
+        sci(s, SCI_EMPTYUNDOBUFFER);
+        sci(s, SCI_SETSAVEPOINT);
+    }
+    sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+    caretTo(s, 0);
+    waitFor([s] { return !motionStats(s).active && lettersStats().live == 0 && flashStats().live == 0 && !slideStats(s).active; }, 3000);
+}
+
+const char* kDemoMain =
+    "#include <stdint.h>\r\n"
+    "#include <stdbool.h>\r\n"
+    "#include \"gpio.h\"\r\n"
+    "\r\n"
+    "static uint32_t ticks;\r\n"
+    "static bool led_on;\r\n"
+    "\r\n"
+    "void toggle_led(void);\r\n"
+    "void read_button(void);\r\n"
+    "void delay_ms(uint32_t ms);\r\n"
+    "\r\n"
+    "int main(void) {\r\n"
+    "    gpio_init();\r\n"
+    "\r\n"
+    "    while (true) {\r\n"
+    "        read_button();\r\n"
+    "        delay_ms(250);\r\n"
+    "        toggle_led();\r\n"
+    "        ticks++;\r\n"
+    "    }\r\n"
+    "}\r\n"
+    "\r\n"
+    "void toggle_led(void) {\r\n"
+    "    led_on = !led_on;\r\n"
+    "    gpio_write(LED_PIN, led_on);\r\n"
+    "}\r\n"
+    "\r\n"
+    "void read_button(void) {\r\n"
+    "    if (gpio_read(BUTTON_PIN)) {\r\n"
+    "        led_on = false;\r\n"
+    "        ticks = 0;\r\n"
+    "    }\r\n"
+    "}\r\n";
+const char* kDemoGpio =
+    "#pragma once\r\n"
+    "\r\n"
+    "#define LED_PIN     5\r\n"
+    "#define BUTTON_PIN  4\r\n"
+    "\r\n"
+    "void gpio_init(void);\r\n"
+    "bool gpio_read(int pin);\r\n"
+    "void gpio_write(int pin, bool on);\r\n";
+const char* kDemoNotes =
+    "Lab 6 notes\r\n"
+    "\r\n"
+    "- LED blinks every 250 ms\r\n"
+    "- button resets the counter\r\n"
+    "- ask about the timer interrupt\r\n";
+const char* kDemoTodo =
+    "# To do\r\n"
+    "\r\n"
+    "1. Debounce the button\r\n"
+    "2. Measure the current draw\r\n"
+    "3. Write the report\r\n";
+
+const char* demoText(const wchar_t* name)
+{
+    const std::wstring n = name;
+    return n == L"main.c" ? kDemoMain : n == L"gpio.h" ? kDemoGpio : n == L"notes.txt" ? kDemoNotes : kDemoTodo;
+}
+
+void addDemoSteps(const StepAdder& add)
+{
+    // ---- setup: a window the size of the old GIFs, the scenes' documents ---------------------------------
+    add([] {
+        g_demoFiles = g_dir + L"\\lab6";
+        ::CreateDirectoryW(g_demoFiles.c_str(), nullptr);
+        writeFile(g_demoFiles + L"\\main.c", kDemoMain);
+        writeFile(g_demoFiles + L"\\gpio.h", kDemoGpio);
+        writeFile(g_demoFiles + L"\\notes.txt", kDemoNotes);
+        writeFile(g_demoFiles + L"\\todo.md", kDemoTodo);
+        using GetDpi = UINT(WINAPI*)(HWND);
+        auto getDpi = reinterpret_cast<GetDpi>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
+        g_dpiScale = getDpi ? getDpi(npp._nppHandle) / 96.0 : 1.0;
+        if (g_dpiScale < 1.0) g_dpiScale = 1.0;
+        ::ShowWindow(npp._nppHandle, SW_RESTORE);
+        RECT work{};
+        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        ::SetWindowPos(npp._nppHandle, HWND_TOPMOST, work.left + px(60), work.top + px(40), px(820), px(600), SWP_SHOWWINDOW);
+        for (const wchar_t* f : { L"main.c", L"gpio.h", L"notes.txt", L"todo.md" })
+            nppMsg(NPPM_DOOPEN, 0, reinterpret_cast<LPARAM>((g_demoFiles + L"\\" + f).c_str()));
+        // the empty "new 1" Notepad++ starts with
+        for (int i = views.nbFiles(0) - 1; i >= 0; --i)
+            if (bufferPath(views.bufferId(0, i)).find(L'\\') == std::wstring::npos) { views.activate(0, i); cmd(IDM_FILE_CLOSE); }
+        // in front, active, the editor focused (a window started from a script can't always take the foreground)
+        const DWORD fg = ::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr), me = ::GetCurrentThreadId();
+        if (fg && fg != me) ::AttachThreadInput(me, fg, TRUE);
+        ::SetForegroundWindow(npp._nppHandle);
+        ::BringWindowToTop(npp._nppHandle);
+        if (fg && fg != me) ::AttachThreadInput(me, fg, FALSE);
+        // as the user runs it: no falling letters, no flash on cut and delete (the motions show those)
+        setModuleEnabled(M_LETTERS, false, false);
+        settings.setInt(modules[M_FLASH]->key(), L"Cut", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"Delete", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"DeleteFade", 0);
+        modules[M_FLASH]->loadOptions();
+        focusEditor();
+        demoSwitch(L"main.c");
+        tlog(L"DEMO setup: dpi scale %.2f, foreground %ls, files in %ls", g_dpiScale,
+             ::GetForegroundWindow() == npp._nppHandle ? L"yes" : L"NO", g_demoFiles.c_str());
+        return 1500;
+    });
+
+    // ---- editing motion ---------------------------------------------------------------------------------
+    if (demoWanted(L"motion")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        const int loopLine = lineWith(s, "read_button();");
+        caretTo(s, posOf(s, loopLine, 8));
+        pointerAt(textPoint(s, 6, 40));
+        settle(300);
+        recordStart(L"motion", npp._nppHandle);
+        pump(400);
+        // moved lines slide past each other
+        cmd(IDM_EDIT_LINE_DOWN); pump(650);
+        cmd(IDM_EDIT_LINE_UP); pump(800);
+        // cut a line: it lifts and goes, the lines below close up
+        const int delayLine = lineWith(s, "delay_ms(250);");
+        pointerTo(textPoint(s, delayLine, 12), 350);
+        selectLine(s, delayLine); pump(450);
+        cmd(IDM_EDIT_CUT); pump(850);
+        // paste it above: room is made and it lights up
+        caretTo(s, sci(s, SCI_POSITIONFROMLINE, lineWith(s, "read_button();")));
+        pump(300);
+        cmd(IDM_EDIT_PASTE); pump(1000);
+        // duplicate a line: the copy slides out; undo shows it going again
+        caretTo(s, posOf(s, lineWith(s, "ticks++;"), 8));
+        pump(300);
+        cmd(IDM_EDIT_DUP_LINE); pump(800);
+        cmd(IDM_EDIT_UNDO); pump(800);
+        // delete within a line: wiped away
+        const int ledLine = lineWith(s, "led_on = !led_on;");
+        const intptr_t bang = posIn(s, ledLine, "!led_on");
+        pointerTo(textPoint(s, ledLine, 16), 350);
+        sci(s, SCI_SETSEL, bang, bang + 1); pump(450);
+        cmd(IDM_EDIT_DELETE); pump(800);
+        cmd(IDM_EDIT_UNDO); pump(600);
+        // fold and unfold: the lines slide like a drawer
+        caretTo(s, posOf(s, lineWith(s, "void toggle_led(void) {"), 5));
+        pump(300);
+        cmd(IDM_VIEW_FOLD_CURRENT); pump(900);
+        cmd(IDM_VIEW_UNFOLD_CURRENT); pump(900);
+        // sort lines: each glides to its place
+        const int first = lineWith(s, "void toggle_led(void);");
+        pointerTo(textPoint(s, first + 1, 22), 350);
+        sci(s, SCI_SETSEL, sci(s, SCI_POSITIONFROMLINE, first), sci(s, SCI_GETLINEENDPOSITION, first + 2));
+        pump(500);
+        cmd(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING); pump(1100);
+        caretTo(s, sci(s, SCI_GETLINEENDPOSITION, first + 2));
+        pump(500);
+        recordStop(L"motion");
+        return 300;
+    });
+
+    // ---- tabs: switching slides, a closed tab sinks, a new one rises -----------------------------------
+    if (demoWanted(L"tabs")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        caretTo(s, posOf(s, 11, 16));
+        pointerAt(textPoint(s, 13, 30));
+        settle(300);
+        recordStart(L"tabs", npp._nppHandle);
+        pump(400);
+        for (const wchar_t* name : { L"gpio.h", L"notes.txt" })
+        {
+            pointerTo(tabCentre(name), 500); pump(200);
+            demoSwitch(name); pump(1000);
+        }
+        pointerTo(tabCloseButton(L"notes.txt"), 450); pump(300);
+        cmd(IDM_FILE_CLOSE); pump(1200);
+        pointerTo(textPoint(curSci(), 4, 34), 500); pump(200);
+        cmd(IDM_FILE_NEW); sci(curSci(), SCI_SETFOCUS, 1); pump(900);
+        typeText(curSci(), "scratch");
+        pump(700);
+        pointerTo(tabCentre(L"main.c"), 600); pump(200);
+        demoSwitch(L"main.c"); pump(1100);
+        recordStop(L"tabs");
+        // back as the other scenes expect: notes.txt open again, the new document gone unsaved
+        for (int i = views.nbFiles(0) - 1; i >= 0; --i)
+            if (bufferPath(views.bufferId(0, i)).find(L'\\') == std::wstring::npos)
+            {
+                views.activate(0, i);
+                sci(curSci(), SCI_SETSAVEPOINT);
+                cmd(IDM_FILE_CLOSE);
+            }
+        nppMsg(NPPM_DOOPEN, 0, reinterpret_cast<LPARAM>((g_demoFiles + L"\\notes.txt").c_str()));
+        demoSwitch(L"main.c");
+        return 600;
+    });
+
+    // ---- copy flash and save glint -----------------------------------------------------------------------
+    if (demoWanted(L"glint")) add([] {
+        resetDoc(L"notes.txt");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        caretTo(s, sci(s, SCI_GETLINEENDPOSITION, 4));
+        pointerAt(textPoint(s, 8, 40));
+        settle(300);
+        recordStart(L"glint", npp._nppHandle);
+        pump(400);
+        typeText(s, "\n- order a second display");
+        pump(500);
+        const int line = 5;
+        const intptr_t a = posIn(s, line, "second display");
+        pointerTo(textPoint(s, line, 22), 400);
+        sci(s, SCI_SETSEL, a, a + 14); pump(500);
+        cmd(IDM_EDIT_COPY); pump(1000);
+        caretTo(s, sci(s, SCI_GETLINEENDPOSITION, line)); pump(500);
+        cmd(IDM_FILE_SAVE); pump(1500);
+        recordStop(L"glint");
+        return 300;
+    });
+
+    // ---- paint splash ----------------------------------------------------------------------------------
+    if (demoWanted(L"splash")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        caretTo(s, posOf(s, 0, 0));
+        pointerAt(textPoint(s, 3, 30));
+        settle(300);
+        recordStart(L"splash", npp._nppHandle);
+        pump(400);
+        const int l1 = lineWith(s, "static bool led_on;");
+        const intptr_t a = posIn(s, l1, "led_on");
+        pointerTo(textPoint(s, l1, 15), 450);
+        sci(s, SCI_SETSEL, a, a + 6); pump(600);
+        cmd(IDM_SEARCH_MARKALLEXT3); pump(1300);
+        const int l2 = lineWith(s, "static uint32_t ticks;");
+        const intptr_t b = posIn(s, l2, "ticks");
+        pointerTo(textPoint(s, l2, 18), 450);
+        sci(s, SCI_SETSEL, b, b + 5); pump(600);
+        cmd(IDM_SEARCH_MARKALLEXT1); pump(1500);
+        caretTo(s, b + 5); pump(500);
+        recordStop(L"splash");
+        cmd(IDM_SEARCH_UNMARKALLEXT1);
+        cmd(IDM_SEARCH_UNMARKALLEXT3);
+        return 300;
+    });
+
+    // ---- touchpad swipe: the tabs follow the fingers -----------------------------------------------------
+    if (demoWanted(L"swipe")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        pointerAt(textPoint(s, 13, 30));
+        settle(300);
+        recordStart(L"swipe", npp._nppHandle);
+        pump(400);
+        // half way, held there, then on to the next tab
+        for (int i = 0; i < 12; ++i) { swipeBy(s, 30, 30, 0); pump(28); }
+        for (int i = 0; i < 10; ++i) { swipeBy(s, 2, 2, 0); pump(60); }
+        for (int i = 0; i < 8; ++i) { swipeBy(s, 40, 40, 0); pump(18); }
+        pump(1200);
+        // a quick flick to the next one, and two back
+        swipeBy(curSci(), 560, 70, 10); pump(1200);
+        swipeBy(curSci(), -560, 70, 10); pump(900);
+        swipeBy(curSci(), -560, 70, 10); pump(1200);
+        recordStop(L"swipe");
+        return 300;
+    });
+
+    // ---- the KEX Settings window -------------------------------------------------------------------------
+    if (demoWanted(L"settings")) add([] {
+        openSettings(PAGE_EDITING);
+        pump(500);
+        HWND d = settingsDialog();
+        if (!d) { tlog(L"DEMO settings: the window didn't open"); return 100; }
+        RECT nr{}; ::GetWindowRect(npp._nppHandle, &nr);
+        ::SetWindowPos(d, HWND_TOPMOST, nr.left + px(30), nr.top + px(70), 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        ::SetForegroundWindow(d);
+        HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
+        auto itemPoint = [list](int i) {
+            RECT r{};
+            ::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(i), reinterpret_cast<LPARAM>(&r));
+            POINT p{ r.left + px(28), (r.top + r.bottom) / 2 };
+            ::ClientToScreen(list, &p);
+            return p;
+        };
+        pointerAt(itemPoint(PAGE_EDITING));
+        pump(400);
+        recordStart(L"settings", d);
+        pump(600);
+        for (int page : { PAGE_TABS, PAGE_EFFECTS, PAGE_MOTION, PAGE_NOTE })
+        {
+            pointerTo(itemPoint(page), 380); pump(150);
+            showPrefPage(pageTitle(page)); pump(1300);
+        }
+        recordStop(L"settings");
+        ::SendMessageW(d, WM_CLOSE, 0, 0);
+        return 300;
+    });
+
+    add([] {
+        tlog(L"DONE");
+        g_done = true;
+        // nothing to keep: no session, no settings written on the way out
+        ::TerminateProcess(::GetCurrentProcess(), 0);
+        return 0;
+    });
+}
+
 void CALLBACK tick(HWND, UINT, UINT_PTR, DWORD)
 {
     if (g_inStep || g_done) return;
@@ -4767,7 +5373,15 @@ void selfTestStart(const std::wstring& args)
     WNDCLASSW wc{}; wc.lpfnWndProc = testWndProc; wc.hInstance = hInst; wc.lpszClassName = L"KexSuiteTestWnd";
     ::RegisterClassW(&wc);
     g_testWnd = ::CreateWindowExW(0, L"KexSuiteTestWnd", L"test", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, hInst, nullptr);
-    if (args.find(L"KexSuite_only=") != std::wstring::npos)
+    const size_t demo = args.find(L"KexSuite_demo=");
+    if (demo != std::wstring::npos)
+    {
+        // the README's GIFs, not a test
+        const size_t e = args.find(L';', demo);
+        g_demoScenes = args.substr(demo + 14, e == std::wstring::npos ? std::wstring::npos : e - demo - 14);
+        addDemoSteps([](std::function<int()> f) { g_steps.push_back(std::move(f)); });
+    }
+    else if (args.find(L"KexSuite_only=") != std::wstring::npos)
     {
         // just the DirectWrite steps (the editor as it draws on Windows) and the round's regression steps, then the result
         auto add = [](std::function<int()> f) { g_steps.push_back(std::move(f)); };
