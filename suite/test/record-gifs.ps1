@@ -6,7 +6,8 @@
 # demo mode: it plays short scenes of the features and records each one from the screen into <Out>\<scene>.kexrec.
 # Your look comes from %APPDATA%\Notepad++\config.xml (dark mode, toolbar, tab bar, hidden menu bar), without its
 # file history, search history and folder paths. The window stays in front while it records (about 2 minutes);
-# the real mouse isn't used, so moving it does no harm, but a window or notification over it would be recorded.
+# the real mouse isn't used, so moving it does no harm, but a click elsewhere greys its title bar and a window or
+# notification over it would be recorded.
 # At the end the recordings are zipped into <Out>\recordings.zip; suite/test/kexrec2gif.py makes the GIFs.
 param(
     [Parameter(Mandatory = $true)][string]$Npp,
@@ -36,7 +37,7 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 $log = Join-Path $Out 'selftest-log.txt'
 $nppArgs = "-multiInst -nosession `"-pluginMessage=KexSuite_selftest=1;KexSuite_demo=$Scenes;KexSuite_testdir=$Out`""
 $p = Start-Process -FilePath $exe -ArgumentList $nppArgs -WorkingDirectory $Npp -PassThru
-Write-Host "recording (Notepad++ KEX pid $($p.Id)); leave the window in front until it closes"
+Write-Host "recording (Notepad++ KEX pid $($p.Id)); dont click anywhere until its window closes (about 2 minutes)"
 $deadline = (Get-Date).AddMinutes(6)
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500

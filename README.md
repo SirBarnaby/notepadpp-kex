@@ -2,6 +2,8 @@
   <img src="assets/four-views-tab-snapping.gif" alt="A tab is dragged to the edge of a view and dropped, building a 2x2 grid of four editing views in Notepad++" width="100%" />
 </p>
 
+<p align="center"><img src="patch/kex-logo.png" alt="Notepad++ KEX logo" width="96" /></p>
+
 <h1 align="center">Notepad++ KEX</h1>
 
 <p align="center">
@@ -20,7 +22,7 @@
 
 Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, tab snapping, a smooth caret, JetBrains shortcuts, a global quick note and more. Each build is made from the official Notepad++ source of the same version. Your settings and plugins keep working, and every feature can be switched off.
 
-<p align="center"><sub><a href="#features">Features</a> · <a href="#see-it-in-action">See it in action</a> · <a href="#install">Install</a> · <a href="#faq">FAQ</a> · <a href="#licence">Licence</a></sub></p>
+<p align="center"><sub><a href="#features">Features</a> · <a href="#see-it-in-action">See it in action</a> · <a href="#install">Install</a> · <a href="CHANGELOG.md">Patch notes</a> · <a href="#faq">FAQ</a> · <a href="#licence">Licence</a></sub></p>
 
 ## Features
 
@@ -29,7 +31,7 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Snap-out windows**: drag a tab out of Notepad++ and its view gets its own window.
 - **Smooth caret**: the caret glides instead of jumping. It can fade, blink, or stay on.
 - **Falling letters**: deleted text falls off the screen. Their opacity can be set.
-- **Editing motion**: edits move into place instead of jumping. Cut text lifts and goes, deleted text wipes away, pasted text makes room and lights up, moved lines slide past each other, folds open like drawers, sorted lines glide to their new places, and a far jump slides the page there. Each motion has its own switch and speed, and typing stops one at once.
+- **Editing motion**: cut, paste, delete, undo, moved lines, folds and sorting move into place instead of jumping. Each motion has its own switch.
 - **Copy flash**: copied text lights up for a moment.
 - **Tab slide**: switching tabs slides the next document in, like switching desktops in Windows 10.
 - **Tab close**: a closed tab sinks below the tab bar and the tabs beside it glide into its place. New tabs rise into a gap that opens for them.
@@ -38,14 +40,21 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 - **Paint splash**: giving a word a colour splashes paint off it.
 - **JetBrains keys**: <kbd>Alt</kbd>+<kbd>J</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>/</kbd>, <kbd>Ctrl</kbd>+<kbd>D</kbd>, <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> and more. Rebind any of them in *Shortcut Mapper*.
 - **Live token styles**: styled words stay styled as you type. Bold and italic too, for every occurrence or just one.
-- **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app, on whichever virtual desktop you are on. Pin it to keep it where you put it. It can keep its text in a file you choose, and zoom in as it opens.
+- **Quick note**: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> opens a note over any app, on whichever virtual desktop you are on. Pin it to keep it where you put it. It can keep its text in a file you choose.
 - **Per-desktop windows**: each virtual desktop gets its own Notepad++ with the same tabs and token styles, its own session and crash backup.
 - **F12 hover tabs**: in F12 mode, the tab bar appears when you touch the top of a view.
 - **Glass**: Windows' live blur behind the text, with clean letter edges. Off by default.
+- **Animation speeds**: one speed in percent for all animations, and one for each.
 - **On/off switches**: one per feature and one per motion, in the *KEX* menu.
 - **Automatic updates**: a KEX build follows every Notepad++ release. Builds are signed, and the updater refuses unsigned ones.
 
 ## See it in action
+
+### Editing motion
+
+A line moved down and back up, a line cut and pasted above, a line duplicated and undone, a character deleted, a function folded and unfolded, three lines sorted.
+
+<p align="center"><img src="assets/editing-motion.gif" alt="A line slides down and back up, a cut line lifts away and is pasted above with a light, a duplicated line slides out, a fold closes like a drawer and three sorted lines glide into place" /></p>
 
 ### Smooth caret
 
@@ -57,11 +66,31 @@ Notepad++ KEX is Notepad++ with extra features compiled in: four editor views, t
 
 <p align="center"><img src="assets/jetbrains-keys-falling-letters.gif" alt="Two occurrences of void selected with Alt+J, deleted with falling letters, and replaced by int in both places" /></p>
 
+### Tab slide and tab close
+
+Switching tabs slides the next document in. A closed tab sinks and the tabs beside it close the gap; a new tab rises into a gap that opens for it.
+
+<p align="center"><img src="assets/tab-motion.gif" alt="Two tab switches slide the documents sideways, the closed notes.txt tab sinks below the bar, and a new tab rises into place" /></p>
+
+### Copy flash and save glint
+
+<p align="center"><img src="assets/copy-flash-save-glint.gif" alt="A typed line, the words second display lighting up as they are copied, and a glint running over the tab and the top of the editor on save" /></p>
+
+### Touchpad tab swipe
+
+Two fingers on the touchpad: the next document follows them. Let go before half way and it slides back; past half way, or with a quick flick, it comes in.
+
+<p align="center"><img src="assets/touchpad-swipe.gif" alt="The next document follows the fingers part of the way and slides back when they let go, then swipes switch to the next tab and back" /></p>
+
 ### Live token styles
 
 Right-click > *Style all occurrences of token*. New occurrences pick up the style as you type them.
 
 <p align="center"><img src="assets/live-token-styles.gif" alt="Right-click menu styling every occurrence of Sony in red and bold, and a newly typed Sony picking up the style" /></p>
+
+### Paint splash
+
+<p align="center"><img src="assets/paint-splash.gif" alt="led_on and then ticks get a colour with Style all occurrences, and paint splashes off every occurrence" /></p>
 
 ### Quick note
 
@@ -71,9 +100,9 @@ Right-click > *Style all occurrences of token*. New occurrences pick up the styl
 
 ### Settings
 
-KEX has its own menu in the menu bar, between *Plugins* and *Window*, with an on/off switch for every feature. *KEX* > *Settings...* opens the KEX Settings window: the options for each feature and whether it is running, apart from Notepad++'s own *Preferences*.
+KEX has its own menu in the menu bar, between *Plugins* and *Window*, with an on/off switch for every feature. *KEX* > *Settings...* opens the KEX Settings window: the options for each feature, its speed and whether it is running, apart from Notepad++'s own *Preferences*.
 
-<p align="center"><img src="assets/preferences.gif" alt="Clicking through the Editing, Tabs, Highlighting and Windows pages of the KEX settings" /></p>
+<p align="center"><img src="assets/settings.gif" alt="Clicking through the Editing, Tabs, Effects, Motion and Quick Note pages of the KEX Settings window" /></p>
 
 ## Install
 
@@ -104,7 +133,7 @@ Yes, in views 1 and 2. In views 3 and 4, a plugin's commands are blocked unless 
 *KEX* > *Editing* > *Settings...*, untick *Also the keys Notepad++ uses*. This restores <kbd>Ctrl</kbd>+<kbd>Y</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>R</kbd>, <kbd>F11</kbd> and the zoom keys. To change a single key instead, open *Settings* > *Shortcut Mapper* > *Plugin commands* and edit the KEX entry.
 
 **Glass doesn't show up.**  
-Turn it on under *Settings* > *KEX Windows*, and turn on Windows' *Transparency effects* (*Settings* > *Personalization* > *Colors*). *Acrylic* can lag behind a moving window on Windows 10, so while you drag the window KEX shows plain *Blur* and switches back when you let go.
+Turn it on in the *KEX* > *Windows* menu, and turn on Windows' *Transparency effects* (*Settings* > *Personalization* > *Colors*). *Acrylic* can lag behind a moving window on Windows 10, so while you drag the window KEX shows plain *Blur* and switches back when you let go.
 
 **Is this an official Notepad++ release?**  
 No. It isn't affiliated with the Notepad++ project.

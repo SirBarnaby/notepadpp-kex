@@ -4891,13 +4891,28 @@ RECT shownRect(HWND w)
     if (get && SUCCEEDED(get(w, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, &f, sizeof(f))) && f.right > f.left) r = f;
     return r;
 }
+// in front and drawn as the active window (a window started from a script can't always take the foreground)
+bool takeFront(HWND w)
+{
+    const DWORD fg = ::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr), me = ::GetCurrentThreadId();
+    if (fg && fg != me) ::AttachThreadInput(me, fg, TRUE);
+    ::SetForegroundWindow(w);
+    ::BringWindowToTop(w);
+    if (fg && fg != me) ::AttachThreadInput(me, fg, FALSE);
+    ::SendMessageW(w, WM_NCACTIVATE, TRUE, 0);   // a white title, also when Windows kept another window in front
+    return ::GetForegroundWindow() == w;
+}
 void recordStart(const wchar_t* scene, HWND target)
 {
+    const bool front = takeFront(target);
+    wchar_t other[64] = L"";
+    if (!front) ::GetClassNameW(::GetForegroundWindow(), other, 64);
     for (int v = 0; v < views.count(); ++v) if (HWND s = views.sci(v)) ::UpdateWindow(s);
     pump(150);
     const RECT r = shownRect(target);
     const bool ok = g_rec.start(path((std::wstring(scene) + L".kexrec").c_str()), r);
-    tlog(L"DEMO %ls: recording %ls %ls", scene, rectStr(r).c_str(), ok ? L"" : L"FAILED to start");
+    tlog(L"DEMO %ls: recording %ls, %ls%ls%ls", scene, rectStr(r).c_str(), front ? L"in front" : L"in front of it: ", other,
+         ok ? L"" : L", FAILED to start");
 }
 void recordStop(const wchar_t* scene)
 {
@@ -5108,12 +5123,7 @@ void addDemoSteps(const StepAdder& add)
         // the empty "new 1" Notepad++ starts with
         for (int i = views.nbFiles(0) - 1; i >= 0; --i)
             if (bufferPath(views.bufferId(0, i)).find(L'\\') == std::wstring::npos) { views.activate(0, i); cmd(IDM_FILE_CLOSE); }
-        // in front, active, the editor focused (a window started from a script can't always take the foreground)
-        const DWORD fg = ::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr), me = ::GetCurrentThreadId();
-        if (fg && fg != me) ::AttachThreadInput(me, fg, TRUE);
-        ::SetForegroundWindow(npp._nppHandle);
-        ::BringWindowToTop(npp._nppHandle);
-        if (fg && fg != me) ::AttachThreadInput(me, fg, FALSE);
+        takeFront(npp._nppHandle);
         // as the user runs it: no falling letters, no flash on cut and delete (the motions show those)
         setModuleEnabled(M_LETTERS, false, false);
         settings.setInt(modules[M_FLASH]->key(), L"Cut", 0);
@@ -5274,15 +5284,16 @@ void addDemoSteps(const StepAdder& add)
         settle(300);
         recordStart(L"swipe", npp._nppHandle);
         pump(400);
-        // half way, held there, then on to the next tab
-        for (int i = 0; i < 12; ++i) { swipeBy(s, 30, 30, 0); pump(28); }
-        for (int i = 0; i < 10; ++i) { swipeBy(s, 2, 2, 0); pump(60); }
-        for (int i = 0; i < 8; ++i) { swipeBy(s, 40, 40, 0); pump(18); }
-        pump(1200);
-        // a quick flick to the next one, and two back
-        swipeBy(curSci(), 560, 70, 10); pump(1200);
-        swipeBy(curSci(), -560, 70, 10); pump(900);
-        swipeBy(curSci(), -560, 70, 10); pump(1200);
+        // the tab follows the fingers: let go a third of the way and it slides back
+        for (int i = 0; i < 9; ++i) { swipeBy(s, 30, 30, 0); pump(30); }
+        pump(1000);
+        // past half way, slowly: on to the next tab
+        for (int i = 0; i < 18; ++i) { swipeBy(curSci(), 30, 30, 0); pump(30); }
+        pump(1000);
+        // quick flicks: on to the next one, and back twice
+        swipeBy(curSci(), 560, 70, 10); pump(1000);
+        swipeBy(curSci(), -560, 70, 10); pump(1000);
+        swipeBy(curSci(), -560, 70, 10); pump(1100);
         recordStop(L"swipe");
         return 300;
     });
@@ -5295,7 +5306,6 @@ void addDemoSteps(const StepAdder& add)
         if (!d) { tlog(L"DEMO settings: the window didn't open"); return 100; }
         RECT nr{}; ::GetWindowRect(npp._nppHandle, &nr);
         ::SetWindowPos(d, HWND_TOPMOST, nr.left + px(30), nr.top + px(70), 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
-        ::SetForegroundWindow(d);
         HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
         auto itemPoint = [list](int i) {
             RECT r{};
