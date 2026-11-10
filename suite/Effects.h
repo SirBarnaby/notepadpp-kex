@@ -1,5 +1,5 @@
-// Effects.h - the screen effects of the KEX features (falling letters, paint splashes, the copy, cut
-// and delete flashes) are drawn by one renderer on a thread of its own, into a click-through,
+// Effects.h - the screen effects of the KEX features (falling letters, paint splashes, the copy flash)
+// are drawn by one renderer on a thread of its own, into a click-through,
 // non-activating topmost layered window that only exists while something moves. Windows' compositor
 // puts that window on the screen with the graphics card; the pieces themselves are drawn in software
 // (fixed-point, only the pixels a piece covers), which costs about a millisecond a frame for 200 letters.
@@ -29,6 +29,9 @@ struct Item {
     float life = 0;                   // seconds; 0 = until it has fallen off its monitor (8 s at most)
     RECT monitor{};
     int kind = K_LETTER;
+    // size: from sx0/sy0 to sx1/sy1 over its life, easing out; anchorX is the point across the piece that
+    // stays where it is (0 its left edge, 0.5 its centre)
+    float sx0 = 1, sx1 = 1, sy0 = 1, sy1 = 1, anchorX = 0.5f;
 };
 
 // Letters: the text is turned into pictures on the effects thread (GDI text in the editor's fonts).
@@ -61,6 +64,7 @@ struct Stats {
     RECT box{};                       // the screen area of the last frame
     double frameMs = 0;               // average time to draw and show a frame (ms), last few seconds
     double lastFrameMs = 0;
+    int speed[K_COUNT] = {};          // each kind's own speed (%)
 };
 
 bool acquire();                       // a feature that draws starts using the renderer (started on first use)
@@ -68,6 +72,7 @@ void release();                       // ... stops using it (stopped with the la
 void submit(std::vector<Item>&& items);
 void submitLetters(LetterBatch&& batch);
 void clear(int kind);                 // take every piece of that kind off the screen
+void setSpeed(int kind, int percent); // that kind's own speed (%, 100 = as designed), on top of the speed for all
 Stats stats();
 void freezeAfter(int ms);             // self-test: pieces stop moving once the newest is ms old (<0 = run)
 bool animationsOn();                  // Windows' "Show animations in Windows" (client area animation)

@@ -1,4 +1,6 @@
 // Util.cpp - logging, settings, message windows and the view abstraction.
+#include <atomic>
+#include <cmath>
 #include "KexSuite.h"
 #include <cstdio>
 #include <cstdarg>
@@ -166,6 +168,54 @@ LRESULT CALLBACK MsgWindow::proc(HWND h, UINT m, WPARAM w, LPARAM l)
         catch (...) { log(L"exception in message handler (msg 0x%x)", m); return 0; }
     }
     return ::DefWindowProcW(h, m, w, l);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Animation speed
+
+namespace {
+std::atomic<int> g_animSpeed{ -1 };   // read on the effects' own thread too
+}
+
+int animSpeedAll()
+{
+    int v = g_animSpeed.load(std::memory_order_relaxed);
+    if (v < 0)
+    {
+        v = std::clamp(settings.getInt(L"General", L"AnimationSpeed", 100), kSpeedMin, kSpeedMax);
+        g_animSpeed.store(v, std::memory_order_relaxed);
+    }
+    return v;
+}
+
+void setAnimSpeedAll(int percent)
+{
+    percent = std::clamp(percent, kSpeedMin, kSpeedMax);
+    settings.setInt(L"General", L"AnimationSpeed", percent);
+    g_animSpeed.store(percent, std::memory_order_relaxed);
+}
+
+int animSpeed(const wchar_t* sec, const SpeedDef& s)
+{
+    int pct = settings.getInt(sec, s.key, -1);
+    if (pct < 0 && s.oldMsKey)
+    {
+        // a time set before speeds were percentages: the same time (0, which switched some off, is the fastest)
+        const int old = settings.getInt(sec, s.oldMsKey, -1);
+        if (old > 0) pct = static_cast<int>(std::lround(s.baseMs * 100.0 / old));
+        else if (old == 0) pct = kSpeedMax;
+    }
+    return std::clamp(pct < 0 ? s.defPercent : pct, kSpeedMin, kSpeedMax);
+}
+
+double animStretch(int percent)
+{
+    return 100.0 / std::clamp(percent, kSpeedMin, kSpeedMax) * 100.0 / animSpeedAll();
+}
+
+int animMs(double baseMs, int percent)
+{
+    return std::max(1, static_cast<int>(std::lround(baseMs * animStretch(percent))));
 }
 
 // ---------------------------------------------------------------------------------------------

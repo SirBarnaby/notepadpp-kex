@@ -5,6 +5,7 @@
 // The moment a drag starts, the tab itself lifts off the bar (a picture of it, slightly larger, with a
 // shadow) and follows the mouse until it is dropped (kexsuite::tabDragged).
 #include "KexSuite.h"
+#include <cmath>
 
 namespace kex {
 
@@ -18,6 +19,7 @@ const double LIFT_MS = 130, DROP_MS = 110;
 const BYTE LIFT_ALPHA = 225;
 const double LIFT_SCALE = 1.06;
 SnapStats s_stats;
+double s_stretch = 1.0;   // what the designed times are multiplied by: the snapping's own speed and the speed for all
 
 RECT lerpRect(const RECT& a, const RECT& b, double t)
 {
@@ -70,8 +72,10 @@ public:
         _old = ::SelectObject(_dc, _bmp);
         ::BitBlt(_dc, 0, 0, _w, _h, screen, r.left, r.top, SRCCOPY | CAPTUREBLT);
         ::ReleaseDC(nullptr, screen);
+        // the point grabbed: under the cursor, on the tab (a quick pull may only start the drag once the cursor is well
+        // out of the tab bar, and the tab still comes to the cursor)
         POINT c; ::GetCursorPos(&c);
-        _grab = POINT{ c.x - r.left, c.y - r.top };
+        _grab = POINT{ std::clamp<LONG>(c.x - r.left, 0, _w - 1), std::clamp<LONG>(c.y - r.top, 0, _h - 1) };
         _home = r;
         _bar = tabBar;
         _animate = animate;
@@ -120,14 +124,14 @@ public:
             log(L"tab lift: drag cancelled with Esc");
             return;
         }
-        double t = _animate ? std::min(1.0, (nowMs() - _start) / LIFT_MS) : 1.0;
+        const double t = _animate ? std::min(1.0, (nowMs() - _start) / (LIFT_MS * s_stretch)) : 1.0;
         const double e = 1 - (1 - t) * (1 - t) * (1 - t);   // ease out
         const double scale = 1 + (LIFT_SCALE - 1) * e;
         const int lift = static_cast<int>(::MulDiv(3, dpiOf(_wnd), 96) * e + 0.5);
         int alpha = static_cast<int>(LIFT_ALPHA * (_animate ? std::min(1.0, t * 1.5) : 1.0));
         if (_dropping)
         {
-            const double d = std::min(1.0, (nowMs() - _dropStart) / DROP_MS);
+            const double d = std::min(1.0, (nowMs() - _dropStart) / (DROP_MS * s_stretch));
             alpha = static_cast<int>(_dropFrom * (1 - d));
             if (d >= 1) { drop(true); return; }
         }
@@ -212,6 +216,7 @@ public:
     {
         _animate = settings.getInt(key(), L"Animate", 1) != 0;
         _liftOn = settings.getInt(key(), L"LiftTab", 1) != 0;
+        s_stretch = animStretch(animSpeed(key(), kSpeedSnap));
     }
 
     bool selfCheck(std::wstring& why) override
@@ -315,11 +320,11 @@ public:
             log(L"tab snapping: drag cancelled with Esc");
             return;
         }
-        double t = _animate ? (nowMs() - _start) / GLIDE_MS : 1.0;
+        double t = _animate ? (nowMs() - _start) / (GLIDE_MS * s_stretch) : 1.0;
         if (t > 1) t = 1;
         const double e = 1 - (1 - t) * (1 - t) * (1 - t);   // ease out
         int alpha = PREVIEW_ALPHA;
-        if (_animate) alpha = static_cast<int>(PREVIEW_ALPHA * std::min(1.0, (nowMs() - _shownTime) / GLIDE_MS));
+        if (_animate) alpha = static_cast<int>(PREVIEW_ALPHA * std::min(1.0, (nowMs() - _shownTime) / (GLIDE_MS * s_stretch)));
         place(lerpRect(_from, _to, e), static_cast<BYTE>(alpha));
     }
 
@@ -405,7 +410,12 @@ private:
 } // namespace
 
 Module* createTabSnap() { return new TabSnap(); }
-SnapStats snapStats() { return s_stats; }
+SnapStats snapStats()
+{
+    SnapStats st = s_stats;
+    st.glideMs = static_cast<int>(std::lround(GLIDE_MS * s_stretch));
+    return st;
+}
 
 } // namespace kex
 

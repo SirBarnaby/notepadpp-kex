@@ -37,7 +37,7 @@ echo "$TAG" > "$PKG/kex-version.txt"
   echo '<!-- KEX: keeps the official updater from replacing the KEX build -->' > "$PKG/disableNppAutoUpdate.xml"
 mkdir -p "$PKG/source"
 if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1; then git -C "$ROOT" archive HEAD | tar -x -C "$PKG/source"
-else cp -r "$ROOT"/{patch,suite,include,tests,windows,ci,README.md,LICENSE} "$PKG/source/" 2>/dev/null || true; rm -rf "$PKG/source/suite/test/screenshots"; fi
+else cp -r "$ROOT"/{patch,suite,include,tests,windows,ci,README.md,CHANGELOG.md,LICENSE} "$PKG/source/" 2>/dev/null || true; rm -rf "$PKG/source/suite/test/screenshots"; fi
 
 if [ "${KEX_TEST:-1}" = 1 ]; then
   bash "$ROOT/tests/run-tests.sh" "$PKG" "$SRC" "$OUT/test" || exit 3

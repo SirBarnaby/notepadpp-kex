@@ -13,12 +13,19 @@
 //   wheel there go back to the view under them. kexsuite::windowFromPoint sees through it for the core.
 // - Dragging something (files, text) over the glass turns it solid until the drag ends, so the views'
 //   own drop handling works.
-// - Direct2D's window render target cannot draw into a layered window, so while the glass is on,
-//   Scintilla windows that use it switch to DirectWrite drawn through a DC (same text rendering).
-// - Smoothed text edges are blends of the text colour and the key colour, so they are not keyed and
-//   would show as an outline around every letter on the glass. By default the views draw their text
-//   without smoothing while the glass is on ("Text edges" option).
+// - The text: the views draw onto a see-through layer of their own (SCI_KEX_GLASS, DirectComposition, in
+//   the KEX Scintilla) that sits on top of the keyed window. The key colour is see-through there and text
+//   edges are smoothed in grey against nothing, so letters keep clean edges over the blur. The views'
+//   own windows show only the key, so all of the text area is glass.
+// - Where the layer can't be made (no DirectComposition, as under Wine), a view draws as before:
+//   Direct2D through a DC (a window render target cannot draw into a layered window), with text
+//   unsmoothed, since smoothed edges blend into the key colour and would show as an outline.
+// - Acrylic is slow to move on Windows 10 (every move of an acrylic window waits for the compositor).
+//   With "Smooth moving", a second catcher with the plain blur sits under the acrylic one; while the
+//   window is dragged or sized, only the plain one moves, and the acrylic one comes back where the
+//   window ends up.
 #include "KexSuite.h"
+#include "KexScintilla.h"
 #include <ole2.h>
 #include <map>
 #include <cwchar>
@@ -29,11 +36,13 @@ namespace {
 
 const wchar_t* const kCatcherClass = L"KexGlassCatcher";
 const UINT_PTR kHostSubclassId = 0x4B454747;   // 'KEGG'
-const UINT_PTR TIMER_SYNC = 1, TIMER_DRAG = 2;
+const UINT_PTR TIMER_SYNC = 1, TIMER_DRAG = 2, TIMER_BLURHIDE = 3;
+const UINT kBlurHideMs = 200;   // the plain blur stays under the acrylic this long after a move, while the acrylic draws
 const UINT WM_GLASS_REFRESH = WM_APP + 91;
 
 enum Engine { E_BEHIND = 0, E_SELF, E_KEYONLY };
-enum Edges { EDGES_SHARP = 0, EDGES_SMOOTH, EDGES_KEEP };
+enum Edges { EDGES_SMOOTH = 0, EDGES_SHARP };
+enum ViewMode { VIEW_NEW = 0, VIEW_LAYER, VIEW_FALLBACK };
 enum { ACCENT_DISABLED = 0, ACCENT_BLURBEHIND = 3, ACCENT_ACRYLIC = 4 };
 
 struct AccentPolicy { int state; int flags; DWORD colour; int animationId; };
@@ -119,11 +128,15 @@ DropSolid s_dropSolid;
 struct Host {
     HWND wnd = nullptr;
     HWND catcher = nullptr;
+    HWND blur = nullptr;    // smooth moving: the plain blur that moves instead of the acrylic
     bool addedLayered = false;
     bool dropRegistered = false;
     bool moving = false;
+    bool swapped = false;   // the acrylic is hidden and the plain blur moves with the window
     RECT insets{};          // client area relative to the window rect, for WM_MOVING/WM_SIZING
 };
+
+struct ViewGlass { ViewMode mode = VIEW_NEW; COLORREF key = 0; int edges = -1; };
 
 class GlassText : public Module {
 public:
@@ -141,8 +154,12 @@ public:
         else if (e == L"keyonly") _engine = E_KEYONLY;
         else _engine = E_BEHIND;
         _acrylic = settings.getInt(key(), L"Style", 0) == 1 && windowsBuild() >= 17134;   // acrylic needs 1803
-        _edges = std::max(0, std::min(2, settings.getInt(key(), L"TextEdges", EDGES_SHARP)));
+        _edges = std::max(0, std::min(1, settings.getInt(key(), L"Edges", EDGES_SMOOTH)));
+        _smoothMove = settings.getInt(key(), L"SmoothMove", 1) != 0;
     }
+
+    // the plain blur moves instead of the acrylic (catchers only: with the blur on the window itself there is nothing to swap)
+    bool smoothMove() const { return _smoothMove && _acrylic && _engine != E_SELF; }
 
     bool selfCheck(std::wstring& why) override
     {
@@ -175,7 +192,7 @@ public:
     void disable() override
     {
         _disabling = true;
-        if (_msg) { ::KillTimer(_msg, TIMER_SYNC); ::KillTimer(_msg, TIMER_DRAG); }
+        if (_msg) { ::KillTimer(_msg, TIMER_SYNC); ::KillTimer(_msg, TIMER_DRAG); ::KillTimer(_msg, TIMER_BLURHIDE); }
         deactivate();
         if (_msg) { ::DestroyWindow(_msg); _msg = nullptr; }
         if (s_glass == this) s_glass = nullptr;
@@ -240,6 +257,14 @@ public:
         const bool was = _active;
         _active = false;
         _dragSolid = false;
+        // the views' see-through layers go first, so they never sit over a window that is no longer keyed
+        for (auto& vg : _viewGlass)
+            if (vg.second.mode == VIEW_LAYER && ::IsWindow(vg.first)) sci(vg.first, SCI_KEX_GLASS, 0, 0);
+        _viewGlass.clear();
+        for (auto& t : _viewTech)
+            if (::IsWindow(t.first) && sci(t.first, SCI_GETTECHNOLOGY) == SC_TECHNOLOGY_DIRECTWRITE)
+                sci(t.first, SCI_SETTECHNOLOGY, t.second);
+        _viewTech.clear();
         for (Host& h : _hosts) detach(h);
         _hosts.clear();
         for (auto& t : _tech)
@@ -258,6 +283,7 @@ public:
         }
         s_stats.active = false;
         s_stats.hosts = 0;
+        s_stats.layerViews = s_stats.fallbackViews = 0;
         if (was) log(L"glass: off");
     }
 
@@ -291,7 +317,8 @@ public:
             }
         }
         for (int v = 0; v < views.count(); ++v)
-            if (HWND s = views.sci(v)) remapView(s);
+            if (HWND s = views.sci(v)) { remapView(s); glassView(s); }
+        countViews();
         ++s_stats.remaps;
     }
 
@@ -301,11 +328,75 @@ public:
         auto it = _from.find(s);
         if (it != _from.end() && static_cast<COLORREF>(sci(s, SCI_STYLEGETBACK, 0)) == it->second) return true;
         if (_margins && static_cast<COLORREF>(sci(s, SCI_STYLEGETBACK, STYLE_LINENUMBER)) != _key) return true;
-        if (_edges != EDGES_KEEP && sci(s, SCI_GETFONTQUALITY) != wantedQuality()) return true;
+        auto g = _viewGlass.find(s);
+        if (g == _viewGlass.end()) return true;
+        if (g->second.mode == VIEW_LAYER && (sci(s, SCI_KEX_GETGLASS) != 1 || g->second.key != _key)) return true;   // Notepad++ switched its renderer, or the layer failed
+        if (g->second.mode == VIEW_FALLBACK && sci(s, SCI_GETFONTQUALITY) != SC_EFF_QUALITY_NON_ANTIALIASED) return true;
         return false;
     }
 
-    int wantedQuality() const { return _edges == EDGES_SHARP ? SC_EFF_QUALITY_NON_ANTIALIASED : SC_EFF_QUALITY_ANTIALIASED; }
+    // The view's text on its own see-through layer; where this PC can't make one, drawn through a DC with sharp edges.
+    void glassView(HWND s)
+    {
+        ViewGlass& g = _viewGlass[s];
+        if (g.mode == VIEW_FALLBACK) return;
+        if (g.mode == VIEW_LAYER)
+        {
+            const LRESULT state = sci(s, SCI_KEX_GETGLASS);
+            if (state == 1 && g.key == _key && g.edges == _edges) return;
+            if (state == 2) { fallbackView(s, g, L"the layer stopped working"); return; }
+        }
+        // the layer is drawn with Direct2D: a view on GDI moves to DirectWrite while the glass is on
+        if (sci(s, SCI_GETTECHNOLOGY) == SC_TECHNOLOGY_DEFAULT)
+        {
+            if (_viewTech.find(s) == _viewTech.end()) _viewTech[s] = SC_TECHNOLOGY_DEFAULT;
+            sci(s, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITE);
+        }
+        const WPARAM flags = KEXGLASS_ON | (_edges == EDGES_SHARP ? KEXGLASS_SHARP : 0);
+        if (sci(s, SCI_KEX_GLASS, flags, static_cast<LPARAM>(_key)) == 1)
+        {
+            if (g.mode != VIEW_LAYER) ++s_stats.layerStarts;
+            g.mode = VIEW_LAYER;
+            g.key = _key;
+            g.edges = _edges;
+            return;
+        }
+        fallbackView(s, g, L"no see-through layer on this system");
+    }
+
+    void fallbackView(HWND s, ViewGlass& g, const wchar_t* why)
+    {
+        KexGlassInfo info{};
+        sci(s, SCI_KEX_GETGLASS, 0, reinterpret_cast<LPARAM>(&info));
+        sci(s, SCI_KEX_GLASS, 0, 0);
+        g.mode = VIEW_FALLBACK;
+        s_stats.layerError = static_cast<unsigned long>(info.lastError);
+        auto t = _viewTech.find(s);
+        if (t != _viewTech.end())
+        {
+            if (sci(s, SCI_GETTECHNOLOGY) == SC_TECHNOLOGY_DIRECTWRITE) sci(s, SCI_SETTECHNOLOGY, t->second);
+            _viewTech.erase(t);
+        }
+        fixRenderer(s);
+        const int q = static_cast<int>(sci(s, SCI_GETFONTQUALITY));
+        if (q != SC_EFF_QUALITY_NON_ANTIALIASED)
+        {
+            if (_quality.find(s) == _quality.end()) _quality[s] = q;
+            sci(s, SCI_SETFONTQUALITY, SC_EFF_QUALITY_NON_ANTIALIASED);
+        }
+        log(L"glass: view %d draws without a see-through layer (%ls, error 0x%08lx): sharp text through a DC", views.viewOf(s) + 1, why,
+            static_cast<unsigned long>(info.lastError));
+    }
+
+    void countViews()
+    {
+        s_stats.layerViews = s_stats.fallbackViews = 0;
+        for (auto& vg : _viewGlass)
+        {
+            if (vg.second.mode == VIEW_LAYER) ++s_stats.layerViews;
+            if (vg.second.mode == VIEW_FALLBACK) ++s_stats.fallbackViews;
+        }
+    }
 
     void remapView(HWND s)
     {
@@ -333,37 +424,36 @@ public:
             sci(s, SCI_SETFOLDMARGINCOLOUR, 1, _key);
             sci(s, SCI_SETFOLDMARGINHICOLOUR, 1, _key);
         }
-        if (_edges != EDGES_KEEP)
-        {
-            const int q = static_cast<int>(sci(s, SCI_GETFONTQUALITY));
-            if (q != wantedQuality())
-            {
-                if (_quality.find(s) == _quality.end()) _quality[s] = q;
-                sci(s, SCI_SETFONTQUALITY, wantedQuality());
-            }
-        }
     }
 
-    // Scintilla windows inside the hosts: Direct2D window targets cannot draw into a layered window.
+    // Scintilla windows inside the hosts: Direct2D window targets cannot draw into a layered window. The views
+    // draw onto their own layer instead (glassView); only those without one are switched here.
     void fixRenderers(HWND host)
     {
-        if (_keepRenderer) return;
         struct Ctx { GlassText* g; } ctx{ this };
         ::EnumChildWindows(host, [](HWND c, LPARAM p) -> BOOL {
             GlassText* g = reinterpret_cast<Ctx*>(p)->g;
             wchar_t cls[16] = {};
-            if (::GetClassNameW(c, cls, 15) && ::lstrcmpW(cls, L"Scintilla") == 0 && g->_tech.find(c) == g->_tech.end())
+            if (::GetClassNameW(c, cls, 15) && ::lstrcmpW(cls, L"Scintilla") == 0)
             {
-                const int t = static_cast<int>(sci(c, SCI_GETTECHNOLOGY));
-                if (t == SC_TECHNOLOGY_DIRECTWRITE || t == SC_TECHNOLOGY_DIRECTWRITERETAIN || t == SC_TECHNOLOGY_DIRECT_WRITE_1)
-                {
-                    g->_tech[c] = t;
-                    sci(c, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITEDC);
-                    ++s_stats.rendererSwitches;
-                }
+                auto vg = g->_viewGlass.find(c);
+                const bool view = views.viewOf(c) >= 0;
+                if (!view || (vg != g->_viewGlass.end() && vg->second.mode == VIEW_FALLBACK)) g->fixRenderer(c);
             }
             return TRUE;
         }, reinterpret_cast<LPARAM>(&ctx));
+    }
+
+    void fixRenderer(HWND c)
+    {
+        if (_keepRenderer || _tech.find(c) != _tech.end()) return;
+        const int t = static_cast<int>(sci(c, SCI_GETTECHNOLOGY));
+        if (t == SC_TECHNOLOGY_DIRECTWRITE || t == SC_TECHNOLOGY_DIRECTWRITERETAIN || t == SC_TECHNOLOGY_DIRECT_WRITE_1)
+        {
+            _tech[c] = t;
+            sci(c, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITEDC);
+            ++s_stats.rendererSwitches;
+        }
     }
 
     // ---- hosts ---------------------------------------------------------------------------------
@@ -398,19 +488,26 @@ public:
         return nullptr;
     }
 
-    void attach(Host& h)
+    HWND makeCatcher(Host& h, const wchar_t* title)
     {
-        ::SetWindowSubclass(h.wnd, hostSubclass, kHostSubclassId, reinterpret_cast<DWORD_PTR>(this));
         const bool behind = _engine == E_BEHIND;
         // behind: a plain window carries the blur; otherwise an invisible layered one only catches input
         DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | (behind ? 0 : WS_EX_LAYERED);
-        h.catcher = ::CreateWindowExW(ex, kCatcherClass, L"KEX glass", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, hInst, nullptr);
-        if (h.catcher)
+        HWND c = ::CreateWindowExW(ex, kCatcherClass, title, WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, hInst, nullptr);
+        if (c)
         {
-            ::SetWindowLongPtrW(h.catcher, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(h.wnd));
-            if (!behind) ::SetLayeredWindowAttributes(h.catcher, 0, 1, LWA_ALPHA);
-            h.dropRegistered = ::RegisterDragDrop(h.catcher, &s_dropSolid) == S_OK;
+            ::SetWindowLongPtrW(c, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(h.wnd));
+            if (!behind) ::SetLayeredWindowAttributes(c, 0, 1, LWA_ALPHA);
         }
+        return c;
+    }
+
+    void attach(Host& h)
+    {
+        ::SetWindowSubclass(h.wnd, hostSubclass, kHostSubclassId, reinterpret_cast<DWORD_PTR>(this));
+        h.catcher = makeCatcher(h, L"KEX glass");
+        if (h.catcher) h.dropRegistered = ::RegisterDragDrop(h.catcher, &s_dropSolid) == S_OK;
+        if (smoothMove()) h.blur = makeCatcher(h, L"KEX glass (moving)");
         applyAccent(h);
         if (!_blurRefused || _engine == E_KEYONLY) applyKey(h);
         placeCatcher(h);
@@ -433,7 +530,10 @@ public:
             if (h.dropRegistered) ::RevokeDragDrop(h.catcher);
             ::DestroyWindow(h.catcher);
         }
+        if (h.blur) ::DestroyWindow(h.blur);
         h.catcher = nullptr;
+        h.blur = nullptr;
+        h.swapped = false;
         h.addedLayered = false;
     }
 
@@ -468,6 +568,7 @@ public:
         HWND w = _engine == E_BEHIND ? h.catcher : h.wnd;
         if (!w) return;
         const int state = _acrylic ? ACCENT_ACRYLIC : ACCENT_BLURBEHIND;
+        if (h.blur && !setAccent(h.blur, ACCENT_BLURBEHIND)) ++s_stats.accentFailures;
         if (!setAccent(w, state))
         {
             ++s_stats.accentFailures;
@@ -490,15 +591,17 @@ public:
         h.insets = RECT{ cr.left - wr.left, cr.top - wr.top, wr.right - cr.right, wr.bottom - cr.bottom };
     }
 
-    void placeCatcher(Host& h, const RECT* windowRect = nullptr)
+    // the catcher that follows the window now: the plain blur while a move has swapped them
+    static HWND activeCatcher(const Host& h) { return h.swapped && h.blur ? h.blur : h.catcher; }
+
+    static void hideWindow(HWND w)
     {
-        if (!h.catcher) return;
-        const bool show = ::IsWindowVisible(h.wnd) && !::IsIconic(h.wnd);
-        if (!show)
-        {
-            if (::IsWindowVisible(h.catcher)) ::ShowWindow(h.catcher, SW_HIDE);
-            return;
-        }
+        if (w && ::IsWindowVisible(w))
+            ::SetWindowPos(w, nullptr, 0, 0, 0, 0, SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    }
+
+    RECT catcherRect(Host& h, const RECT* windowRect)
+    {
         RECT rc;
         if (windowRect)
             rc = RECT{ windowRect->left + h.insets.left, windowRect->top + h.insets.top, windowRect->right - h.insets.right, windowRect->bottom - h.insets.bottom };
@@ -508,44 +611,84 @@ public:
             ::GetClientRect(h.wnd, &rc);
             ::MapWindowPoints(h.wnd, nullptr, reinterpret_cast<POINT*>(&rc), 2);
         }
+        return rc;
+    }
+
+    // cat goes right under after, over rc, on the host's topmost layer
+    void putCatcher(Host& h, HWND cat, HWND after, const RECT& rc)
+    {
         const bool hostTop = (::GetWindowLongPtrW(h.wnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
-        const bool catTop = (::GetWindowLongPtrW(h.catcher, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        const bool catTop = (::GetWindowLongPtrW(cat, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
         const UINT f = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING;
         if (hostTop != catTop)
-            ::SetWindowPos(h.catcher, hostTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, f | SWP_NOMOVE | SWP_NOSIZE);
-        ::SetWindowPos(h.catcher, h.wnd, rc.left, rc.top, std::max(1L, rc.right - rc.left), std::max(1L, rc.bottom - rc.top), f | SWP_SHOWWINDOW);
+            ::SetWindowPos(cat, hostTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, f | SWP_NOMOVE | SWP_NOSIZE);
+        ::SetWindowPos(cat, after, rc.left, rc.top, std::max(1L, rc.right - rc.left), std::max(1L, rc.bottom - rc.top), f | SWP_SHOWWINDOW);
+    }
+
+    void placeCatcher(Host& h, const RECT* windowRect = nullptr)
+    {
+        if (!h.catcher) return;
+        const bool show = ::IsWindowVisible(h.wnd) && !::IsIconic(h.wnd);
+        if (!show)
+        {
+            hideWindow(h.catcher);
+            hideWindow(h.blur);
+            return;
+        }
+        const RECT rc = catcherRect(h, windowRect);
+        HWND cat = activeCatcher(h);
+        if (!h.swapped && h.blur && ::IsWindowVisible(h.blur))
+        {
+            // left under the acrylic after a move: it must not show anywhere the window no longer is
+            RECT br;
+            ::GetWindowRect(h.blur, &br);
+            if (!::EqualRect(&br, &rc)) hideWindow(h.blur);
+        }
+        putCatcher(h, cat, h.wnd, rc);
         ++s_stats.placements;
     }
 
     // The catcher must stay directly beneath its host, on the same virtual desktop.
     void checkPlacement(Host& h, bool desktop)
     {
-        if (!h.catcher || !::IsWindowVisible(h.wnd) || ::IsIconic(h.wnd))
+        HWND cat = activeCatcher(h);
+        if (!cat || !::IsWindowVisible(h.wnd) || ::IsIconic(h.wnd))
         {
-            if (h.catcher && ::IsWindowVisible(h.catcher)) placeCatcher(h);
+            if ((h.catcher && ::IsWindowVisible(h.catcher)) || (h.blur && ::IsWindowVisible(h.blur))) placeCatcher(h);
             return;
         }
         HWND n = ::GetWindow(h.wnd, GW_HWNDNEXT);
-        while (n && n != h.catcher && !::IsWindowVisible(n)) n = ::GetWindow(n, GW_HWNDNEXT);
+        while (n && n != cat && !::IsWindowVisible(n)) n = ::GetWindow(n, GW_HWNDNEXT);
         RECT cr, kr;
         ::GetClientRect(h.wnd, &cr);
         ::MapWindowPoints(h.wnd, nullptr, reinterpret_cast<POINT*>(&cr), 2);
-        ::GetWindowRect(h.catcher, &kr);
-        if (n != h.catcher || !::EqualRect(&cr, &kr) || !::IsWindowVisible(h.catcher)) placeCatcher(h);
+        ::GetWindowRect(cat, &kr);
+        if (n != cat || !::EqualRect(&cr, &kr) || !::IsWindowVisible(cat)) placeCatcher(h);
         // which desktop a window is on is a call into Explorer: once a second, and when the window is activated
         DesktopProvider* dp = desktop ? desktopProvider() : nullptr;
         if (dp && dp->ok())
         {
             GUID a{}, b{};
-            if (dp->windowDesktop(h.wnd, &a) && dp->windowDesktop(h.catcher, &b) && !::IsEqualGUID(a, b))
-                dp->moveWindow(h.catcher, a);
+            if (dp->windowDesktop(h.wnd, &a))
+                for (HWND c : { h.catcher, h.blur })
+                    if (c && dp->windowDesktop(c, &b) && !::IsEqualGUID(a, b)) dp->moveWindow(c, a);
         }
     }
 
     void onHostMoving(HWND w, const RECT* proposed)
     {
         Host* h = find(w);
-        if (h && proposed) placeCatcher(*h, proposed);   // move it with the window, not a frame later
+        if (!h || !proposed) return;
+        if (h->moving && h->blur && !h->swapped && smoothMove())
+        {
+            // the first step of a drag: the plain blur (already drawn under the acrylic) takes over, the acrylic hides
+            h->swapped = true;
+            putCatcher(*h, h->blur, h->wnd, catcherRect(*h, proposed));
+            hideWindow(h->catcher);
+            ++s_stats.swaps;
+            return;
+        }
+        placeCatcher(*h, proposed);   // move it with the window, not a frame later
     }
 
     void onSizeMove(HWND w, bool start)
@@ -553,7 +696,33 @@ public:
         Host* h = find(w);
         if (!h) return;
         h->moving = start;
-        if (start) insetsOf(*h);
+        if (start)
+        {
+            insetsOf(*h);
+            // smooth moving: the plain blur goes under the acrylic now, so it is drawn by the time the window moves
+            if (h->blur && smoothMove() && h->catcher && ::IsWindowVisible(h->catcher))
+            {
+                ::KillTimer(_msg, TIMER_BLURHIDE);
+                putCatcher(*h, h->blur, h->catcher, catcherRect(*h, nullptr));
+            }
+            return;
+        }
+        if (h->swapped)
+        {
+            // the acrylic comes back where the window ended up; the plain blur goes once the acrylic is drawn
+            h->swapped = false;
+            putCatcher(*h, h->catcher, h->wnd, catcherRect(*h, nullptr));
+            ::SetTimer(_msg, TIMER_BLURHIDE, kBlurHideMs, nullptr);
+            ++s_stats.swapsBack;
+        }
+        else hideWindow(h->blur);   // the window didn't move after all
+    }
+
+    void blurHideTick()
+    {
+        ::KillTimer(_msg, TIMER_BLURHIDE);
+        for (Host& h : _hosts)
+            if (!h.swapped) hideWindow(h.blur);
     }
 
     void onHostPosChanged(HWND w)
@@ -747,6 +916,7 @@ public:
             {
                 if (m == WM_TIMER && w == TIMER_SYNC) { g->tick(); return 0; }
                 if (m == WM_TIMER && w == TIMER_DRAG) { g->dragTick(); return 0; }
+                if (m == WM_TIMER && w == TIMER_BLURHIDE) { g->blurHideTick(); return 0; }
                 if (m == WM_GLASS_REFRESH) { g->evaluate(); refreshPrefPages(); return 0; }
             }
             catch (...) { log(L"glass: exception in its timer"); }
@@ -759,9 +929,11 @@ public:
     std::map<HWND, int> _tech;          // Scintilla windows switched to DirectWriteDC: their own technology
     std::map<HWND, COLORREF> _from;     // each view's own background before the key replaced it
     std::map<HWND, int> _quality;       // views whose text smoothing was switched: their own setting
+    std::map<HWND, ViewGlass> _viewGlass;   // each view: on its see-through layer, or drawing as before
+    std::map<HWND, int> _viewTech;      // views moved from GDI to DirectWrite for the layer: their own technology
     COLORREF _bg = 0, _key = 0, _oldKey = 0xFFFFFFFF;
-    int _tint = 40, _edges = EDGES_SHARP;
-    bool _margins = true, _keepRenderer = false, _acrylic = true;
+    int _tint = 40, _edges = EDGES_SMOOTH;
+    bool _margins = true, _keepRenderer = false, _acrylic = true, _smoothMove = true;
     Engine _engine = E_BEHIND;
     bool _active = false, _disabling = false, _blurRefused = false, _dragSolid = false;
     double _dragSince = 0;
@@ -799,9 +971,12 @@ std::wstring glassInfo()
     if (!m || !m->isEnabled()) return L"";
     if (!s_stats.active) return s_stats.state;
     std::wstring s = L"On: " + s_stats.state + L". Clicks on the glass go to the text under them.";
-    const int edges = settings.getInt(m->key(), L"TextEdges", EDGES_SHARP);
-    if (edges == EDGES_SHARP) s += L" Text is drawn without smoothing while the glass is on, so letters have no outline.";
-    else s += L" Smoothed letters show a thin outline of the theme's background on the glass.";
+    const int edges = settings.getInt(m->key(), L"Edges", EDGES_SMOOTH);
+    if (s_stats.layerViews > 0 && s_stats.fallbackViews == 0)
+        s += edges == EDGES_SHARP ? L" Text sits on its own see-through layer, drawn without smoothing."
+                                  : L" Text sits on its own see-through layer, smoothed in grey, so letters have clean edges.";
+    else if (s_stats.fallbackViews > 0)
+        s += L" This PC can't give the text a see-through layer, so it is drawn without smoothing (smoothed edges would show an outline).";
     return s;
 }
 

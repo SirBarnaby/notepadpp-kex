@@ -37,8 +37,8 @@ bool pushLayered(HWND wnd, Surface& s, POINT pos, SIZE size);
 // Render text runs into a premultiplied sprite of the given size, baseline at y = baseline.
 bool renderRuns(Sprite& out, const std::vector<TextRun>& runs, int w, int h, int baseline, int pad);
 
-// Composite a sprite rotated by angle (radians) with its centre at (cx, cy) in surface coords.
-void drawSprite(Surface& s, const Sprite& sp, float cx, float cy, float angle, float alpha);
+// Composite a sprite rotated by angle (radians) and scaled by sx, sy with its centre at (cx, cy) in surface coords.
+void drawSprite(Surface& s, const Sprite& sp, float cx, float cy, float angle, float alpha, float sx = 1, float sy = 1);
 
 // Anti-aliased (fractional-edge) rectangle fill, premultiplied "over".
 void fillRectF(Surface& s, float l, float t, float r, float b, COLORREF c, float alpha);

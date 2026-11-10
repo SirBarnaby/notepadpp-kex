@@ -14,8 +14,9 @@ namespace {
 struct Live {
     Item it;
     float age = 0;
-    float x = 0, y = 0, a = 0, alpha = 1;
+    float x = 0, y = 0, a = 0, alpha = 1, sx = 1, sy = 1;
     float radius = 0;   // half the diagonal: the piece stays inside x +- radius at any angle
+    float w = 0;        // the picture's width (for the anchor of a piece that changes size)
 };
 
 class Renderer {
@@ -82,7 +83,7 @@ public:
     Stats stats()
     {
         Stats st;
-        for (int k = 0; k < K_COUNT; ++k) { st.live[k] = _live[k]; st.spawned[k] = _spawned[k]; }
+        for (int k = 0; k < K_COUNT; ++k) { st.live[k] = _live[k]; st.spawned[k] = _spawned[k]; st.speed[k] = speedOf(k); }
         st.frames = _frames;
         st.visible = _visible;
         ::EnterCriticalSection(&_lock);
@@ -91,7 +92,10 @@ public:
         return st;
     }
 
+    int speedOf(int kind) const { const int v = speed[kind].load(std::memory_order_relaxed); return v > 0 ? v : 100; }
+
     std::atomic<int> freeze{ -1 };
+    std::atomic<int> speed[K_COUNT] = {};   // each kind's own speed (%); 0 = not set (100)
     int users = 0;
 
 private:
@@ -164,6 +168,7 @@ private:
         const float w = l.it.rect ? l.it.rw : (l.it.sprite ? static_cast<float>(l.it.sprite->w) : 0.0f);
         const float h = l.it.rect ? l.it.rh : (l.it.sprite ? static_cast<float>(l.it.sprite->h) : 0.0f);
         l.radius = l.it.rect ? 0.0f : 0.5f * std::sqrt(w * w + h * h) + 1;
+        l.w = w;
         l.x = l.it.x0; l.y = l.it.y0;
         _parts.push_back(std::move(l));
     }
@@ -224,12 +229,15 @@ private:
             float dt = static_cast<float>((now - last) / 1000.0);
             last = now;
             if (dt > 0.05f) dt = 0.05f;
+            dt *= static_cast<float>(animSpeedAll()) / 100.0f;   // the speed for all animations
+            float kindDt[K_COUNT];                                 // and each kind's own
+            for (int k = 0; k < K_COUNT; ++k) kindDt[k] = dt * static_cast<float>(speedOf(k)) / 100.0f;
             const int fz = freeze.load();
             if (fz >= 0)
             {
                 float youngest = 1e9f;
                 for (const Live& l : _parts) youngest = std::min(youngest, l.age - l.it.delay);
-                if (youngest * 1000.0f >= fz) dt = 0;   // test hook
+                if (youngest * 1000.0f >= fz) std::fill(std::begin(kindDt), std::end(kindDt), 0.0f);   // test hook
             }
 
             const double t0 = nowMs();
@@ -238,14 +246,23 @@ private:
             for (auto i = _parts.begin(); i != _parts.end();)
             {
                 Live& p = *i;
-                p.age += dt;
+                p.age += kindDt[p.it.kind];
                 const float t = p.age - p.it.delay;
                 if (t < 0) { ++live[p.it.kind]; ++i; continue; }
                 p.x = p.it.x0 + p.it.vx * t;
                 p.y = p.it.y0 + p.it.vy * t + 0.5f * p.it.g * t * t;
                 p.a = p.it.angle + p.it.spin * t;
                 p.alpha = keyAlpha(p.it.keys, t) * p.it.opacity;
-                const float rx = p.it.rect ? p.it.rw * 0.5f : p.radius, ry = p.it.rect ? p.it.rh * 0.5f : p.radius;
+                p.sx = p.sy = 1;
+                if (p.it.life > 0 && (p.it.sx0 != 1 || p.it.sx1 != 1 || p.it.sy0 != 1 || p.it.sy1 != 1))
+                {
+                    const float u = std::min(1.0f, t / p.it.life), e = 1.0f - (1.0f - u) * (1.0f - u) * (1.0f - u);
+                    p.sx = p.it.sx0 + (p.it.sx1 - p.it.sx0) * e;
+                    p.sy = p.it.sy0 + (p.it.sy1 - p.it.sy0) * e;
+                    p.x += (p.it.anchorX - 0.5f) * p.w * (1.0f - p.sx);
+                }
+                const float grow = std::max(p.sx, p.sy);
+                const float rx = p.it.rect ? p.it.rw * 0.5f : p.radius * grow, ry = p.it.rect ? p.it.rh * 0.5f : p.radius * grow;
                 const RECT& mon = p.it.monitor;
                 const bool gone = (p.it.life > 0 && t >= p.it.life) || t > 8.0f ||
                                   (p.it.life <= 0 && ((p.y - ry > mon.bottom) || (p.x + rx < mon.left - 400) || (p.x - rx > mon.right + 400)));
@@ -283,7 +300,7 @@ private:
                         fillRectF(_surf, p.x - p.it.rw * 0.5f - clip.left, p.y - p.it.rh * 0.5f - clip.top,
                                   p.x + p.it.rw * 0.5f - clip.left, p.y + p.it.rh * 0.5f - clip.top, p.it.color, p.alpha);
                     else if (p.it.sprite)
-                        drawSprite(_surf, *p.it.sprite, p.x - clip.left, p.y - clip.top, p.a, p.alpha);
+                        drawSprite(_surf, *p.it.sprite, p.x - clip.left, p.y - clip.top, p.a, p.alpha, p.sx, p.sy);
                 }
                 POINT pos{ clip.left, clip.top }; SIZE sz{ w, h };
                 pushLayered(_wnd, _surf, pos, sz);
@@ -374,6 +391,10 @@ void submitLetters(LetterBatch&& batch) { renderer().submitLetters(std::move(bat
 void clear(int kind) { renderer().clear(kind); }
 Stats stats() { return renderer().stats(); }
 void freezeAfter(int ms) { renderer().freeze = ms; }
+void setSpeed(int kind, int percent)
+{
+    if (kind >= 0 && kind < K_COUNT) renderer().speed[kind] = std::clamp(percent, kSpeedMin, kSpeedMax);
+}
 
 bool animationsOn()
 {

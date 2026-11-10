@@ -1,4 +1,4 @@
-From fbaeacc45f22aa3b4b3207b4bf65f8c6a3da7367 Mon Sep 17 00:00:00 2001
+From a6edade4f92d9fd126c94567f583b3ef326422b8 Mon Sep 17 00:00:00 2001
 From: KEX patch <noreply@anthropic.com>
 Date: Sun, 11 Oct 2026 15:07:35 +0000
 Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
@@ -6,9 +6,11 @@ Subject: [PATCH] KEX: four views in a 2x2 grid, snap-out windows, built-in KEX
 
 Four views, snap-out view windows and plugin gating for two-view
 plugins. The KEX suite (PowerEditor/src/KexSuite, copied in by
-kex-patch.sh) is built into notepad++.exe and gets its settings pages in
-Settings > Preferences ("KEX Editing", "KEX Tabs", "KEX Windows"),
-reachable from Settings > KEX Features.
+kex-patch.sh) is built into notepad++.exe. It has a menu of its own in
+the menu bar, KEX, between Plugins and Window (MENUINDEX_KEX; Window and
+? move one place right, and the translation positions with them), whose
+Settings... opens the suite's own KEX Settings window, apart from
+Notepad++'s Preferences.
 
 Tab snapping: while a tab is dragged the core works out where it would
 land (the side of a view a hidden view would open on, or another view)
@@ -26,27 +28,36 @@ system drag distance, and tells the suite so it can lift the tab.
 
 The app calls itself "Notepad++ KEX" in the title bar, the About box,
 the debug info and the version resource (the taskbar and Task Manager
-name); the window class stays "Notepad++". Settings > KEX Features gives
-way to the suite's KEX group at the end of the Settings menu, so
-Notepad++'s own Settings items keep their upstream positions;
-NPPM_KEX_SHOWPREFPAGE opens Preferences on a given KEX page.
+name); the window class stays "Notepad++". The Settings menu and the
+Preferences dialog are as upstream has them; NPPM_KEX_SHOWPREFPAGE
+opens the KEX Settings window on a given page.
 
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_0174a8npohQwNFKWumRqHreA
+Scintilla draws the suite's motion itself, from pictures of the view:
+the tab slide (SCI_KEX_SLIDE) and the motion of edits
+(SCI_KEX_SETMOTIONS): cut, delete, paste, undo and redo, moving,
+indenting, duplicating, folding and sorting lines, a ring closing onto
+found text and a slide for far jumps. The view is pictured the moment
+an edit starts; each frame then puts the view as it is now together
+with that picture, so text stays sharp and nothing floats over other
+text. Each motion has its own time; any key, other edit, scroll or new
+size ends it at once, and one that comes right after another is skipped.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01KLNHuTvRwta8ebaSJBmh3h
 ---
  PowerEditor/gcc/makefile                      |     1 +
- PowerEditor/src/KexViews.cpp                  |  1302 ++
- PowerEditor/src/MISC/PluginsManager/KexApi.h  |    83 +
- .../src/MISC/PluginsManager/KexSuiteHost.h    |    60 +
+ PowerEditor/src/KexViews.cpp                  |  1311 +
+ PowerEditor/src/MISC/PluginsManager/KexApi.h  |    87 +
+ .../src/MISC/PluginsManager/KexSuiteHost.h    |    52 +
  .../MISC/PluginsManager/PluginsManager.cpp    |    72 +-
  .../src/MISC/PluginsManager/PluginsManager.h  |     7 +
  PowerEditor/src/Notepad_plus.cpp              |   507 +-
  PowerEditor/src/Notepad_plus.h                |    67 +-
- PowerEditor/src/Notepad_plus.rc               |     4 +-
+ PowerEditor/src/Notepad_plus.rc               |     9 +-
  PowerEditor/src/Notepad_plus_Window.cpp       |     2 +-
  PowerEditor/src/Notepad_plus_Window.h         |     4 +
  PowerEditor/src/NppBigSwitch.cpp              |   164 +-
- PowerEditor/src/NppCommands.cpp               |   116 +-
+ PowerEditor/src/NppCommands.cpp               |   119 +-
  PowerEditor/src/NppIO.cpp                     |   311 +-
  PowerEditor/src/NppNotification.cpp           |   137 +-
  PowerEditor/src/Parameters.cpp                |    72 +-
@@ -59,8 +70,6 @@ Claude-Session: https://claude.ai/code/session_0174a8npohQwNFKWumRqHreA
  .../src/WinControls/DockingWnd/Gripper.cpp    |     3 +-
  .../src/WinControls/Grid/ShortcutMapper.cpp   |     2 +
  .../src/WinControls/Grid/ShortcutMapper.h     |     1 +
- .../WinControls/Preference/preferenceDlg.cpp  |    42 +
- .../WinControls/Preference/preferenceDlg.h    |    12 +
  .../SplitterContainer/SplitterContainer.cpp   |     2 +
  .../SplitterContainer/SplitterContainer.h     |    14 +
  PowerEditor/src/WinControls/TabBar/TabBar.cpp |    16 +-
@@ -69,19 +78,25 @@ Claude-Session: https://claude.ai/code/session_0174a8npohQwNFKWumRqHreA
  .../VerticalFileSwitcherListView.cpp          |    12 +-
  .../src/WinControls/shortcut/shortcut.cpp     |    26 +-
  .../src/WinControls/shortcut/shortcut.h       |     1 +
+ PowerEditor/src/localization.cpp              |     4 +-
  PowerEditor/src/menuCmdID.h                   |    21 +
+ PowerEditor/src/resource.h                    |     7 +-
  PowerEditor/src/winmain.cpp                   |    11 +
- scintilla/include/KexScintilla.h              |    56 +
+ scintilla/include/KexScintilla.h              |   148 +
  scintilla/src/EditView.cxx                    |    19 +-
  scintilla/src/EditView.h                      |    17 +
- scintilla/src/Editor.cxx                      | 18779 ++++++++--------
- scintilla/src/Editor.h                        |  1578 +-
- scintilla/win32/ScintillaWin.cxx              |  8420 +++----
- 43 files changed, 17425 insertions(+), 14659 deletions(-)
+ scintilla/src/Editor.cxx                      | 19826 +++++++++-------
+ scintilla/src/Editor.h                        |  1688 +-
+ scintilla/src/KexSurface.h                    |    21 +
+ scintilla/win32/ScintillaWin.cxx              |  8785 +++----
+ scintilla/win32/SurfaceD2D.cxx                |    59 +-
+ scintilla/win32/SurfaceGDI.cxx                |    18 +-
+ 46 files changed, 19093 insertions(+), 14673 deletions(-)
  create mode 100644 PowerEditor/src/KexViews.cpp
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexApi.h
  create mode 100644 PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
  create mode 100644 scintilla/include/KexScintilla.h
+ create mode 100644 scintilla/src/KexSurface.h
 
 diff --git a/PowerEditor/gcc/makefile b/PowerEditor/gcc/makefile
 index 3f38aa9..849daf5 100644
@@ -97,10 +112,10 @@ index 3f38aa9..849daf5 100644
  
 diff --git a/PowerEditor/src/KexViews.cpp b/PowerEditor/src/KexViews.cpp
 new file mode 100644
-index 0000000..4755601
+index 0000000..9e50971
 --- /dev/null
 +++ b/PowerEditor/src/KexViews.cpp
-@@ -0,0 +1,1302 @@
+@@ -0,0 +1,1311 @@
 +// This file is part of the KEX four-view patch for Notepad++.
 +//
 +// This program is free software: you can redistribute it and/or modify
@@ -1357,10 +1372,19 @@ index 0000000..4755601
 +			return reinterpret_cast<LRESULT>(MainFileManager.getBufferByID(id)->getDocument());
 +		}
 +
++		case NPPM_KEX_RECENTTAG:
++		{
++			const BufferID id = reinterpret_cast<BufferID>(wParam);
++			if (!id || MainFileManager.getBufferIndexByID(id) < 0)
++				return -1;
++			Buffer* buf = MainFileManager.getBufferByID(id);
++			if (lParam == 1)
++				buf->increaseRecentTag();
++			return buf->getRecentTag();
++		}
++
 +		case NPPM_KEX_SHOWPREFPAGE:
-+			command(IDM_SETTING_KEX); // opens Preferences (on the first KEX page)
-+			if (wParam > 0)
-+				_preference.showDialogByName(kexsuite::prefPageName(static_cast<int>(wParam)));
++			kexsuite::showSettings(static_cast<int>(wParam)); // the KEX Settings window, on that page
 +			return TRUE;
 +
 +		case NPPM_INTERNAL_KEX_TABDRAG:
@@ -1405,10 +1429,10 @@ index 0000000..4755601
 +}
 diff --git a/PowerEditor/src/MISC/PluginsManager/KexApi.h b/PowerEditor/src/MISC/PluginsManager/KexApi.h
 new file mode 100644
-index 0000000..a66f983
+index 0000000..bb42706
 --- /dev/null
 +++ b/PowerEditor/src/MISC/PluginsManager/KexApi.h
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,87 @@
 +// KexApi.h - messages added to Notepad++ by the KEX four-view patch.
 +//
 +// The patch gives Notepad++ four editing views (0 = main, 1 = second, 2 = third, 3 = fourth)
@@ -1457,8 +1481,8 @@ index 0000000..a66f983
 +// lParam: a folder written by NPPM_KEX_SAVEDESKTOPCOPY. Opens those tabs here; files already open from
 +// the command line stay last and active. LRESULT: tabs opened, -1 on failure.
 +#define NPPM_KEX_LOADDESKTOPCOPY      (KEX_USER + 13)
-+// wParam: a KEX Preferences page (0 "KEX Editing", 1 "KEX Tabs", 2 "KEX Windows", 3 "KEX Highlighting",
-+// 4 "KEX Quick Note", 5 "KEX Effects"). Opens Settings > Preferences on that page. LRESULT: TRUE.
++// wParam: a page of the KEX Settings window (0 "Editing", 1 "Tabs", 2 "Windows", 3 "Highlighting",
++// 4 "Quick Note", 5 "Effects"). Opens KEX > Settings... on that page. LRESULT: TRUE.
 +#define NPPM_KEX_SHOWPREFPAGE         (KEX_USER + 14)
 +
 +// Commands of the KEX features. They are added to a menu of the feature's, Settings > Shortcut Mapper
@@ -1492,23 +1516,22 @@ index 0000000..a66f983
 +// wParam: a BufferID. LRESULT: the Scintilla document of that buffer (as SCI_GETDOCPOINTER returns it for
 +// a view showing it), 0 if there is no such buffer. Lets a feature read and mark any open document.
 +#define NPPM_KEX_GETBUFFERDOC         (KEX_USER + 19)
++// wParam: a BufferID, lParam: 0 = read, 1 = make it the most recent tab. LRESULT: the buffer's place in the
++// Ctrl+Tab order (a higher number is more recent; Notepad++ raises it on every switch), -1 if there is no
++// such buffer. A tab shown only for a moment (a touchpad swipe that slides back) puts the order back with it.
++#define NPPM_KEX_RECENTTAG            (KEX_USER + 20)
 diff --git a/PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h b/PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
 new file mode 100644
-index 0000000..064fa98
+index 0000000..f8bb71f
 --- /dev/null
 +++ b/PowerEditor/src/MISC/PluginsManager/KexSuiteHost.h
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,52 @@
 +// KexSuiteHost.h - the KEX suite (falling letters, smooth caret, quick note, F12 hover tabs, tab
 +// snapping, the same Notepad++ on every virtual desktop, the glass text area, live token styles) is built into notepad++.exe. Its sources
 +// live in PowerEditor/src/KexSuite (kex-patch.sh copies them in from the KEX repository's suite/
 +// folder). It drives Notepad++ through the documented plugin messages, so the core only hands it the
-+// plugin data, every notification, the window procedure of its Preferences pages and tab drags.
++// plugin data, every notification and tab drags, and opens its KEX Settings window (KEX > Settings...).
 +#pragma once
-+
-+// Settings > Preferences gets the suite's pages: dialog templates IDD_KEX_PREF_FIRST,
-+// IDD_KEX_PREF_FIRST + 1, ... (KexSuite/KexSuite.rc), at most KEX_PREF_PAGES_MAX of them.
-+#define IDD_KEX_PREF_FIRST 30500
-+#define KEX_PREF_PAGES_MAX 8
 +
 +#ifndef RC_INVOKED
 +#include <windows.h>
@@ -1519,10 +1542,7 @@ index 0000000..064fa98
 +namespace kexsuite {
 +void setInfo(HINSTANCE hInst, const NppData& data);                           // once the Scintilla views exist
 +void notify(SCNotification* n);                                                // every notification, views 3 and 4 included
-+intptr_t prefPageProc(HWND page, UINT message, WPARAM wParam, LPARAM lParam);   // all its Preferences pages
-+int prefPageCount();                                                           // pages to add (<= KEX_PREF_PAGES_MAX)
-+const wchar_t* prefPageTitle(int page);                                        // shown in the Preferences list
-+const wchar_t* prefPageName(int page);                                         // internal name (showDialogByName)
++void showSettings(int page);   // the KEX Settings window (its own, apart from Preferences) on a page; -1: the page shown last
 +
 +// Tab snapping: while a tab is dragged the core works out where it would land and the suite
 +// draws the preview. tabSnapOn() false = the classic drop menu.
@@ -2863,7 +2883,7 @@ index 0ea0301..0686e7e 100644
  
  	void loadBufferIntoView(BufferID id, int whichOne, bool dontClose = false);		//Doesn't _activate_ the buffer
 diff --git a/PowerEditor/src/Notepad_plus.rc b/PowerEditor/src/Notepad_plus.rc
-index 9ba09e6..47bb8b6 100644
+index 9ba09e6..a6e2fdf 100644
 --- a/PowerEditor/src/Notepad_plus.rc
 +++ b/PowerEditor/src/Notepad_plus.rc
 @@ -43,12 +43,12 @@ BEGIN
@@ -2881,6 +2901,18 @@ index 9ba09e6..47bb8b6 100644
              VALUE    "ProductVersion",     VERSION_PRODUCT_VALUE
          END
      END
+@@ -1325,6 +1325,11 @@ BEGIN
+         MENUITEM "Open Plugins Folder...",    IDM_SETTING_OPENPLUGINSDIR
+     END
+ 
++    POPUP "&KEX"
++    BEGIN
++        MENUITEM "&Settings...",    IDM_SETTING_KEX
++    END
++
+     POPUP "&Window"
+     BEGIN
+         POPUP "Sort By"
 diff --git a/PowerEditor/src/Notepad_plus_Window.cpp b/PowerEditor/src/Notepad_plus_Window.cpp
 index 7ee5abf..a179326 100644
 --- a/PowerEditor/src/Notepad_plus_Window.cpp
@@ -3289,7 +3321,7 @@ index 3a8dad0..889c1f8 100644
  				for (size_t i = 0, len = pTab[v]->nbItem(); i < len; ++i)
  				{
 diff --git a/PowerEditor/src/NppCommands.cpp b/PowerEditor/src/NppCommands.cpp
-index e53fac6..6f537a8 100644
+index e53fac6..ff71d20 100644
 --- a/PowerEditor/src/NppCommands.cpp
 +++ b/PowerEditor/src/NppCommands.cpp
 @@ -1538,10 +1538,11 @@ void Notepad_plus::command(int id)
@@ -3367,24 +3399,20 @@ index e53fac6..6f537a8 100644
  			for (auto pView : pViews)
  			{
  				Buffer* pBuf = pView->getCurrentBuffer();
-@@ -3532,6 +3524,7 @@ void Notepad_plus::command(int id)
- 			break;
- 		}
- 		case IDM_SETTING_PREFERENCE:
-+		case IDM_SETTING_KEX:
- 		{
- 			bool isFirstTime = !_preference.isCreated();
- 			_preference.doDialog(_nativeLangSpeaker.isRTL());
-@@ -3540,6 +3533,8 @@ void Notepad_plus::command(int id)
- 			{
- 				_nativeLangSpeaker.changePreferenceDlgLang(_preference);
- 			}
-+			if (id == IDM_SETTING_KEX)
-+				_preference.showDialogByName(kexsuite::prefPageName(0));
+@@ -3543,6 +3535,12 @@ void Notepad_plus::command(int id)
  			break;
  		}
  
-@@ -3591,8 +3586,7 @@ void Notepad_plus::command(int id)
++		case IDM_SETTING_KEX:
++		{
++			kexsuite::showSettings(-1); // KEX > Settings...: the KEX Settings window, on the page shown last
++			break;
++		}
++
+         case IDM_SETTING_EDITCONTEXTMENU :
+         {
+ 			_nativeLangSpeaker.messageBox("ContextMenuXmlEditWarning",
+@@ -3591,8 +3589,7 @@ void Notepad_plus::command(int id)
  			HWND wnd = GetFocus();
  			if (_pEditView->getHSelf() == wnd)
  			{
@@ -3394,7 +3422,7 @@ index e53fac6..6f537a8 100644
  			}
  			else
  			{
-@@ -3602,6 +3596,65 @@ void Notepad_plus::command(int id)
+@@ -3602,6 +3599,65 @@ void Notepad_plus::command(int id)
  			break;
  		}
  
@@ -3460,7 +3488,7 @@ index e53fac6..6f537a8 100644
  		case IDM_TOOL_MD5_GENERATE:
  		{
  			bool isFirstTime = !_md5FromTextDlg.isCreated();
-@@ -4061,8 +4114,9 @@ void Notepad_plus::command(int id)
+@@ -4061,8 +4117,9 @@ void Notepad_plus::command(int id)
          case IDC_PREV_DOC :
          case IDC_NEXT_DOC :
          {
@@ -3472,7 +3500,7 @@ index e53fac6..6f537a8 100644
  
  			bool doTaskList = ((NppParameters::getInstance()).getNppGUI())._doTaskList;
  			_isFolding = true;
-@@ -4546,6 +4600,18 @@ void Notepad_plus::command(int id)
+@@ -4546,6 +4603,18 @@ void Notepad_plus::command(int id)
  			case IDM_VIEW_GOTO_END:
  			case IDM_VIEW_GOTO_ANOTHER_VIEW:
  			case IDM_VIEW_CLONE_TO_ANOTHER_VIEW:
@@ -4965,117 +4993,6 @@ index d254e7a..03a525b 100644
  
  protected:
  	void resizeDialogElements();
-diff --git a/PowerEditor/src/WinControls/Preference/preferenceDlg.cpp b/PowerEditor/src/WinControls/Preference/preferenceDlg.cpp
-index 6a73934..b35ab57 100644
---- a/PowerEditor/src/WinControls/Preference/preferenceDlg.cpp
-+++ b/PowerEditor/src/WinControls/Preference/preferenceDlg.cpp
-@@ -39,6 +39,7 @@
- #include "ContextMenu.h"
- #include "ControlsTab.h"
- #include "EncodingMapper.h"
-+#include "KexSuiteHost.h"
- #include "Notepad_plus_msgs.h"
- #include "NppConstants.h"
- #include "NppDarkMode.h"
-@@ -309,6 +310,13 @@ intptr_t CALLBACK PreferenceDlg::run_dlgProc(UINT message, WPARAM wParam, LPARAM
- 			_searchEngineSubDlg.init(_hInst, _hSelf);
- 			_searchEngineSubDlg.create(IDD_PREFERENCE_SUB_SEARCHENGINE, false, false);
- 
-+			const int kexPages = (std::min)(kexsuite::prefPageCount(), KEX_PREF_PAGES_MAX);
-+			for (int i = 0; i < kexPages; ++i)
-+			{
-+				_kexSubDlg[i].init(_hInst, _hSelf);
-+				_kexSubDlg[i].create(IDD_KEX_PREF_FIRST + i, false, false);
-+			}
-+
- 			_wVector.push_back(DlgInfo(&_generalSubDlg, L"General", L"Global"));
- 			_wVector.push_back(DlgInfo(&_toolbarSubDlg, L"Toolbar", L"Toolbar"));
- 			_wVector.push_back(DlgInfo(&_tabbarSubDlg, L"Tab Bar", L"Tabbar"));
-@@ -333,6 +341,8 @@ intptr_t CALLBACK PreferenceDlg::run_dlgProc(UINT message, WPARAM wParam, LPARAM
- 			_wVector.push_back(DlgInfo(&_cloudAndLinkSubDlg, L"Cloud & Link", L"Cloud"));
- 			_wVector.push_back(DlgInfo(&_searchEngineSubDlg, L"Search Engine", L"SearchEngine"));
- 			_wVector.push_back(DlgInfo(&_miscSubDlg, L"MISC.", L"MISC"));
-+			for (int i = 0; i < kexPages; ++i)
-+				_wVector.push_back(DlgInfo(&_kexSubDlg[i], kexsuite::prefPageTitle(i), kexsuite::prefPageName(i)));
- 
- 
- 			makeCategoryList();
-@@ -662,6 +672,38 @@ void PreferenceDlg::destroy()
- 	_multiInstanceSubDlg.destroy();
- 	_delimiterSubDlg.destroy();
- 	_performanceSubDlg.destroy();
-+	for (KexSubDlg& kexPage : _kexSubDlg)
-+		kexPage.destroy();
-+}
-+
-+intptr_t CALLBACK KexSubDlg::run_dlgProc(UINT message, WPARAM wParam, LPARAM lParam)
-+{
-+	switch (message)
-+	{
-+		case WM_CTLCOLOREDIT:
-+		{
-+			return NppDarkMode::onCtlColorCtrl(reinterpret_cast<HDC>(wParam));
-+		}
-+
-+		case WM_CTLCOLORDLG:
-+		case WM_CTLCOLORSTATIC:
-+		{
-+			return NppDarkMode::onCtlColorDlg(reinterpret_cast<HDC>(wParam));
-+		}
-+
-+		case WM_PRINTCLIENT:
-+		{
-+			if (NppDarkMode::isEnabled())
-+			{
-+				return TRUE;
-+			}
-+			break;
-+		}
-+
-+		default:
-+			break;
-+	}
-+	return kexsuite::prefPageProc(_hSelf, message, wParam, lParam);
- }
- 
- void TabbarSubDlg::setTabbarAlternateIcons(bool enable)
-diff --git a/PowerEditor/src/WinControls/Preference/preferenceDlg.h b/PowerEditor/src/WinControls/Preference/preferenceDlg.h
-index 57f3f0c..174c5f5 100644
---- a/PowerEditor/src/WinControls/Preference/preferenceDlg.h
-+++ b/PowerEditor/src/WinControls/Preference/preferenceDlg.h
-@@ -29,6 +29,7 @@
- #include "ControlsTab.h"
- #include "Notepad_plus_msgs.h"
- #include "Parameters.h"
-+#include "KexSuiteHost.h" // KEX
- #include "StaticDialog.h"
- #include "dpiManagerV2.h"
- #include "preference_rc.h"
-@@ -386,6 +387,16 @@ private :
- 	HWND _largeFileRestrictionTip = nullptr;
- };
- 
-+// KEX: the built-in KEX suite's pages in Settings > Preferences (KexSuiteHost.h); the suite runs them
-+class KexSubDlg : public StaticDialog
-+{
-+public:
-+	KexSubDlg() = default;
-+
-+private:
-+	intptr_t CALLBACK run_dlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
-+};
-+
- class PreferenceDlg : public StaticDialog
- {
- friend class NativeLangSpeaker;
-@@ -447,6 +458,7 @@ private :
- 	CloudAndLinkSubDlg _cloudAndLinkSubDlg;
- 	SearchEngineSubDlg _searchEngineSubDlg;
- 	SearchingSubDlg _searchingSubDlg;
-+	KexSubDlg _kexSubDlg[KEX_PREF_PAGES_MAX];
- 
- 	ControlInfoTip _gotoTip;
- };
 diff --git a/PowerEditor/src/WinControls/SplitterContainer/SplitterContainer.cpp b/PowerEditor/src/WinControls/SplitterContainer/SplitterContainer.cpp
 index 08373c3..c96e8cf 100644
 --- a/PowerEditor/src/WinControls/SplitterContainer/SplitterContainer.cpp
@@ -5378,8 +5295,30 @@ index 3b9b661..1a9f772 100644
  
  private:
  	HMENU _hAccelMenu = nullptr;
+diff --git a/PowerEditor/src/localization.cpp b/PowerEditor/src/localization.cpp
+index d6d7d25..0b4f15e 100644
+--- a/PowerEditor/src/localization.cpp
++++ b/PowerEditor/src/localization.cpp
+@@ -53,7 +53,7 @@ static constexpr MenuPosition g_menuFolderPositions[]{
+ 	{ 8,  -1, -1, "macro" },
+ 	{ 9,  -1, -1, "run" },
+ 	{ 10, -1, -1, "Plugins" },
+-	{ 11, -1, -1, "Window" },
++	{ 12, -1, -1, "Window" }, // KEX: the KEX menu is 11
+ 
+ 	{ 0,   2, -1, "file-openFolder" },
+ 	{ 0,  13, -1, "file-closeMore" },
+@@ -119,7 +119,7 @@ static constexpr MenuPosition g_menuFolderPositions[]{
+ 	{ 7,   2, -1, "tools-sha256" },
+ 	{ 7,   3, -1, "tools-sha512" },
+ 
+-	{ 11,  0, -1, "window-sortby"},
++	{ 12,  0, -1, "window-sortby"},
+ 
+ 	{ -1,  -1, -1, "" } // End of array
+ };
 diff --git a/PowerEditor/src/menuCmdID.h b/PowerEditor/src/menuCmdID.h
-index 3d514d1..ea97bf5 100644
+index 3d514d1..d45f656 100644
 --- a/PowerEditor/src/menuCmdID.h
 +++ b/PowerEditor/src/menuCmdID.h
 @@ -410,6 +410,26 @@
@@ -5413,10 +5352,25 @@ index 3d514d1..ea97bf5 100644
      #define    IDM_SETTING_SHORTCUT_MAPPER_MACRO    (IDM_SETTING + 16)
      #define    IDM_SETTING_SHORTCUT_MAPPER_RUN      (IDM_SETTING + 17)
      #define    IDM_SETTING_EDITCONTEXTMENU          (IDM_SETTING + 18)
-+    #define    IDM_SETTING_KEX                      (IDM_SETTING + 40)   // KEX: Preferences, on the KEX pages
++    #define    IDM_SETTING_KEX                      (IDM_SETTING + 40)   // KEX: KEX > Settings..., the KEX Settings window
  
  #define    IDM_TOOL  (IDM + 8500)
      #define    IDM_TOOL_MD5_GENERATE                    (IDM_TOOL + 1)
+diff --git a/PowerEditor/src/resource.h b/PowerEditor/src/resource.h
+index 57a8001..f28cdde 100644
+--- a/PowerEditor/src/resource.h
++++ b/PowerEditor/src/resource.h
+@@ -796,6 +796,7 @@
+ #define MENUINDEX_MACRO    8
+ #define MENUINDEX_RUN      9
+ #define MENUINDEX_PLUGINS  10
+-#define MENUINDEX_WINDOW   11
+-#define MENUINDEX_HELP     12
+-#define MENUINDEX_LIST     14
++#define MENUINDEX_KEX      11 // KEX: its own menu, between Plugins and Window
++#define MENUINDEX_WINDOW   12
++#define MENUINDEX_HELP     13
++#define MENUINDEX_LIST     15
 diff --git a/PowerEditor/src/winmain.cpp b/PowerEditor/src/winmain.cpp
 index a675012..77021db 100644
 --- a/PowerEditor/src/winmain.cpp
@@ -5448,11 +5402,12 @@ index a675012..77021db 100644
  			// First of all, destroy static object NppParameters
 diff --git a/scintilla/include/KexScintilla.h b/scintilla/include/KexScintilla.h
 new file mode 100644
-index 0000000..8b7fec6
+index 0000000..b893693
 --- /dev/null
 +++ b/scintilla/include/KexScintilla.h
-@@ -0,0 +1,56 @@
-+// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret and the tab slide.
+@@ -0,0 +1,148 @@
++// KexScintilla.h - Notepad++ KEX additions to Scintilla: the smooth caret, the tab slide, the motion of
++// edits, and glass.
 +//
 +// Scintilla draws the caret itself, as usual, but glides it to each new position with an ease-out
 +// curve and fades it in and out instead of blinking hard. The caret is drawn after the text in the
@@ -5468,6 +5423,7 @@ index 0000000..8b7fec6
 +#define KEXCARET_OVERTYPE_BLOCK 0x4    // a block caret in overtype mode
 +#define KEXCARET_SNAPLINES(n) (((n) & 0xFF) << 8)   // jumps of more lines than this don't glide (0 = 12)
 +#define KEXCARET_NOBLINK 0x8           // the caret never blinks
++#define KEXCARET_FADEMS(ms) (((ms) & 0xFFF) << 16)  // KEXCARET_FADE: each fade's length in ms (0 = 140)
 +
 +// lParam: KexCaretInfo*, filled with what the last paint drew (for Notepad++ KEX's self-test).
 +#define SCI_KEX_GETCARETINFO 0x4B44
@@ -5480,6 +5436,7 @@ index 0000000..8b7fec6
 +	int frames;          // paints that drew carets
 +	double workMs;       // time spent working out and drawing carets
 +	float alpha;         // the main caret's blink opacity at the last paint (1 = fully on, 0 = off)
++	int fadeMs;          // each fade's length (KEXCARET_FADEMS)
 +};
 +
 +// Self-test only: wParam = glide fraction to stop at in thousandths (-1 = run normally), lParam = 1 for
@@ -5490,7 +5447,8 @@ index 0000000..8b7fec6
 +// the new document should come in from the right, -1 from the left; lParam: the slide's length in
 +// milliseconds. The view paints what it shows now into a picture at once; from the next paint on, that
 +// picture slides out while the new document slides in. LRESULT: 1 when the slide is set up, 0 when the
-+// view can't (hidden, no size). wParam 0 stops a slide.
++// view can't (hidden, no size). wParam 0 stops a slide. lParam 0: the slide doesn't run on its own but stays
++// where SCI_KEX_SLIDEPOS puts it (a touchpad swipe moves it with the fingers), starting with the old picture.
 +#define SCI_KEX_SLIDE 0x4B46
 +// lParam: KexSlideInfo*. LRESULT: 1 while a slide is running or set up.
 +#define SCI_KEX_GETSLIDEINFO 0x4B47
@@ -5503,9 +5461,97 @@ index 0000000..8b7fec6
 +	float fraction;      // how far the last frame was, 0..1
 +	int stopReason;      // why the last slide stopped early: 1 the view had no size, 2 or 3 no picture could be made,
 +	                     // 4 stopped (SCI_KEX_SLIDE 0), 5 the drawing target was dropped, 6 nothing was painted
++	int held;            // the slide is set up to stay where SCI_KEX_SLIDEPOS puts it
 +};
-+// Self-test only: wParam = fraction in thousandths to stop the slide at (-1 = run normally).
++// Self-test only: wParam = fraction in thousandths to stop the slide at (-1 = run normally). wParam -2: lParam 1 paints
++// the view's picture again for every frame of a motion, as before it was kept (to compare the speed), 0 keeps it.
 +#define SCI_KEX_SLIDETEST 0x4B48
++// A slide started with lParam 0 (held): wParam = how far the new document is in, in ten-thousandths of the
++// view's width (0 = only the old picture, 10000 = only the new document). lParam 1 ends the slide there:
++// the view paints as usual again. LRESULT: 1 when there was a slide to move.
++#define SCI_KEX_SLIDEPOS 0x4B49
++
++// Motion (Notepad++ KEX): the view animates its own edits. Each one is set up as the edit starts: the view is
++// painted into a picture at once (what is on screen), the edit happens, and then every frame is put together from
++// that picture and the view as it is now, so text never blurs and nothing floats over other text. All of them
++// are short, move on a critically damped spring (no bounce) and stop at once on typing, any other change to the
++// text, a scroll or a new size, so they never hold up editing. Off unless set with SCI_KEX_SETMOTIONS.
++//   cut           the cut text is picked up (rises a little, with a soft shadow), then goes; the gap closes
++//   delete        Delete or Backspace on a selection within one line: wiped from its end back to the caret
++//   delete lines  ... over several lines: it fades where it was while the text after it glides up into place
++//   paste         the text after the caret moves to make room and the pasted text is uncovered, lit for a moment
++//   undo / redo   the same for text that comes back, a close-up for text that goes
++//   move line     the moved lines slide to their new place, the line they pass the other way
++//   find          a ring closes onto a match that a search selected (SCI_SEARCHINTARGET, then the selection)
++//   indent        Tab / Shift+Tab on several lines: they glide to the new indentation
++//   duplicate     a copy of the line slides out from under it; the lines below make room
++//   jump          a programmatic scroll of more than a screen (go to line, bookmarks, find): the view slides
++//                 there, and a band marks the caret's line for a moment
++//   fold          the lines under a folded line slide up over the hidden ones (down again to unfold)
++//   sort          SCI_REPLACETARGET that only reorders whole lines: each line glides to its new place
++// wParam: const KexMotions*. LRESULT: 1.
++#define SCI_KEX_SETMOTIONS 0x4B4E
++enum {
++	KEXM_CUT, KEXM_DELETE, KEXM_DELETELINES, KEXM_PASTE, KEXM_UNDO, KEXM_MOVELINE, KEXM_FIND, KEXM_INDENT,
++	KEXM_DUPLICATE, KEXM_JUMP, KEXM_FOLD, KEXM_SORT, KEXM_COUNT
++};
++struct KexMotions {
++	int ms[KEXM_COUNT];  // how long each takes, in ms; 0 = off
++	int glowMs;          // paste, undo and duplicate: how long the new text stays lit (0 = no light)
++	int rapidMs;         // a motion that would start within this long of the last one is skipped: fast editing
++	int light;           // 0xAABBGGRR: the light on new text, the find ring and the jump's band
++};
++// lParam: KexMotionInfo*. LRESULT: 1 while a motion is set up or running.
++#define SCI_KEX_GETMOTIONINFO 0x4B4F
++struct KexMotionInfo {
++	int started[KEXM_COUNT];  // motions played, by kind
++	int skipped;              // not played: it came too soon after the last one
++	int refused;              // not played: off screen, several changes at once, the lines wrap, ...
++	int ended;                // stopped early by typing, another change, a scroll or a new size
++	int frames;               // frames painted
++	int lastKind;             // KEXM_* of the last motion started, -1 for none
++	float fraction;           // how far the last frame was, 0..1
++	float gap;                // how far the moving text still was from its place in the last frame, 0..1
++	int style;                // the last edit motion: 1 lift, 2 wipe, 3 fade, 4 uncover, 5 peel
++	int ringFrames;           // frames painted with the find ring
++	int jumpLines;            // the last jump: lines between the old and the new first line (negative: up)
++	int lines;                // the last line motion: lines that moved (move line, indent, fold, sort)
++	float caretX;             // the last edit motion's frame: where the main caret showed (client x)
++	float renderMs;           // time spent on the motions' frames: painting the view's picture, and putting the frame together
++	float presentMs;
++	int renders;              // frames that painted the view's picture, and frames that used it as it was
++	int reuses;
++};
++
++// Glass (Notepad++ KEX's see-through editor). wParam: KEXGLASS_* flags (0 = off); lParam: the colour (0xBBGGRR) that is to
++// show as nothing. The view then draws into a DirectComposition layer on top of its window, where that colour is
++// see-through and text is smoothed in grey (ClearType needs a solid background), while the window itself is filled
++// with that colour for a colour-keyed host window to cut out. Needs a DirectWrite technology. LRESULT: 1 when glass is
++// on, 0 when this system can't (no DirectComposition, as under Wine): the view then draws as usual.
++#define SCI_KEX_GLASS 0x4B4A
++#define KEXGLASS_ON 0x1
++#define KEXGLASS_SHARP 0x2         // text edges without smoothing
++// lParam: KexGlassInfo* (may be 0). LRESULT: 0 off, 1 on, 2 asked for but failed (the view draws as usual).
++#define SCI_KEX_GETGLASS 0x4B4B
++struct KexGlassInfo {
++	int state;           // as the LRESULT
++	int frames;          // paints drawn into the layer
++	int failures;        // drawing attempts that failed (the layer is rebuilt; after a few the view gives up)
++	int lastError;       // the last failure's HRESULT
++	int width, height;   // the layer's size in pixels
++};
++// Self-test only: lParam: KexGlassTest*. Paints the view off screen the way glass draws it (Direct2D on a DIB with
++// alpha, so it runs without DirectComposition) and counts the pixels. LRESULT: 1 when it could paint.
++#define SCI_KEX_GLASSTEST 0x4B4C
++struct KexGlassTest {
++	int key;             // in: the see-through colour (0xBBGGRR)
++	int sharp;           // in: text without smoothing
++	int error;           // out: HRESULT of the off-screen drawing
++	int clear;           // out: fully see-through pixels
++	int solid;           // out: fully opaque pixels
++	int partial;         // out: partly see-through pixels (smoothed text edges, translucent fills)
++	int keyLeft;         // out: opaque pixels still in the see-through colour (should be 0)
++};
 +
 +#endif
 diff --git a/scintilla/src/EditView.cxx b/scintilla/src/EditView.cxx
@@ -5589,10 +5635,10 @@ index 58e9c3d..1fdc72f 100644
  	std::unique_ptr<Surface> pixmapIndentGuide;
  	std::unique_ptr<Surface> pixmapIndentGuideHighlight;
 diff --git a/scintilla/src/Editor.cxx b/scintilla/src/Editor.cxx
-index 1465bac..df0fa06 100644
+index 1465bac..530530b 100644
 --- a/scintilla/src/Editor.cxx
 +++ b/scintilla/src/Editor.cxx
-@@ -1,9179 +1,9600 @@
+@@ -1,9179 +1,10647 @@
 -// Scintilla source code edit control
 -/** @file Editor.cxx
 - ** Main code for the edit control.
@@ -14843,6 +14889,7 @@ index 1465bac..df0fa06 100644
 +#include "EditView.h"
 +#include "Editor.h"
 +#include "KexScintilla.h"
++#include "KexSurface.h"
 +#include "ElapsedPeriod.h"
 +#include "RunThreads.h"
 +
@@ -15223,6 +15270,7 @@ index 1465bac..df0fa06 100644
 +
 +	if ((rc.bottom > rc.top) && (rc.right > rc.left)) {
 +		wMain.InvalidateRectangle(rc);
++		kexPictureStale = true;
 +	}
 +}
 +
@@ -15237,6 +15285,7 @@ index 1465bac..df0fa06 100644
 +	//Platform::DebugPrintf("Redraw all\n");
 +	const PRectangle rcClient = GetClientRectangle();
 +	wMain.InvalidateRectangle(rcClient);
++	kexPictureStale = true;
 +	if (HasMarginWindow()) {
 +		wMargin.InvalidateAll();
 +	} else if (paintState == PaintState::notPainting) {
@@ -15847,6 +15896,13 @@ index 1465bac..df0fa06 100644
 +		return;
 +	}
 +
++	const KexMotionScope kexScope(*this, KexMotionKind::moveLine);
++	if (kexScope.On()) {
++		kexMotion.lineFrom = startLine;
++		kexMotion.lineTo = std::max(startLine + 1, appendEol ? endLine + 1 : endLine);
++		kexMotion.lineDelta = lineDelta;
++		kexMotion.rowTop = LocationFromPosition(selectionStart).y;
++	}
 +	UndoGroup ug(pdoc);
 +
 +	if (lineDelta > 0 && selectionEnd == pdoc->LineStart(pdoc->LinesTotal() - 1)) {
@@ -16660,6 +16716,7 @@ index 1465bac..df0fa06 100644
 +	paintAbandonedByStyling = false;
 +
 +	const PRectangle rcClient = GetClientRectangle();
++	kexMotionHold = false;
 +	if (kexSlideCapture || kexSlideOld) {
 +		// KEX tab slide: every frame shows the whole view
 +		rcArea = rcClient;
@@ -16697,11 +16754,17 @@ index 1465bac..df0fa06 100644
 +	Surface *target = surfaceWindow;
 +	PRectangle area = rcArea;
 +	const KexTarget kexTarget = KexPaintTarget(surfaceWindow, rcArea, rcClient, &target, &area);
++	// A motion's frames after its first: the view's picture is still as it is (nothing in it moves, the carets go on
++	// top), so only the frame is put together. Anything else that changes the view paints it again.
++	const bool kexMotionFrame = kexTarget == KexTarget::slide && kexSlideDir == 4;
++	const bool kexReuse = kexMotionFrame && KexCaretsOnTop(kexTarget) && !kexPictureStale && !kexPictureEveryFrame &&
++		kexPictureTop == topLine && kexPictureX == xOffset && kexRingStartMs < 0;
++	const double kexT0 = kexMotionFrame ? KexNowMs() : 0;
 +
 +	if (!view.bufferedDraw)
 +		target->SetClip(area);
 +
-+	if (paintState != PaintState::abandoned) {
++	if (paintState != PaintState::abandoned && !kexReuse) {
 +		if (vs.marginInside) {
 +			PaintSelMargin(target, area);
 +			PRectangle rcRightMargin = rcClient;
@@ -16735,10 +16798,28 @@ index 1465bac..df0fa06 100644
 +		return;
 +	}
 +
-+	view.kexSeen.clear();
-+	view.PaintText(target, *this, vs, area, rcClient);
++	// A motion's pictures are painted without the carets, which go on top of each frame once it is put together:
++	// so a caret moves only by its own glide, and not with the text around it as well (an undo just after a paste
++	// threw the caret far to the right, the way the text after it came from). Scintilla's own caret too.
++	kexCaretsHeld.clear();
++	kexCaretsLater = KexCaretsOnTop(kexTarget);
++	if (!kexReuse) {
++		if (kexMotionFrame) {
++			kexPictureStale = false;
++			kexPictureTop = topLine;
++			kexPictureX = xOffset;
++		}
++		view.kexCollect = kexOn || kexCaretsLater;
++		view.kexSeen.clear();
++		view.PaintText(target, *this, vs, area, rcClient);
++		view.kexCollect = kexOn;
++	}
 +	if (kexOn)
-+		KexPaintCarets(target, area, rcClient);
++		KexPaintCarets(target, area);
++	else if (kexCaretsLater)
++		KexHoldStockCarets();
++	if (kexRingStartMs >= 0 && kexTarget != KexTarget::capture)
++		KexPaintRing(target, area);
 +
 +	if (horizontalScrollBarVisible && trackLineWidth && (view.lineWidthMaxSeen > scrollWidth)) {
 +		scrollWidth = view.lineWidthMaxSeen;
@@ -16750,7 +16831,13 @@ index 1465bac..df0fa06 100644
 +	if (!view.bufferedDraw)
 +		target->PopClip();
 +
++	const double kexT1 = kexMotionFrame ? KexNowMs() : 0;
 +	KexPresent(kexTarget, surfaceWindow, target, rcArea, rcClient);
++	if (kexMotionFrame) {
++		kexMotionStats.renderMs += kexT1 - kexT0;
++		kexMotionStats.presentMs += KexNowMs() - kexT1;
++		++(kexReuse ? kexMotionStats.reuses : kexMotionStats.renders);
++	}
 +
 +	NotifyPainted();
 +}
@@ -16788,7 +16875,7 @@ index 1465bac..df0fa06 100644
 +	const double P = caret.period;
 +	if (kexSolid || kexNoBlink || P <= 0)
 +		return 1.0f;
-+	const double F = kexFade ? std::min(140.0, P / 3) : 0.0;
++	const double F = kexFade ? std::min(static_cast<double>(kexFadeMs), P / 2) : 0.0;
 +	const double ph = std::fmod(now - kexBlinkStart, 2 * P);
 +	if (ph < P - F) {
 +		*nextChangeMs = (P - F) - ph;
@@ -16815,7 +16902,7 @@ index 1465bac..df0fa06 100644
 +
 +// After the text is painted: take the carets EditView recorded as new targets, then draw every caret
 +// at its animated position, and time the next frame.
-+void Editor::KexPaintCarets(Surface *surface, PRectangle rcArea, PRectangle rcClient) {
++void Editor::KexPaintCarets(Surface *surface, PRectangle rcArea) {
 +	const double now = KexNowMs();
 +	const size_t n = sel.Count();
 +	if (vs.lineHeight != kexLineHeight) {
@@ -16857,9 +16944,7 @@ index 1465bac..df0fa06 100644
 +	}
 +	double nextBlink = -1;
 +	const float alpha = KexBlinkAlpha(now, &nextBlink);
-+	PRectangle rcText = rcClient;
-+	rcText.left = static_cast<XYPOSITION>(vs.textStart);
-+	rcText.right -= vs.rightMarginWidth;
++	const PRectangle rcText = GetTextRectangle();
 +	const PRectangle rcClip(std::max(rcText.left, rcArea.left), std::max(rcText.top, rcArea.top),
 +		std::min(rcText.right, rcArea.right), std::min(rcText.bottom, rcArea.bottom));
 +	bool gliding = false;
@@ -16887,8 +16972,13 @@ index 1465bac..df0fa06 100644
 +		const float a = (t.blinks ? alpha : 1.0f) * (t.block ? 0.55f : 1.0f);
 +		if (t.main)
 +			kexStats.mainAlpha = t.blinks ? alpha : 1.0f;
-+		if (a > 0.004f && rc.Intersects(rcClip))
-+			surface->FillRectangle(rc, Fill(ColourRGBA(t.colour, static_cast<unsigned int>(a * 255.0f + 0.5f))));
++		if (a > 0.004f && rc.Intersects(rcClip)) {
++			const ColourRGBA colour(t.colour, static_cast<unsigned int>(a * 255.0f + 0.5f));
++			if (kexCaretsLater)
++				kexCaretsHeld.push_back({ rc, colour, t.main });
++			else
++				surface->FillRectangle(rc, Fill(colour));
++		}
 +	}
 +	if (rcClip.left < rcClip.right && rcClip.top < rcClip.bottom)
 +		surface->PopClip();
@@ -16909,8 +16999,37 @@ index 1465bac..df0fa06 100644
 +	kexStats.workMs += KexNowMs() - now;
 +}
 +
++// Scintilla's own carets (the smooth caret off), recorded instead of painted into a motion's picture: held back
++// as they are, blinking as Scintilla's own (a block one shows the character through it, as the smooth one does).
++void Editor::KexHoldStockCarets() {
++	const bool on = caret.active && caret.on;
++	const XYPOSITION top = static_cast<XYPOSITION>(topLine) * vs.lineHeight;
++	for (const KexCaretTarget &t : view.kexSeen) {
++		if (t.blinks && !on)
++			continue;
++		const XYPOSITION x = t.x + vs.textStart - xOffset;
++		kexCaretsHeld.push_back({ PRectangle(x, t.y - top, x + t.w, t.y - top + t.h), ColourRGBA(t.colour, t.block ? 140 : 255), t.main });
++	}
++}
++
++// The carets held back from a motion's picture, on top of the frame put together from it.
++void Editor::KexDrawHeldCarets(Surface *surfaceWindow) {
++	kexCaretsLater = false;
++	if (kexCaretsHeld.empty())
++		return;
++	surfaceWindow->SetClip(GetTextRectangle());
++	for (const KexHeldCaret &c : kexCaretsHeld) {
++		surfaceWindow->FillRectangle(c.rc, Fill(c.colour));
++		if (c.main && kexSlideDir == 4)
++			kexMotionStats.caretX = static_cast<float>(c.rc.left);	// where the main caret showed in the motion
++	}
++	surfaceWindow->PopClip();
++	kexCaretsHeld.clear();
++}
++
 +// Repaint where carets were drawn and where they are now, so the next paint draws the next frame.
 +void Editor::KexInvalidate() {
++	const bool stale = kexPictureStale;	// the carets alone: a motion's picture holds none
 +	const double now = KexNowMs();
 +	for (const PRectangle &rc : kexOnScreen)
 +		RedrawRect(PRectangle(rc.left - 1, rc.top - 1, rc.right + 1, rc.bottom + 1));
@@ -16923,6 +17042,7 @@ index 1465bac..df0fa06 100644
 +		const XYPOSITION y = t.y - static_cast<XYPOSITION>(topLine) * vs.lineHeight;
 +		RedrawRect(PRectangle(x - 1, y - 1, x + t.w + 1, y + t.h + 1));
 +	}
++	kexPictureStale = stale;
 +}
 +
 +// ---- KEX tab slide (KexScintilla.h) ----
@@ -16954,6 +17074,7 @@ index 1465bac..df0fa06 100644
 +			kexSlideNew = surfaceWindow->AllocatePixMap(width, height);
 +			kexNewWidth = width;
 +			kexNewHeight = height;
++			kexPictureStale = true;
 +		}
 +		if (!kexSlideNew || !kexSlideNew->Initialised()) {
 +			KexEndSlide(true, 3);
@@ -16962,7 +17083,8 @@ index 1465bac..df0fa06 100644
 +		if (kexSlideStart < 0) {
 +			kexSlideStart = KexNowMs();
 +			++kexSlideStats.slides;
-+			FineTickerStart(TickReason::kexSlide, 15, 0);
++			if (kexSlideHeld < 0)
++				FineTickerStart(TickReason::kexSlide, 15, 0);
 +		}
 +		*target = kexSlideNew.get();
 +		*area = rcClient;
@@ -16995,18 +17117,47 @@ index 1465bac..df0fa06 100644
 +	if (mode == KexTarget::capture) {
 +		// the old picture is taken; the screen keeps showing it until the new document is painted
 +		surfaceWindow->Copy(rcClient, Point(rcClient.left, rcClient.top), *target);
++		KexDrawHeldCarets(surfaceWindow);
 +		kexSlideCapture = false;
 +		kexSlideStart = -1;
 +		++kexSlideStats.captures;
 +		return;
 +	}
++	if (kexSlideDir == 4) {
++		KexPresentMotion(surfaceWindow, rcClient);
++		KexDrawHeldCarets(surfaceWindow);
++		return;
++	}
 +	// slide: the old picture moves out, the new one follows it in
-+	double f = kexSlideMs > 0 ? (KexNowMs() - kexSlideStart) / kexSlideMs : 1.0;
++	const bool held = kexSlideHeld >= 0;
++	double f = held ? kexSlideHeld : kexSlideMs > 0 ? (KexNowMs() - kexSlideStart) / kexSlideMs : 1.0;
 +	if (kexSlideFreeze >= 0 && f > kexSlideFreeze)
 +		f = kexSlideFreeze;
 +	f = std::clamp(f, 0.0, 1.0);
-+	const double e = 1.0 - (1.0 - f) * (1.0 - f) * (1.0 - f);
++	// held: straight where it is put (the fingers' movement is the curve), otherwise ease-out
++	const double e = held ? f : 1.0 - (1.0 - f) * (1.0 - f) * (1.0 - f);
 +	const XYPOSITION width = rcClient.Width();
++	if (kexSlideDir == 2) {
++		// fade (a tab closed): the new document is in place and the old picture fades out over it, shrinking a little
++		kexSlideStats.lastFraction = static_cast<float>(f);
++		++kexSlideStats.frames;
++		const PRectangle rcNew(rcClient.left, rcClient.top, std::min<XYPOSITION>(rcClient.right, rcClient.left + kexNewWidth),
++			std::min<XYPOSITION>(rcClient.bottom, rcClient.top + kexNewHeight));
++		if (rcNew.Width() > 0 && rcNew.Height() > 0)
++			surfaceWindow->Copy(rcNew, Point(0, 0), *kexSlideNew);
++		const float opacity = static_cast<float>(1.0 - e);
++		IKexSurface *kex = dynamic_cast<IKexSurface *>(surfaceWindow);
++		if (kex && opacity > 0.004f) {
++			const XYPOSITION scale = 1.0 - 0.025 * e;
++			const XYPOSITION w = kexOldWidth * scale, h = kexOldHeight * scale;
++			const XYPOSITION x = rcClient.left + (kexOldWidth - w) / 2, y = rcClient.top + (kexOldHeight - h) / 2;
++			kex->KexDrawPicture(PRectangle(x, y, x + w, y + h), *kexSlideOld,
++				PRectangle(0, 0, static_cast<XYPOSITION>(kexOldWidth), static_cast<XYPOSITION>(kexOldHeight)), opacity);
++		}
++		if (f >= 1.0 && !held)
++			KexEndSlide(false);
++		return;
++	}
 +	const XYPOSITION shift = std::round(static_cast<XYPOSITION>(e) * width);
 +	const XYPOSITION xOld = rcClient.left - kexSlideDir * shift;
 +	const XYPOSITION xNew = xOld + kexSlideDir * width;
@@ -17030,7 +17181,7 @@ index 1465bac..df0fa06 100644
 +	}
 +	put(*kexSlideOld, xOld, kexOldWidth, kexOldHeight);
 +	put(*kexSlideNew, xNew, kexNewWidth, kexNewHeight);
-+	if (f >= 1.0)
++	if (f >= 1.0 && !held)
 +		KexEndSlide(false);
 +}
 +
@@ -17042,22 +17193,803 @@ index 1465bac..df0fa06 100644
 +		return false;
 +	kexSlideDir = direction;
 +	kexSlideMs = std::clamp(ms, 1, 2000);
++	kexSlideHeld = ms == 0 ? 0.0 : -1.0;
 +	kexSlideCapture = true;
 +	kexSlideStart = -1;
 +	Redraw();
 +	return true;
 +}
 +
++// ---- KEX motion (KexScintilla.h, SCI_KEX_SETMOTIONS) ----
++
++namespace {
++
++// a critically damped spring from rest (no bounce), settled to 0.5 % at u = 1
++double KexSpring(double u) noexcept {
++	if (u <= 0)
++		return 0;
++	if (u >= 1)
++		return 1;
++	return 1.0 - (1.0 + 7.43 * u) * std::exp(-7.43 * u);
++}
++
++double KexEaseOut(double t) noexcept {
++	t = std::clamp(t, 0.0, 1.0);
++	return 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
++}
++
++// the light on new text: up in 50 ms, then fading out over the rest of ms
++double KexLight(double t, double ms) noexcept {
++	if (ms <= 0 || t >= ms)
++		return 0;
++	if (t < 50)
++		return t / 50;
++	return 1.0 - (t - 50) / std::max(1.0, ms - 50);
++}
++
++// the lines of a block of text, without their line ends; a line end at the very end makes no extra line
++std::vector<std::string> KexSplitLines(std::string_view text) {
++	std::vector<std::string> lines;
++	size_t from = 0;
++	while (from < text.size()) {
++		size_t end = text.find_first_of("\r\n", from);
++		if (end == std::string_view::npos)
++			end = text.size();
++		lines.emplace_back(text.substr(from, end - from));
++		from = end;
++		if (from < text.size() && text[from] == '\r')
++			++from;
++		if (from < text.size() && text[from] == '\n')
++			++from;
++	}
++	return lines;
++}
++
++constexpr bool KexIsEdit(int kind) noexcept {
++	return kind == KEXM_CUT || kind == KEXM_DELETE || kind == KEXM_DELETELINES || kind == KEXM_PASTE ||
++		kind == KEXM_UNDO || kind == KEXM_DUPLICATE;
++}
++
++}
++
++bool Editor::KexMotionOn(KexMotionKind kind) const noexcept {
++	const int k = static_cast<int>(kind);
++	return k >= 0 && k < KEXM_COUNT && kexMotions.ms[k] > 0;
++}
++
++// The edit is about to start: picture the view as it is now (painted at once). False: no motion this time.
++bool Editor::KexMotionBegin(KexMotionKind kind) {
++	if (!KexMotionOn(kind) || kexMotion.open || paintState != PaintState::notPainting)
++		return false;
++	if (kexMotionHold) {
++		++kexMotionStats.refused;	// one of several edits in one go (fold all, a macro): none until the view paints
++		return false;
++	}
++	const double now = KexNowMs();
++	const bool rapid = now - kexMotionLast < kexMotions.rapidMs;
++	kexMotionLast = now;
++	const bool busy = kexSlideOld || kexSlideCapture;
++	if (rapid || (busy && kexSlideDir != 4) || (busy && !kexMotion.started)) {
++		// editing fast, several edits in one go, or a tab slide on its way: none, and the view shows what is
++		if (busy && kexSlideDir == 4) {
++			KexEndSlide(true, 8);
++			Redraw();
++		}
++		if (busy && !rapid)
++			kexMotionHold = true;
++		if (rapid)
++			++kexMotionStats.skipped;
++		else
++			++kexMotionStats.refused;
++		return false;
++	}
++	const PRectangle rcClient = GetClientRectangle();
++	if (!wMain.GetID() || rcClient.Width() < 1 || rcClient.Height() < 1)
++		return false;
++	if (busy)
++		KexEndSlide(false);	// the last motion jumps to its end
++	kexMotion = KexMotionState();
++	kexMotion.kind = kind;
++	kexMotion.open = true;
++	kexPictureStale = true;
++	kexMotion.topLine = topLine;
++	kexMotion.xOffset = xOffset;
++	kexMotion.lineHeight = vs.lineHeight;
++	kexMotion.textLeft = vs.textStart;
++	const int k = static_cast<int>(kind);
++	int ms = std::clamp(kexMotions.ms[k], 1, 3000);
++	if (k == KEXM_PASTE || k == KEXM_UNDO || k == KEXM_DUPLICATE)
++		ms = std::max(ms, std::clamp(kexMotions.glowMs, 0, 3000));
++	else if (k == KEXM_JUMP)
++		ms = ms * 5 / 2;	// the slide, then the band on the caret's line
++	kexSlideDir = 4;
++	kexSlideMs = ms;
++	kexSlideHeld = -1;
++	kexSlideStart = -1;
++	kexSlideCapture = true;
++	Redraw();
++	if (!KexPaintNow() || kexSlideCapture) {
++		KexEndSlide(true, 6);	// nothing was painted (hidden, or drawing switched off)
++		kexMotion.open = false;
++		++kexMotionStats.refused;
++		return false;
++	}
++	return true;
++}
++
++// The edit is done: keep the motion only when the edit was one it can show.
++void Editor::KexMotionClose() {
++	KexMotionState &m = kexMotion;
++	m.open = false;
++	if (kexSlideDir != 4)
++		return;
++	bool ok = !m.refused;
++	switch (static_cast<int>(m.kind)) {
++	case KEXM_CUT:
++	case KEXM_DELETE:
++	case KEXM_DELETELINES:
++		ok = ok && m.start >= 0 && m.deleted > 0 && m.inserted == 0;
++		break;
++	case KEXM_PASTE:
++	case KEXM_DUPLICATE:
++		ok = ok && m.start >= 0 && m.inserted > 0;
++		break;
++	case KEXM_UNDO:
++		ok = ok && m.start >= 0 && (m.deleted > 0 || m.inserted > 0);
++		break;
++	case KEXM_MOVELINE:
++	case KEXM_INDENT:
++	case KEXM_SORT:
++		ok = ok && m.changed;
++		break;
++	default:
++		break;	// fold checks itself at its first frame
++	}
++	if (!ok) {
++		KexEndSlide(true, 9);
++		++kexMotionStats.refused;
++		Redraw();
++	}
++}
++
++// A change made by the edit while it runs: one place, text removed and/or put in there.
++void Editor::KexMotionRecord(const DocModification &mh) {
++	KexMotionState &m = kexMotion;
++	if (FlagSet(mh.modificationType, ModificationFlags::InsertText | ModificationFlags::DeleteText))
++		m.changed = true;
++	if (!KexIsEdit(static_cast<int>(m.kind)))
++		return;
++	if (FlagSet(mh.modificationType, ModificationFlags::BeforeDelete)) {
++		if (m.start < 0) {
++			// where the removed text is on screen, while the view still shows it
++			m.start = mh.position;
++			m.deleted = mh.length;
++			m.at = LocationFromPosition(mh.position);
++			m.oldEnd = LocationFromPosition(mh.position + mh.length);
++			m.atKnown = true;
++		} else if (m.inserted == 0 && mh.position + mh.length == m.start) {
++			// the text just before it goes too (undoing typing goes back character by character)
++			m.start = mh.position;
++			m.deleted += mh.length;
++			m.at = LocationFromPosition(mh.position);
++		} else {
++			m.refused = true;
++		}
++	} else if (FlagSet(mh.modificationType, ModificationFlags::InsertText)) {
++		if (m.start < 0) {
++			m.start = mh.position;
++			m.inserted = mh.length;
++		} else if (mh.position == m.start + m.inserted) {
++			m.inserted += mh.length;	// in the removed text's place, or the rest of what goes in
++		} else {
++			m.refused = true;
++		}
++	}
++}
++
++// The first frame, with the view as it is after the edit: where everything is now. False: the motion can't show it.
++bool Editor::KexMotionSize(KexMotionKind kind, int *rows) const noexcept {
++	*rows = 0;
++	switch (static_cast<int>(kind)) {
++	case KEXM_MOVELINE: {
++		// the moved lines and the line they pass, as they are now: all shown (not folded away); a wrapped line
++		// takes several rows and moves as one band (their rows are measured with the move, KexPresentMotion)
++		const Sci::Line from = kexMotion.lineFrom + std::min(0, kexMotion.lineDelta);
++		const Sci::Line to = kexMotion.lineTo + std::max(0, kexMotion.lineDelta);
++		if (from < 0 || to > pdoc->LinesTotal() || from >= to)
++			return false;
++		for (Sci::Line line = from; line < to; ++line) {
++			if (!pcs->GetVisible(line))
++				return false;
++		}
++		return true;
++	}
++	case KEXM_INDENT:
++	case KEXM_SORT:
++		// line by line: every line one row on screen (word wrap may be on, as long as these lines don't wrap)
++		for (Sci::Line line = kexMotion.lineFrom; line < kexMotion.lineTo; ++line) {
++			if (!pcs->GetVisible(line) || pcs->GetHeight(line) != 1)
++				return false;
++		}
++		*rows = static_cast<int>(kexMotion.lineTo - kexMotion.lineFrom);
++		return *rows > 0;
++	default:
++		return true;
++	}
++}
++
++void Editor::KexPresentMotion(Surface *surfaceWindow, PRectangle rcClient) {
++	KexMotionState &m = kexMotion;
++	double t = KexNowMs() - kexSlideStart;
++	if (kexSlideFreeze >= 0)
++		t = std::min(t, kexSlideFreeze * kexSlideMs);
++	t = std::clamp(t, 0.0, static_cast<double>(kexSlideMs));
++	kexMotionStats.fraction = static_cast<float>(kexSlideMs > 0 ? t / kexSlideMs : 1.0);
++	kexSlideStats.lastFraction = kexMotionStats.fraction;
++	const XYPOSITION W = std::min<XYPOSITION>(rcClient.right, kexNewWidth), H = std::min<XYPOSITION>(rcClient.bottom, kexNewHeight);
++	auto showNew = [&]() {
++		surfaceWindow->Copy(PRectangle(rcClient.left, rcClient.top, W, H), Point(0, 0), *kexSlideNew);
++	};
++	if (m.open) {
++		showNew();	// painted while the edit still runs: it goes on once the edit is done
++		kexSlideStart = -1;
++		return;
++	}
++	const int kind = static_cast<int>(m.kind);
++	if (!m.started && kind == KEXM_MOVELINE && topLine != m.topLine && xOffset == m.xOffset) {
++		// the view scrolled to keep the moved lines in sight (moved past its top or bottom edge): they start where they
++		// were, in the view as it is now (every frame is made from the new picture)
++		m.rowTop -= static_cast<XYPOSITION>(topLine - m.topLine) * vs.lineHeight;
++		m.topLine = topLine;
++	}
++	const bool scrolled = kind == KEXM_JUMP ? (m.started && topLine != m.jumpTo) : (topLine != m.topLine || xOffset != m.xOffset);
++	if (scrolled || kexNewWidth != kexOldWidth || kexNewHeight != kexOldHeight) {
++		showNew();
++		++(m.started ? kexMotionStats.ended : kexMotionStats.refused);
++		KexEndSlide(true, 10);
++		return;
++	}
++	if (!m.started) {
++		// where things are now
++		bool ok = true;
++		int rows = 0;
++		const XYPOSITION lh = m.lineHeight;
++		if (KexIsEdit(kind)) {
++			if (!m.atKnown) {
++				m.at = LocationFromPosition(m.start);
++				m.oldEnd = m.at;
++			}
++			m.newEnd = LocationFromPosition(m.start + m.inserted);
++			ok = m.at.y >= 0 && m.at.y < H && m.at.x < W && m.oldEnd.y >= m.at.y;
++			switch (kind) {
++			case KEXM_CUT: m.style = KexEditStyle::lift; break;
++			case KEXM_DELETE: m.style = m.oldEnd.y > m.at.y ? KexEditStyle::fade : KexEditStyle::wipe; break;
++			case KEXM_DELETELINES: m.style = KexEditStyle::fade; break;
++			case KEXM_PASTE: m.style = KexEditStyle::uncover; break;
++			case KEXM_UNDO: m.style = m.inserted > 0 ? KexEditStyle::uncover : KexEditStyle::fade; break;
++			case KEXM_DUPLICATE: {
++				// whole lines come out from under the line; part of a line is uncovered in place
++				const Sci::Position end = m.start + m.inserted;
++				const char first = pdoc->CharAt(m.start), last = pdoc->CharAt(end - 1);
++				const bool afterLine = first == '\r' || first == '\n';
++				const bool beforeLine = m.start == pdoc->LineStart(pdoc->SciLineFromPosition(m.start)) && (last == '\r' || last == '\n');
++				m.style = (afterLine || beforeLine) ? KexEditStyle::peel : KexEditStyle::uncover;
++				m.peelTop = std::round(m.at.y) + (afterLine ? lh : 0);
++				break;
++			}
++			default: break;
++			}
++			if (m.inserted > 0 && m.deleted > 0)
++				m.style = KexEditStyle::uncover;	// text replaced: the new text is uncovered where the old was
++		} else if (kind == KEXM_JUMP) {
++			m.jumpTo = topLine;
++		} else if (kind == KEXM_FOLD) {
++			const Sci::Line rowsNow = pcs->DisplayFromDoc(m.lineTo) - pcs->DisplayFromDoc(m.lineFrom + 1);
++			m.rowsMoved = std::abs(m.foldRows - rowsNow);
++			m.contracting = rowsNow < m.foldRows;
++			ok = m.rowsMoved > 0 && m.rowTop >= 0 && m.rowTop < H;
++			kexMotionStats.lines = static_cast<int>(m.rowsMoved);
++		} else {
++			ok = KexMotionSize(m.kind, &rows) && m.rowTop < H;
++			if (kind == KEXM_MOVELINE)
++				ok = ok && m.rowTop >= 0;	// the moved lines are on screen
++			else
++				ok = ok && m.rowTop + rows * lh > 0;	// some of the lines are
++			if (ok && kind == KEXM_MOVELINE) {
++				// now the moved lines start one line further on (or back) and the passed line is where they began (or ended)
++				const Sci::Line blockNow = m.lineFrom + m.lineDelta;
++				const Sci::Line passedNow = m.lineDelta > 0 ? m.lineFrom : m.lineTo - 1;
++				m.blockRows = pcs->DisplayFromDoc(blockNow + (m.lineTo - m.lineFrom)) - pcs->DisplayFromDoc(blockNow);
++				m.passedRows = pcs->GetHeight(passedNow);
++				ok = m.lineDelta != 0 && m.blockRows > 0 && m.passedRows > 0;
++				rows = static_cast<int>(m.blockRows);	// the moved lines' rows (a wrapped line takes several)
++			} else if (ok && kind == KEXM_INDENT) {
++				m.newX.clear();
++				for (Sci::Line line = m.lineFrom; line < m.lineTo; ++line)
++					m.newX.push_back(LocationFromPosition(pdoc->GetLineIndentPosition(line)).x);
++				ok = m.newX.size() == m.oldX.size() && m.newX != m.oldX;
++			} else if (ok && kind == KEXM_SORT) {
++				// each line now: which line it was (the same text, first not yet taken)
++				std::vector<bool> taken(m.oldText.size());
++				m.order.clear();
++				bool moved = false;
++				for (Sci::Line line = m.lineFrom; ok && line < m.lineTo; ++line) {
++					const std::string text = RangeText(pdoc->LineStart(line), pdoc->LineEnd(line));
++					int was = -1;
++					for (size_t j = 0; j < m.oldText.size(); ++j) {
++						if (!taken[j] && m.oldText[j] == text) {
++							was = static_cast<int>(j);
++							break;
++						}
++					}
++					ok = was >= 0;
++					if (ok) {
++						taken[was] = true;
++						moved = moved || was != static_cast<int>(line - m.lineFrom);
++						m.order.push_back(was);
++					}
++				}
++				ok = ok && moved;
++			}
++			kexMotionStats.lines = rows;
++		}
++		if (!ok) {
++			showNew();
++			++kexMotionStats.refused;
++			KexEndSlide(true, 9);
++			return;
++		}
++		m.started = true;
++		++kexMotionStats.started[kind];
++		kexMotionStats.lastKind = kind;
++		kexMotionStats.style = static_cast<int>(m.style);
++	}
++	++kexMotionStats.frames;
++	++kexSlideStats.frames;
++	if (KexIsEdit(kind))
++		KexPresentEdit(surfaceWindow, rcClient, t);
++	else if (kind == KEXM_JUMP)
++		KexPresentJump(surfaceWindow, rcClient, t);
++	else
++		KexPresentLines(surfaceWindow, rcClient, t);
++	if (t >= kexSlideMs)
++		KexEndSlide(false);
++}
++
++// Room a motion opened (text moved away from it): each row gets its line's own background, as Scintilla paints it
++// after the end of a line (the current line's colour, a marker's), not just the default one.
++void Editor::KexFillRows(Surface *surface, PRectangle rc) {
++	const XYPOSITION lh = vs.lineHeight;
++	if (lh <= 0 || rc.Width() <= 0 || rc.Height() <= 0)
++		return;
++	const Sci::Line caretLine = pdoc->SciLineFromPosition(sel.MainCaret());
++	const bool caretShows = !vs.caretLine.frame && (caret.active || vs.caretLine.alwaysShow);
++	for (XYPOSITION y = rc.top; y < rc.bottom;) {
++		const Sci::Line row = static_cast<Sci::Line>(std::floor(y / lh));
++		const XYPOSITION bottom = std::min(rc.bottom, static_cast<XYPOSITION>(row + 1) * lh);
++		const PRectangle part(rc.left, y, rc.right, bottom);
++		const Sci::Line line = pcs->DocFromDisplay(topLine + row);
++		const bool hasCaret = line == caretLine;
++		const ColourOptional back = vs.Background(pdoc->GetMark(line, false), caret.active, hasCaret);
++		surface->FillRectangle(part, back.value_or(vs.styles[StyleDefault].back));
++		if (!back && hasCaret && caretShows && vs.caretLine.layer != Layer::Base) {
++			if (const ColourOptional over = vs.ElementColour(Element::CaretLineBack))
++				surface->AlphaRectangle(part, 0, FillStroke(*over));
++		}
++		y = bottom;
++	}
++}
++
++// An edit at one place: the text after it glides from where it was to where it is now. Removed text goes in the
++// edit's style (lifted, wiped or faded, from the old picture); new text is uncovered in place, or (whole lines
++// duplicated) slides out from under the line above, and is lit for a moment.
++void Editor::KexPresentEdit(Surface *surfaceWindow, PRectangle rcClient, double t) {
++	const KexMotionState &m = kexMotion;
++	const XYPOSITION W = std::min<XYPOSITION>(rcClient.right, kexNewWidth), H = std::min<XYPOSITION>(rcClient.bottom, kexNewHeight);
++	surfaceWindow->Copy(PRectangle(rcClient.left, rcClient.top, W, H), Point(0, 0), *kexSlideNew);
++	const double ms = std::max(1, kexMotions.ms[static_cast<int>(m.kind)]);
++	const double f = std::clamp(t / ms, 0.0, 1.0);
++	const XYPOSITION lh = m.lineHeight, left = m.textLeft;
++	const XYPOSITION xs = std::round(std::max(m.at.x, left)), ys = std::round(m.at.y);
++	const XYPOSITION xo = std::round(std::max(m.oldEnd.x, left)), yo = std::round(m.oldEnd.y);
++	const XYPOSITION xn = std::round(std::max(m.newEnd.x, left)), yn = std::round(m.newEnd.y);
++	double closed = 1.0, opacity = 0.0, lift = 0.0, wiped = 0.0;
++	switch (m.style) {
++	case KexEditStyle::lift:
++		// picked up (rises 2 px, a soft shadow under it), then gone while the gap closes
++		lift = KexEaseOut(f / 0.3);
++		opacity = 1.0 - std::clamp((f - 0.25) / 0.35, 0.0, 1.0);
++		closed = KexSpring((f - 0.35) / 0.65);
++		break;
++	case KexEditStyle::wipe:
++		// wiped from its end back to the caret, then the rest of the line closes up
++		wiped = KexEaseOut(f / 0.4);
++		closed = KexSpring((f - 0.38) / 0.62);
++		break;
++	case KexEditStyle::fade: {
++		// fades out within the first 45 % (fast at first) while the text after it glides in from 12 %
++		const double fu = std::clamp(f / 0.45, 0.0, 1.0);
++		opacity = (1.0 - fu) * (1.0 - fu);
++		closed = KexSpring((f - 0.12) / 0.88);
++		break;
++	}
++	default:
++		closed = KexSpring(f);
++		break;
++	}
++	kexMotionStats.gap = static_cast<float>(1.0 - closed);
++	const XYPOSITION dx = std::round((1.0 - closed) * (xo - xn));
++	const XYPOSITION dy = std::round((1.0 - closed) * (yo - yn));
++	const XYPOSITION clipTop = m.style == KexEditStyle::peel ? m.peelTop : 0;
++	auto clip = [&](PRectangle rc) noexcept {
++		rc.left = std::max(rc.left, left);
++		rc.right = std::min(rc.right, W);
++		rc.top = std::max<XYPOSITION>(rc.top, clipTop);
++		rc.bottom = std::min(rc.bottom, H);
++		return rc;
++	};
++	auto shows = [](const PRectangle &rc) noexcept { return rc.Width() > 0 && rc.Height() > 0; };
++	// the rectangles text from (x0, y0) to (x1, y1) covers: the rest of its first line, whole lines, the start of its last
++	auto spans = [&](XYPOSITION x0, XYPOSITION y0, XYPOSITION x1, XYPOSITION y1, PRectangle *out) noexcept {
++		int n = 0;
++		if (y1 <= y0) {
++			out[n++] = PRectangle(x0, y0, x1, y0 + lh);
++		} else {
++			out[n++] = PRectangle(x0, y0, W, y0 + lh);
++			if (y1 > y0 + lh)
++				out[n++] = PRectangle(left, y0 + lh, W, y1);
++			out[n++] = PRectangle(left, y1, x1, y1 + lh);
++		}
++		return n;
++	};
++	auto put = [&](PRectangle src, XYPOSITION ox, XYPOSITION oy) {
++		const PRectangle dst = clip(PRectangle(src.left + ox, src.top + oy, src.right + ox, src.bottom + oy));
++		if (shows(dst))
++			surfaceWindow->Copy(dst, Point(dst.left - ox, dst.top - oy), *kexSlideNew);
++	};
++	// new text pushed the lines below down: the strip at the bottom shows lines the new picture has below the view,
++	// which the old picture still has
++	auto putBottom = [&]() {
++		if (dy >= 0)
++			return;
++		const XYPOSITION oy = std::round(closed * (yn - yo));
++		const XYPOSITION from = std::max<XYPOSITION>(H + dy, yo + lh + oy);
++		const PRectangle dst = clip(PRectangle(left, from, std::min<XYPOSITION>(W, kexOldWidth), std::min<XYPOSITION>(H, kexOldHeight + oy)));
++		if (shows(dst))
++			surfaceWindow->Copy(dst, Point(dst.left, dst.top - oy), *kexSlideOld);
++	};
++	IKexSurface *kex = dynamic_cast<IKexSurface *>(surfaceWindow);
++	const ColourRGBA back = vs.styles[StyleDefault].back;
++	const ColourRGBA light(kexMotions.light);
++	const int lightAlpha = static_cast<int>(light.GetAlpha() * KexLight(t, kexMotions.glowMs) + 0.5);
++	auto lightUp = [&](PRectangle rc) {
++		rc = clip(rc);
++		if (lightAlpha > 0 && shows(rc))
++			surfaceWindow->AlphaRectangle(rc, 0, FillStroke(ColourRGBA(light.GetRed(), light.GetGreen(), light.GetBlue(), lightAlpha)));
++	};
++	PRectangle added[3];
++	const int nAdded = m.inserted > 0 ? spans(xs, ys, xn, yn, added) : 0;
++	if (closed < 1.0) {
++		// where the text after the edit ends up, and the lines below, start empty
++		const PRectangle tailPlace = clip(PRectangle(xs, ys, W, ys + lh)), belowPlace = clip(PRectangle(left, ys + lh, W, H));
++		if (shows(tailPlace))
++			KexFillRows(surfaceWindow, tailPlace);
++		if (shows(belowPlace))
++			KexFillRows(surfaceWindow, belowPlace);
++		if (m.deleted > 0 && m.inserted == 0) {
++			// the removed text where it was, from the old picture
++			PRectangle gone[3];
++			const int nGone = spans(xs, ys, xo, yo, gone);
++			for (int i = 0; i < nGone; ++i) {
++				PRectangle rc = clip(gone[i]);
++				rc.right = std::min<XYPOSITION>(rc.right, kexOldWidth);
++				rc.bottom = std::min<XYPOSITION>(rc.bottom, kexOldHeight);
++				if (!shows(rc))
++					continue;
++				if (m.style == KexEditStyle::wipe) {
++					PRectangle rest = rc;
++					rest.right = std::round(rc.left + (rc.right - rc.left) * (1.0 - wiped));
++					if (shows(rest))
++						surfaceWindow->Copy(rest, Point(rest.left, rest.top), *kexSlideOld);
++					if (wiped < 1.0)
++						surfaceWindow->FillRectangle(PRectangle(rest.right - 1, rest.top + 2, rest.right + 1, rest.bottom - 2),
++							ColourRGBA(light.GetRed(), light.GetGreen(), light.GetBlue()));
++				} else if (m.style == KexEditStyle::lift) {
++					if (opacity <= 0.004)
++						continue;
++					const XYPOSITION up = std::round(2.0 * lift);
++					// a soft shadow: three widening layers under the raised piece
++					for (int k = 1; k <= 3; ++k) {
++						const PRectangle sh(rc.left - (k - 1), rc.top - up + k, rc.right + (k - 1), rc.bottom - up + k);
++						surfaceWindow->AlphaRectangle(sh, k, FillStroke(ColourRGBA(0, 0, 0, static_cast<int>(20 * lift * opacity))));
++					}
++					const PRectangle raised(rc.left, rc.top - up, rc.right, rc.bottom - up);
++					if (kex) {
++						surfaceWindow->AlphaRectangle(raised, 0, FillStroke(ColourRGBA(back.GetRed(), back.GetGreen(), back.GetBlue(), static_cast<int>(255 * opacity))));
++						kex->KexDrawPicture(raised, *kexSlideOld, rc, static_cast<float>(opacity));
++					} else if (opacity > 0.5) {
++						surfaceWindow->Copy(raised, Point(rc.left, rc.top), *kexSlideOld);
++					}
++				} else if (opacity > 0.004) {
++					if (kex)
++						kex->KexDrawPicture(rc, *kexSlideOld, rc, static_cast<float>(opacity));
++					else if (opacity > 0.5)
++						surfaceWindow->Copy(rc, Point(rc.left, rc.top), *kexSlideOld);
++				}
++			}
++		}
++		if (m.style == KexEditStyle::peel) {
++			// the copy and the lines below come down together from under the line
++			put(PRectangle(left, m.peelTop, W, H), 0, dy);
++			putBottom();
++			for (int i = 0; i < nAdded; ++i)
++				lightUp(PRectangle(added[i].left, added[i].top + dy, added[i].right, added[i].bottom + dy));
++			return;
++		}
++		// the new text in its place, uncovered as the text after it moves on
++		for (int i = 0; i < nAdded; ++i)
++			put(added[i], 0, 0);
++	}
++	for (int i = 0; i < nAdded; ++i)
++		lightUp(added[i]);
++	if (closed < 1.0) {
++		// the text after the edit, from the new picture, drawn back towards where it was
++		put(PRectangle(xn, yn, W, yn + lh), dx, dy);
++		put(PRectangle(left, yn + lh, W, H), 0, dy);
++		putBottom();
++	}
++}
++
++// Whole lines moving: a moved line and the one it passes, lines to a new indentation, a fold opening or closing,
++// sorted lines to their new places.
++void Editor::KexPresentLines(Surface *surfaceWindow, PRectangle rcClient, double t) {
++	const KexMotionState &m = kexMotion;
++	const XYPOSITION W = std::min<XYPOSITION>(rcClient.right, kexNewWidth), H = std::min<XYPOSITION>(rcClient.bottom, kexNewHeight);
++	const int kind = static_cast<int>(m.kind);
++	const double ms = std::max(1, kexMotions.ms[kind]);
++	const double p = KexSpring(t / ms);
++	kexMotionStats.gap = static_cast<float>(1.0 - p);
++	const XYPOSITION lh = m.lineHeight;
++	const XYPOSITION left = kind == KEXM_FOLD ? 0 : m.textLeft;	// a fold moves the line numbers too
++	auto shows = [](const PRectangle &rc) noexcept { return rc.Width() > 0 && rc.Height() > 0; };
++	auto copy = [&](Surface &pic, PRectangle src, XYPOSITION ox, XYPOSITION oy, XYPOSITION top) {
++		PRectangle dst(src.left + ox, src.top + oy, src.right + ox, src.bottom + oy);
++		dst.left = std::max(dst.left, left);
++		dst.right = std::min(dst.right, W);
++		dst.top = std::max(dst.top, top);
++		dst.bottom = std::min(dst.bottom, H);
++		if (shows(dst))
++			surfaceWindow->Copy(dst, Point(dst.left - ox, dst.top - oy), pic);
++	};
++	auto empty = [&](XYPOSITION top, XYPOSITION bottom) {
++		const PRectangle rc(left, std::max<XYPOSITION>(top, 0), W, std::min(bottom, H));
++		if (shows(rc))
++			KexFillRows(surfaceWindow, rc);
++	};
++	surfaceWindow->Copy(PRectangle(rcClient.left, rcClient.top, W, H), Point(0, 0), *kexSlideNew);
++	const XYPOSITION top = std::round(m.rowTop);
++	const XYPOSITION n = static_cast<XYPOSITION>(m.lineTo - m.lineFrom);
++	if (kind == KEXM_MOVELINE) {
++		// the moved lines (b high) and the line they pass (pr high) swap places: each band glides from where it was
++		const XYPOSITION b = static_cast<XYPOSITION>(m.blockRows) * lh, pr = static_cast<XYPOSITION>(m.passedRows) * lh;
++		const XYPOSITION blockMove = m.lineDelta > 0 ? pr : -pr;	// now less before
++		const XYPOSITION passedMove = m.lineDelta > 0 ? -b : b;
++		const XYPOSITION blockNow = top + blockMove;
++		const XYPOSITION passedNow = m.lineDelta > 0 ? top : top + b - pr;
++		empty(std::min(top, blockNow), std::max(top, blockNow) + b);
++		// the line passed, then the moved lines over it
++		copy(*kexSlideNew, PRectangle(left, passedNow, W, passedNow + pr), 0, std::round(-passedMove * (1.0 - p)), 0);
++		copy(*kexSlideNew, PRectangle(left, blockNow, W, blockNow + b), 0, std::round(-blockMove * (1.0 - p)), 0);
++	} else if (kind == KEXM_INDENT) {
++		for (size_t i = 0; i < m.newX.size(); ++i) {
++			const XYPOSITION y = top + static_cast<XYPOSITION>(i) * lh;
++			if (y >= H || y + lh <= 0)
++				continue;
++			empty(y, y + lh);
++			copy(*kexSlideNew, PRectangle(left, y, W, y + lh), std::round(-(m.newX[i] - m.oldX[i]) * (1.0 - p)), 0, 0);
++		}
++	} else if (kind == KEXM_FOLD) {
++		const XYPOSITION travel = static_cast<XYPOSITION>(m.rowsMoved) * lh;
++		if (m.contracting) {
++			// the old lines stay; the lines below come up over the hidden ones
++			copy(*kexSlideOld, PRectangle(left, top, W, H), 0, 0, top);
++			copy(*kexSlideNew, PRectangle(left, top, W, H), 0, std::round(travel * (1.0 - p)), top);
++		} else {
++			// the lines that were below go down, showing the lines that come back
++			copy(*kexSlideOld, PRectangle(left, top, W, H), 0, std::round(travel * p), top);
++		}
++	} else if (kind == KEXM_SORT) {
++		empty(top, top + n * lh);
++		// lines that stay first, then the ones on their way
++		for (int pass = 0; pass < 2; ++pass) {
++			for (size_t i = 0; i < m.order.size(); ++i) {
++				const int was = m.order[i];
++				if ((was != static_cast<int>(i)) != (pass == 1))
++					continue;
++				const XYPOSITION y = top + static_cast<XYPOSITION>(i) * lh;
++				copy(*kexSlideNew, PRectangle(left, y, W, y + lh), 0, std::round((was - static_cast<int>(i)) * lh * (1.0 - p)), 0);
++			}
++		}
++	}
++}
++
++// A long jump: the old view slides out and the new one follows, then a band shows the caret's line for a moment.
++void Editor::KexPresentJump(Surface *surfaceWindow, PRectangle rcClient, double t) {
++	const KexMotionState &m = kexMotion;
++	const XYPOSITION W = std::min<XYPOSITION>(rcClient.right, kexNewWidth), H = std::min<XYPOSITION>(rcClient.bottom, kexNewHeight);
++	const double ms = std::max(1, kexMotions.ms[KEXM_JUMP]);
++	const double e = KexSpring(t / ms);
++	kexMotionStats.gap = static_cast<float>(1.0 - e);
++	const int dir = m.jumpTo > m.jumpFrom ? 1 : -1;
++	const XYPOSITION shift = std::round(e * H);
++	const XYPOSITION yOld = -dir * shift, yNew = yOld + dir * H;
++	auto put = [&](Surface &pic, XYPOSITION y) {
++		const PRectangle rc(rcClient.left, std::max<XYPOSITION>(0, y), W, std::min(H, y + H));
++		if (rc.Width() > 0 && rc.Height() > 0)
++			surfaceWindow->Copy(rc, Point(rc.left, rc.top - y), pic);
++	};
++	put(*kexSlideNew, yNew);
++	if (e < 1.0)
++		put(*kexSlideOld, yOld);
++	// the band on the caret's line, once there
++	const ColourRGBA light(kexMotions.light);
++	const double band = KexLight(t - ms * 0.6, ms * 1.9);
++	const int a = static_cast<int>(light.GetAlpha() * 0.7 * band + 0.5);
++	if (a > 0 && e > 0.6) {
++		const Point caretAt = LocationFromPosition(sel.MainCaret());
++		const PRectangle rc(m.textLeft, std::round(caretAt.y) + yNew, W, std::round(caretAt.y) + yNew + m.lineHeight);
++		if (rc.top < H && rc.bottom > 0)
++			surfaceWindow->AlphaRectangle(rc, 0, FillStroke(ColourRGBA(light.GetRed(), light.GetGreen(), light.GetBlue(), a)));
++	}
++}
++
++// After a message that may scroll far (go to line, a found text shown, a bookmark): more than a screen moved
++// by the program, not by the user, slides the view there.
++void Editor::KexJumpCheck(Sci::Line topBefore) {
++	const Sci::Line moved = topLine - topBefore;
++	if (std::abs(moved) <= std::max<Sci::Line>(2, LinesOnScreen()) || !KexMotionOn(KexMotionKind::jump))
++		return;
++	if (KexNowMs() - kexDocSwitch < 500)
++		return;	// a document just put in shows where it was left, without a slide
++	if (kexSlideDir == 4 && kexMotion.kind == KexMotionKind::jump && !kexMotion.started)
++		return;	// already set up by an earlier message of the same jump
++	// the screen still shows the old lines: picture them there
++	const Sci::Line now = topLine;
++	SetTopLine(topBefore);
++	const bool on = KexMotionBegin(KexMotionKind::jump);
++	SetTopLine(now);
++	if (!on)
++		return;
++	kexMotion.open = false;
++	kexMotion.jumpFrom = topBefore;
++	kexMotionStats.jumpLines = static_cast<int>(moved);
++	Redraw();
++}
++
++// A search found text (SCI_SEARCHINTARGET), then the selection was set to it: a ring closes onto it.
++void Editor::KexRingCheck(Message iMessage) {
++	if (iMessage != Message::SetAnchor && iMessage != Message::SetSel && iMessage != Message::SetSelection)
++		return;
++	const double now = KexNowMs();
++	if (!KexMotionOn(KexMotionKind::find) || now - kexFoundAt > 250 || sel.Count() != 1)
++		return;
++	const SelectionRange range = sel.RangeMain();
++	if (range.Start().Position() != kexFoundStart || range.End().Position() != kexFoundEnd || kexFoundEnd <= kexFoundStart)
++		return;
++	kexFoundAt = -1e9;
++	++kexMotionStats.started[KEXM_FIND];
++	kexMotionStats.lastKind = KEXM_FIND;
++	kexRingStart = kexFoundStart;
++	kexRingEnd = kexFoundEnd;
++	kexRingStartMs = now;
++	if (kexSlideDir == 4 && kexMotion.kind == KexMotionKind::jump)
++		kexRingStartMs += kexMotions.ms[KEXM_JUMP] * 0.7;	// once the view is there
++	FineTickerStart(TickReason::kexSlide, 15, 0);
++	Redraw();
++}
++
++bool Editor::KexRingLive() const noexcept {
++	return kexRingStartMs >= 0 && KexNowMs() - kexRingStartMs < std::max(1, kexMotions.ms[KEXM_FIND]) * 1.8;
++}
++
++Editor::KexJumpWatcher::KexJumpWatcher(Editor &ed_, Message message_) noexcept : ed(ed_), message(message_) {
++	switch (message) {
++	case Message::GotoLine:
++	case Message::GotoPos:
++	case Message::SetSel:
++	case Message::SetFirstVisibleLine:
++	case Message::EnsureVisibleEnforcePolicy:
++	case Message::ScrollCaret:
++	case Message::ScrollRange:
++		// not LineScroll: Notepad++ scrolls the other view with it to keep both in step
++		counted = true;
++		outer = ++ed.kexJumpWatch == 1;
++		top = ed.topLine;
++		break;
++	default:
++		break;
++	}
++}
++
++Editor::KexJumpWatcher::~KexJumpWatcher() {
++	if (counted)
++		--ed.kexJumpWatch;
++	try {
++		if (outer && ed.topLine != top)
++			ed.KexJumpCheck(top);
++		ed.KexRingCheck(message);
++	} catch (...) {
++		// no motion then
++	}
++}
++
++// A fold the user asked for (margin click, toggle fold): the lines under it slide
++void Editor::KexFoldLine(Sci::Line line, FoldAction action) {
++	KexMotionKind kind = KexMotionKind::none;
++	Sci::Line header = line;
++	if (line >= 0 && line < pdoc->LinesTotal() && KexMotionOn(KexMotionKind::fold)) {
++		if (action == FoldAction::Toggle && !LevelIsHeader(pdoc->GetFoldLevel(header)))
++			header = pdoc->GetFoldParent(header);
++		if (header >= 0 && pcs->GetVisible(header) && pdoc->GetLastChild(header) > header)
++			kind = KexMotionKind::fold;
++	}
++	KexMotionScope scope(*this, kind);
++	if (scope.On()) {
++		kexMotion.lineFrom = header;
++		kexMotion.lineTo = pdoc->GetLastChild(header) + 1;
++		kexMotion.foldRows = pcs->DisplayFromDoc(kexMotion.lineTo) - pcs->DisplayFromDoc(header + 1);
++		kexMotion.rowTop = static_cast<XYPOSITION>(pcs->DisplayFromDoc(header + 1) - topLine) * vs.lineHeight;
++	}
++	FoldLine(line, action);
++}
++
++// The ring: from twice the size of the found text down onto it, on the spring, then gone; a light fill under it.
++void Editor::KexPaintRing(Surface *surfaceWindow, PRectangle rcArea) {
++	if (!KexRingLive()) {
++		kexRingStartMs = -1;
++		return;
++	}
++	const double ms = std::max(1, kexMotions.ms[KEXM_FIND]);
++	double t = KexNowMs() - kexRingStartMs;
++	if (kexSlideFreeze >= 0)
++		t = std::min(t, kexSlideFreeze * ms * 1.8);
++	if (t < 0)
++		return;	// waits for the jump to it to be done
++	const Point a = LocationFromPosition(kexRingStart), b = LocationFromPosition(kexRingEnd);
++	const XYPOSITION lh = vs.lineHeight;
++	const XYPOSITION right = b.y > a.y ? std::max(a.x + lh, static_cast<XYPOSITION>(GetClientRectangle().right) - 4) : b.x;
++	const XYPOSITION cx = (a.x + right) / 2, cy = a.y + lh / 2;
++	const double u = std::clamp(t / ms, 0.0, 1.0);
++	const XYPOSITION scale = 1.0 + 1.2 * (1.0 - KexSpring(u));
++	const XYPOSITION w = (right - a.x + 6) * scale, h = lh * scale;
++	const PRectangle ring(std::round(cx - w / 2), std::round(cy - h / 2), std::round(cx + w / 2), std::round(cy + h / 2));
++	const ColourRGBA light(kexMotions.light);
++	const double strokeA = 1.0 - std::clamp((t - ms * 0.6) / (ms * 1.2), 0.0, 1.0);
++	const double fillA = 0.45 * (1.0 - std::clamp(t / (ms * 1.8), 0.0, 1.0)) * KexSpring(u * 1.6);
++	surfaceWindow->SetClip(rcArea);
++	surfaceWindow->AlphaRectangle(ring, 3, FillStroke(
++		ColourRGBA(light.GetRed(), light.GetGreen(), light.GetBlue(), static_cast<int>(255 * fillA)),
++		ColourRGBA(light.GetRed(), light.GetGreen(), light.GetBlue(), static_cast<int>(255 * strokeA)), 2.0));
++	surfaceWindow->PopClip();
++	++kexMotionStats.ringFrames;
++}
++
++
 +void Editor::KexEndSlide(bool cancelled, int why) noexcept {
 +	if (cancelled && (kexSlideOld || kexSlideCapture)) {
 +		++kexSlideStats.cancelled;
 +		kexSlideStats.stopReason = why;
++	}
++	if (kexSlideDir == 4) {
++		kexMotion.open = false;
++		std::vector<std::string>().swap(kexMotion.oldText);
 +	}
 +	kexSlideOld.reset();
 +	kexSlideNew.reset();
 +	kexSlideCapture = false;
 +	kexSlideDir = 0;
 +	kexSlideStart = -1;
++	kexSlideHeld = -1;
 +}
 +
 +// the pictures belong to the window's drawing target: when that goes, they go too
@@ -17425,6 +18357,8 @@ index 1465bac..df0fa06 100644
 +}
 +
 +void Editor::CopyAllowLine() {
++	if (sel.Empty())
++		kexCopyLineAt = KexNowMs();	// Notepad++ cuts a line as copy, then delete line
 +	SelectionText selectedText;
 +	CopySelectionRange(&selectedText, true);
 +	CopyToClipboard(selectedText);
@@ -17437,6 +18371,7 @@ index 1465bac..df0fa06 100644
 +			SelectionText selectedText;
 +			if (CopyLineRange(&selectedText, false)) {
 +				CopyToClipboard(selectedText);
++				kexCopyLineAt = KexNowMs();
 +				LineDelete();
 +			}
 +		}
@@ -17449,6 +18384,7 @@ index 1465bac..df0fa06 100644
 +	pdoc->CheckReadOnly();
 +	if (!pdoc->IsReadOnly() && !SelectionContainsProtected()) {
 +		Copy();
++		const KexMotionScope kexScope(*this, (sel.Count() == 1 && !sel.Empty()) ? KexMotionKind::cut : KexMotionKind::none);
 +		ClearSelection();
 +	}
 +}
@@ -17551,6 +18487,7 @@ index 1465bac..df0fa06 100644
 +			}
 +		}
 +	} else {
++		const KexMotionScope kexScope(*this, KexDeleteKind());
 +		ClearSelection();
 +	}
 +	sel.RemoveDuplicates();
@@ -17594,6 +18531,7 @@ index 1465bac..df0fa06 100644
 +
 +void Editor::Undo() {
 +	if (pdoc->CanUndo()) {
++		const KexMotionScope kexScope(*this, KexMotionKind::undo);
 +		InvalidateCaret();
 +		pdoc->Undo();
 +	}
@@ -17601,8 +18539,18 @@ index 1465bac..df0fa06 100644
 +
 +void Editor::Redo() {
 +	if (pdoc->CanRedo()) {
++		const KexMotionScope kexScope(*this, KexMotionKind::undo);
 +		pdoc->Redo();
 +	}
++}
++
++// Delete or Backspace on one selection: within a line, or over several
++Editor::KexMotionKind Editor::KexDeleteKind() const noexcept {
++	if (sel.Count() != 1 || sel.Empty() || sel.IsRectangular())
++		return KexMotionKind::none;
++	const SelectionRange &range = sel.RangeMain();
++	return pdoc->SciLineFromPosition(range.Start().Position()) == pdoc->SciLineFromPosition(range.End().Position()) ?
++		KexMotionKind::del : KexMotionKind::delLines;
 +}
 +
 +void Editor::DelCharBack(bool allowLineStartDeletion) {
@@ -17644,6 +18592,7 @@ index 1465bac..df0fa06 100644
 +		}
 +		ThinRectangularRange();
 +	} else {
++		const KexMotionScope kexScope(*this, KexDeleteKind());
 +		ClearSelection();
 +	}
 +	sel.RemoveDuplicates();
@@ -17800,7 +18749,7 @@ index 1465bac..df0fa06 100644
 +						FoldExpand(lineClick, FoldAction::Toggle, levelClick);
 +					} else {
 +						// Toggle this line
-+						FoldLine(lineClick, FoldAction::Toggle);
++						KexFoldLine(lineClick, FoldAction::Toggle);
 +					}
 +				}
 +			}
@@ -17912,6 +18861,20 @@ index 1465bac..df0fa06 100644
 +}
 +
 +void Editor::NotifyModified(Document *, DocModification mh, void *) {
++	if (kexSlideDir == 4 && FlagSet(mh.modificationType, ModificationFlags::InsertText | ModificationFlags::DeleteText | ModificationFlags::BeforeDelete)) {
++		// KEX motion: the edit it was set up for is recorded; any other change to the text ends it at once
++		if (kexMotion.open) {
++			KexMotionRecord(mh);
++		} else if (!FlagSet(mh.modificationType, ModificationFlags::BeforeDelete)) {
++			++kexMotionStats.ended;
++			KexEndSlide(true, 7);
++			Redraw();
++		}
++	}
++	if (kexRingStartMs >= 0 && FlagSet(mh.modificationType, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {
++		kexRingStartMs = -1;	// the find ring goes with any change
++		Redraw();
++	}
 +	ContainerNeedsUpdate(Update::Content);
 +	if (FlagSet(mh.modificationType, ModificationFlags::InsertText | ModificationFlags::DeleteText)) {
 +		ContainerNeedsUpdate(Update::Text);
@@ -18350,6 +19313,9 @@ index 1465bac..df0fa06 100644
 +}
 +
 +void Editor::LineDelete() {
++	// Notepad++'s cut of a whole line (copy, then this) lifts it; delete line fades it
++	const KexMotionScope kexScope(*this, KexNowMs() - kexCopyLineAt < 250 ? KexMotionKind::cut : KexMotionKind::delLines);
++	kexCopyLineAt = -1e9;
 +	const Sci::Line line = pdoc->SciLineFromPosition(sel.MainCaret());
 +	const Sci::Position start = pdoc->LineStart(line);
 +	const Sci::Position end = pdoc->LineStart(line + 1);
@@ -18411,6 +19377,7 @@ index 1465bac..df0fa06 100644
 +	if (sel.Empty()) {
 +		forLine = true;
 +	}
++	const KexMotionScope kexScope(*this, (sel.Count() == 1 && !sel.IsRectangular()) ? KexMotionKind::duplicate : KexMotionKind::none);
 +	UndoGroup ug(pdoc);
 +	std::string_view eol;
 +	if (forLine) {
@@ -19319,6 +20286,30 @@ index 1465bac..df0fa06 100644
 +}
 +
 +void Editor::Indent(bool forwards, bool lineIndent) {
++	// KEX: several lines of one selection glide to their new indentation
++	KexMotionKind kexKind = KexMotionKind::none;
++	Sci::Line kexTop = 0, kexBottom = -1;
++	if (sel.Count() == 1 && !sel.IsRectangular() && KexMotionOn(KexMotionKind::indent)) {
++		const SelectionRange &range = sel.RangeMain();
++		const Sci::Line lineAnchor = pdoc->SciLineFromPosition(range.anchor.Position());
++		const Sci::Line lineCaret = pdoc->SciLineFromPosition(range.caret.Position());
++		if (lineAnchor != lineCaret) {
++			kexTop = std::min(lineAnchor, lineCaret);
++			kexBottom = std::max(lineAnchor, lineCaret);
++			if (pdoc->LineStart(kexBottom) == range.anchor.Position() || pdoc->LineStart(kexBottom) == range.caret.Position())
++				--kexBottom;
++			if (kexBottom >= kexTop && kexBottom - kexTop < 400)
++				kexKind = KexMotionKind::indent;
++		}
++	}
++	const KexMotionScope kexScope(*this, kexKind);
++	if (kexScope.On()) {
++		kexMotion.lineFrom = kexTop;
++		kexMotion.lineTo = kexBottom + 1;
++		kexMotion.rowTop = static_cast<XYPOSITION>(pcs->DisplayFromDoc(kexTop) - topLine) * vs.lineHeight;
++		for (Sci::Line line = kexTop; line <= kexBottom; ++line)
++			kexMotion.oldX.push_back(LocationFromPosition(pdoc->GetLineIndentPosition(line)).x);
++	}
 +	UndoGroup ug(pdoc);
 +	// Avoid problems with recalculating rectangular range multiple times by temporarily
 +	// treating rectangular selection as multiple stream selection.
@@ -19554,6 +20545,12 @@ index 1465bac..df0fa06 100644
 +		if (pos != -1) {
 +			targetRange.start.SetPosition(pos);
 +			targetRange.end.SetPosition(pos + lengthFound);
++			if (paintState == PaintState::notPainting && KexMotionOn(KexMotionKind::find)) {
++				// KEX find ring: shown if the selection is set to this next
++				kexFoundStart = pos;
++				kexFoundEnd = pos + lengthFound;
++				kexFoundAt = KexNowMs();
++			}
 +		}
 +		return pos;
 +	} catch (RegexError &) {
@@ -20409,17 +21406,24 @@ index 1465bac..df0fa06 100644
 +		case TickReason::caret:
 +			caret.on = !caret.on;
 +			if (caret.active && !kexOn) {	// KEX: the smooth caret blinks on its own timer
++				const bool stale = kexPictureStale;	// a motion's picture holds no caret
 +				InvalidateCaret();
++				kexPictureStale = stale;
 +			}
 +			break;
 +		case TickReason::kexCaret:
 +			KexTick();
 +			break;
 +		case TickReason::kexSlide:
-+			if (kexSlideOld && kexSlideDir)
++			if ((kexSlideOld && kexSlideDir) || kexRingStartMs >= 0) {
++				if (kexRingStartMs >= 0 && !KexRingLive())
++					kexRingStartMs = -1;	// this paint takes the ring away
++				const bool stale = kexPictureStale;	// the next frame: the view itself is as it was
 +				Redraw();
-+			else
++				kexPictureStale = stale;
++			} else {
 +				FineTickerCancel(TickReason::kexSlide);
++			}
 +			break;
 +		case TickReason::scroll:
 +			// Auto scroll
@@ -20688,6 +21692,10 @@ index 1465bac..df0fa06 100644
 +
 +void Editor::SetDocPointer(Document *document) {
 +	//Platform::DebugPrintf("** %x setdoc to %x\n", pdoc, document);
++	kexDocSwitch = KexNowMs();	// KEX: the new document shows where it was left, without a jump
++	kexRingStartMs = -1;
++	if (kexSlideDir == 4)
++		KexEndSlide(true, 4);
 +	pdoc->RemoveWatcher(this, nullptr);
 +	pdoc->Release();
 +	if (!document) {
@@ -21048,6 +22056,35 @@ index 1465bac..df0fa06 100644
 +
 +Sci::Position Editor::ReplaceTarget(ReplaceType replaceType, std::string_view text) {
 +	pdoc->CheckPosition(targetRange.start.Position());
++
++	// KEX: whole lines put in another order (Notepad++'s sort) glide to their new places
++	KexMotionKind kexKind = KexMotionKind::none;
++	std::vector<std::string> kexLines;
++	Sci::Line kexFrom = 0;
++	if (replaceType == ReplaceType::basic && KexMotionOn(KexMotionKind::sort) && !kexMotion.open) {
++		const Sci::Position s = targetRange.start.Position(), e = targetRange.end.Position();
++		kexFrom = pdoc->SciLineFromPosition(s);
++		const Sci::Line lineEnd = pdoc->SciLineFromPosition(e);
++		if (s == pdoc->LineStart(kexFrom) && (e == pdoc->LineStart(lineEnd) || e == pdoc->Length()) &&
++			static_cast<Sci::Position>(text.length()) == e - s && lineEnd - kexFrom < 400) {
++			std::string before = RangeText(s, e);
++			if (before != text) {
++				kexLines = KexSplitLines(before);
++				std::vector<std::string> after = KexSplitLines(text), a = kexLines;
++				std::sort(a.begin(), a.end());
++				std::sort(after.begin(), after.end());
++				if (kexLines.size() >= 2 && a == after)
++					kexKind = KexMotionKind::sort;
++			}
++		}
++	}
++	const KexMotionScope kexScope(*this, kexKind);
++	if (kexScope.On()) {
++		kexMotion.lineFrom = kexFrom;
++		kexMotion.lineTo = kexFrom + static_cast<Sci::Line>(kexLines.size());
++		kexMotion.rowTop = static_cast<XYPOSITION>(pcs->DisplayFromDoc(kexFrom) - topLine) * vs.lineHeight;
++		kexMotion.oldText = std::move(kexLines);
++	}
 +
 +	UndoGroup ug(pdoc);
 +
@@ -21417,6 +22454,7 @@ index 1465bac..df0fa06 100644
 +
 +sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 +	//Platform::DebugPrintf("S start wnd proc %d %d %d\n",iMessage, wParam, lParam);
++	const KexJumpWatcher kexJump(*this, iMessage);
 +
 +	// KEX smooth caret (KexScintilla.h)
 +	switch (static_cast<unsigned int>(iMessage)) {
@@ -21425,6 +22463,8 @@ index 1465bac..df0fa06 100644
 +		kexGlideMs = std::clamp(static_cast<int>(wParam), 0, 1000);
 +		kexFade = (lParam & KEXCARET_FADE) != 0;
 +		kexNoBlink = (lParam & KEXCARET_NOBLINK) != 0;
++		const int fadeMs = static_cast<int>((lParam >> 16) & 0xFFF);
++		kexFadeMs = fadeMs ? fadeMs : 140;
 +		view.kexOvertypeBlock = (lParam & KEXCARET_OVERTYPE_BLOCK) != 0;
 +		const int snapLines = static_cast<int>((lParam >> 8) & 0xFF);
 +		kexSnapLines = snapLines ? snapLines : 12;
@@ -21449,7 +22489,44 @@ index 1465bac..df0fa06 100644
 +				KexEndSlide(true, 4);
 +			return 0;
 +		}
-+		return KexStartSlide(static_cast<intptr_t>(wParam) > 0 ? 1 : -1, static_cast<int>(lParam)) ? 1 : 0;
++		return KexStartSlide(wParam == 2 ? 2 : static_cast<intptr_t>(wParam) > 0 ? 1 : -1, static_cast<int>(lParam)) ? 1 : 0;
++	case SCI_KEX_SETMOTIONS:
++		if (const KexMotions *m = reinterpret_cast<const KexMotions *>(wParam)) {
++			kexMotions = *m;
++			for (int &ms : kexMotions.ms)
++				ms = std::clamp(ms, 0, 3000);
++			kexMotions.glowMs = std::clamp(kexMotions.glowMs, 0, 3000);
++			kexMotions.rapidMs = std::clamp(kexMotions.rapidMs, 0, 3000);
++			if (kexSlideDir == 4 && !KexMotionOn(kexMotion.kind)) {
++				KexEndSlide(true, 4);
++				Redraw();
++			}
++			if (!KexMotionOn(KexMotionKind::find))
++				kexRingStartMs = -1;
++		}
++		return 1;
++	case SCI_KEX_GETMOTIONINFO:
++		if (KexMotionInfo *info = static_cast<KexMotionInfo *>(PtrFromSPtr(lParam))) {
++			for (int k = 0; k < KEXM_COUNT; ++k)
++				info->started[k] = kexMotionStats.started[k];
++			info->skipped = kexMotionStats.skipped;
++			info->refused = kexMotionStats.refused;
++			info->ended = kexMotionStats.ended;
++			info->frames = kexMotionStats.frames;
++			info->lastKind = kexMotionStats.lastKind;
++			info->fraction = kexMotionStats.fraction;
++			info->gap = kexMotionStats.gap;
++			info->style = kexMotionStats.style;
++			info->ringFrames = kexMotionStats.ringFrames;
++			info->jumpLines = kexMotionStats.jumpLines;
++			info->lines = kexMotionStats.lines;
++			info->caretX = kexMotionStats.caretX;
++			info->renderMs = static_cast<float>(kexMotionStats.renderMs);
++			info->presentMs = static_cast<float>(kexMotionStats.presentMs);
++			info->renders = kexMotionStats.renders;
++			info->reuses = kexMotionStats.reuses;
++		}
++		return (kexSlideDir == 4 && (kexSlideOld || kexSlideCapture)) || KexRingLive() ? 1 : 0;
 +	case SCI_KEX_GETSLIDEINFO:
 +		if (KexSlideInfo *info = static_cast<KexSlideInfo *>(PtrFromSPtr(lParam))) {
 +			info->active = (kexSlideOld || kexSlideCapture) ? 1 : 0;
@@ -21459,9 +22536,24 @@ index 1465bac..df0fa06 100644
 +			info->cancelled = kexSlideStats.cancelled;
 +			info->fraction = kexSlideStats.lastFraction;
 +			info->stopReason = kexSlideStats.stopReason;
++			info->held = kexSlideHeld >= 0 ? 1 : 0;
 +		}
 +		return (kexSlideOld || kexSlideCapture) ? 1 : 0;
++	case SCI_KEX_SLIDEPOS:
++		if (!(kexSlideOld || kexSlideCapture) || kexSlideHeld < 0)
++			return 0;
++		kexSlideHeld = std::clamp(static_cast<double>(wParam) / 10000.0, 0.0, 1.0);
++		if (lParam) {
++			kexSlideStats.lastFraction = static_cast<float>(kexSlideHeld);
++			KexEndSlide(false);
++		}
++		Redraw();
++		return 1;
 +	case SCI_KEX_SLIDETEST:
++		if (static_cast<intptr_t>(wParam) == -2) {
++			kexPictureEveryFrame = lParam != 0;
++			return 0;
++		}
 +		kexSlideFreeze = static_cast<intptr_t>(wParam) < 0 ? -1.0 : static_cast<double>(wParam) / 1000.0;
 +		if (kexSlideOld)
 +			Redraw();
@@ -21478,6 +22570,7 @@ index 1465bac..df0fa06 100644
 +			info->frames = kexStats.frames;
 +			info->workMs = kexStats.workMs;
 +			info->alpha = kexStats.mainAlpha;
++			info->fadeMs = kexFadeMs;
 +		}
 +		return kexOn ? 1 : 0;
 +	case SCI_KEX_CARETTEST:
@@ -23145,7 +24238,7 @@ index 1465bac..df0fa06 100644
 +
 +	case Message::ToggleFoldShowText:
 +		pcs->SetFoldDisplayText(LineFromUPtr(wParam), ConstCharPtrFromSPtr(lParam));
-+		FoldLine(LineFromUPtr(wParam), FoldAction::Toggle);
++		KexFoldLine(LineFromUPtr(wParam), FoldAction::Toggle);
 +		break;
 +
 +	case Message::FoldDisplayTextSetStyle:
@@ -23165,11 +24258,11 @@ index 1465bac..df0fa06 100644
 +		return StringResult(lParam, GetDefaultFoldDisplayText());
 +
 +	case Message::ToggleFold:
-+		FoldLine(LineFromUPtr(wParam), FoldAction::Toggle);
++		KexFoldLine(LineFromUPtr(wParam), FoldAction::Toggle);
 +		break;
 +
 +	case Message::FoldLine:
-+		FoldLine(LineFromUPtr(wParam), static_cast<FoldAction>(lParam));
++		KexFoldLine(LineFromUPtr(wParam), static_cast<FoldAction>(lParam));
 +		break;
 +
 +	case Message::FoldChildren:
@@ -24373,10 +25466,10 @@ index 1465bac..df0fa06 100644
 +	return 0;
 +}
 diff --git a/scintilla/src/Editor.h b/scintilla/src/Editor.h
-index 85c1410..73beb20 100644
+index 85c1410..246bb6e 100644
 --- a/scintilla/src/Editor.h
 +++ b/scintilla/src/Editor.h
-@@ -1,762 +1,816 @@
+@@ -1,762 +1,926 @@
 -// Scintilla source code edit control
 -/** @file Editor.h
 - ** Defines the main editor class.
@@ -25149,6 +26242,8 @@ index 85c1410..73beb20 100644
 +#ifndef EDITOR_H
 +#define EDITOR_H
 +
++#include "KexScintilla.h"	// KEX: the motion settings and statistics
++
 +namespace Scintilla::Internal {
 +
 +/**
@@ -25342,12 +26437,16 @@ index 85c1410..73beb20 100644
 +	int kexGlideMs = 80;
 +	int kexSnapLines = 12;
 +	bool kexFade = true;
++	int kexFadeMs = 140;
 +	double kexFreeze = -1;	// self-test: glide fraction to stop at
 +	bool kexSolid = false;	// self-test: no blinking
 +	bool kexSnapNext = true;	// the next targets are taken as they are (new document, zoom)
 +	XYPOSITION kexLineHeight = 0;
 +	double kexBlinkStart = 0;
 +	std::vector<KexCaret> kexCarets;
++	struct KexHeldCaret { PRectangle rc; ColourRGBA colour; bool main; };
++	bool kexCaretsLater = false;		// this paint is a motion's picture: the carets go on top of its frame
++	std::vector<KexHeldCaret> kexCaretsHeld;
 +	std::vector<PRectangle> kexOnScreen;	// client rectangles where a caret was drawn since the last tick
 +	struct {
 +		int visible = 0, carets = 0, block = 0, frames = 0;
@@ -25357,7 +26456,9 @@ index 85c1410..73beb20 100644
 +	static double KexNowMs();
 +	KexCaretTarget KexCurrent(const KexCaret &c, double now) const;
 +	float KexBlinkAlpha(double now, double *nextChangeMs) const;
-+	void KexPaintCarets(Surface *surface, PRectangle rcArea, PRectangle rcClient);
++	void KexPaintCarets(Surface *surface, PRectangle rcArea);
++	void KexDrawHeldCarets(Surface *surfaceWindow);
++	void KexHoldStockCarets();
 +	void KexTick();
 +	void KexInvalidate();
 +	bool kexNoBlink = false;	// the caret never blinks
@@ -25367,22 +26468,124 @@ index 85c1410..73beb20 100644
 +	// the window and put on screen side by side.
 +	std::unique_ptr<Surface> kexSlideOld, kexSlideNew;
 +	std::unique_ptr<Surface> kexFrame;	// GDI with the smooth caret: the paint is put together here first
-+	int kexSlideDir = 0;		// 1: the new document comes in from the right, -1: from the left
++	int kexSlideDir = 0;		// 1: the new document comes in from the right, -1: from the left, 2: the old picture fades out, 3: close-up
 +	int kexSlideMs = 200;
 +	double kexSlideStart = -1;	// < 0: the old picture is taken, the slide starts at the next paint
 +	bool kexSlideCapture = false;	// the next paint takes the old picture
 +	double kexSlideFreeze = -1;	// self-test: fraction to stop at
++	double kexSlideHeld = -1;	// >= 0: the slide stays at this fraction (SCI_KEX_SLIDEPOS), < 0: it runs on its own
 +	int kexOldWidth = 0, kexOldHeight = 0, kexNewWidth = 0, kexNewHeight = 0, kexFrameWidth = 0, kexFrameHeight = 0;
 +	struct {
 +		int slides = 0, frames = 0, captures = 0, cancelled = 0, stopReason = 0;
 +		float lastFraction = 0;
 +	} kexSlideStats;
 +	enum class KexTarget { direct, frame, slide, capture };
++	bool KexCaretsOnTop(KexTarget target) const noexcept {	// a motion's picture, not the page sliding to a far line (it keeps its caret)
++		return (target == KexTarget::slide || target == KexTarget::capture) && kexSlideDir == 4 && kexMotion.kind != KexMotionKind::jump;
++	}
 +	KexTarget KexPaintTarget(Surface *surfaceWindow, PRectangle rcArea, PRectangle rcClient, Surface **target, PRectangle *area);
 +	void KexPresent(KexTarget mode, Surface *surfaceWindow, Surface *target, PRectangle rcArea, PRectangle rcClient);
 +	bool KexStartSlide(int direction, int ms);
 +	void KexEndSlide(bool cancelled, int why = 0) noexcept;
 +	void KexDropPixmaps() noexcept;
++
++	// KEX motion (SCI_KEX_SETMOTIONS, slide kind 4): an edit pictures the view as it starts; once it is done,
++	// each frame is put together from that picture and the view as it is now.
++	enum class KexMotionKind { none = -1, cut, del, delLines, paste, undo, moveLine, find, indent, duplicate, jump, fold, sort };
++	enum class KexEditStyle { none, lift, wipe, fade, uncover, peel };
++	struct KexMotionState {
++		KexMotionKind kind = KexMotionKind::none;
++		bool open = false;			// the edit is still running: its changes belong to it
++		bool refused = false;			// the edit turned out to be one this motion can't show
++		bool started = false;			// the first frame has been painted
++		Sci::Line topLine = 0;
++		int xOffset = 0;
++		XYPOSITION lineHeight = 0, textLeft = 0;
++		// edits: one change at one place, [start, start + deleted) became [start, start + inserted)
++		Sci::Position start = -1, deleted = 0, inserted = 0;
++		Point at, oldEnd;			// where it starts, where the removed text ended (old picture)
++		bool atKnown = false;
++		KexEditStyle style = KexEditStyle::none;
++		// lines: [lineFrom, lineTo) and what they need
++		Sci::Line lineFrom = 0, lineTo = 0;
++		int lineDelta = 0;			// move line: -1 up, 1 down
++		std::vector<XYPOSITION> oldX;		// indent: where each line's text started
++		std::vector<std::string> oldText;	// sort: the lines before
++		std::vector<int> order;			// sort: for each line now, the line it was
++		Sci::Line foldRows = 0;			// fold: display rows under the folded line before
++		XYPOSITION rowTop = 0;			// fold, move line, indent, sort: client y of lineFrom
++		// jump
++		Sci::Line jumpFrom = 0, jumpTo = 0;
++		// worked out at the first frame
++		Point newEnd;				// where the new text ends (new picture)
++		XYPOSITION peelTop = 0;			// duplicate: where the copy comes out
++		Sci::Line rowsMoved = 0;		// fold: rows that open or close
++		Sci::Line blockRows = 0, passedRows = 0;	// move line: rows the moved lines and the line they pass take (wrapped lines take several)
++		bool contracting = false;		// fold: the lines close up
++		bool changed = false;			// the text changed while the edit ran
++		std::vector<XYPOSITION> newX;		// indent: where each line's text starts now
++	} kexMotion;
++	KexMotions kexMotions{};
++	double kexMotionLast = -1e9;		// when the last motion was asked for
++	bool kexMotionHold = false;		// several edits in one go: none until the next paint
++	double kexCopyLineAt = -1e9;		// SCI_COPYALLOWLINE of a whole line: a line delete just after it is a cut
++	double kexDocSwitch = -1e9;		// when the document was last changed (no jump just after)
++	int kexJumpWatch = 0;			// nested messages that may jump
++	struct {
++		int started[KEXM_COUNT] = {};
++		int skipped = 0, refused = 0, ended = 0, frames = 0, lastKind = -1, style = 0, ringFrames = 0, jumpLines = 0, lines = 0;
++		float fraction = 0, gap = 0, caretX = 0;
++		double renderMs = 0, presentMs = 0;
++		int renders = 0, reuses = 0;
++	} kexMotionStats;
++	// the view's picture for a motion's frames: painted for its first frame and again only when the view changes
++	bool kexPictureStale = true, kexPictureEveryFrame = false;
++	Sci::Line kexPictureTop = -1;
++	XYPOSITION kexPictureX = -1;
++	// find ring: a search's result, then the selection set to it
++	Sci::Position kexFoundStart = -1, kexFoundEnd = -1;
++	double kexFoundAt = -1e9;
++	Sci::Position kexRingStart = -1, kexRingEnd = -1;
++	double kexRingStartMs = -1;
++	bool KexMotionOn(KexMotionKind kind) const noexcept;
++	bool KexMotionBegin(KexMotionKind kind);
++	void KexMotionClose();
++	void KexMotionRecord(const DocModification &mh);
++	bool KexMotionSize(KexMotionKind kind, int *rows) const noexcept;
++	virtual bool KexPaintNow() { return false; }	// paint the view now (the platform's UpdateWindow)
++	void KexPresentMotion(Surface *surfaceWindow, PRectangle rcClient);
++	void KexFillRows(Surface *surface, PRectangle rc);
++	void KexPresentEdit(Surface *surfaceWindow, PRectangle rcClient, double t);
++	void KexPresentLines(Surface *surfaceWindow, PRectangle rcClient, double t);
++	void KexPresentJump(Surface *surfaceWindow, PRectangle rcClient, double t);
++	void KexRingCheck(Scintilla::Message iMessage);
++	void KexPaintRing(Surface *surfaceWindow, PRectangle rcArea);
++	bool KexRingLive() const noexcept;
++	void KexJumpCheck(Sci::Line topBefore);
++	void KexFoldLine(Sci::Line line, Scintilla::FoldAction action);
++	KexMotionKind KexDeleteKind() const noexcept;
++	class KexMotionScope {
++		Editor &ed;
++		bool on;
++	public:
++		KexMotionScope(Editor &ed_, KexMotionKind kind) : ed(ed_), on(kind != KexMotionKind::none && ed_.KexMotionBegin(kind)) {}
++		KexMotionScope(const KexMotionScope &) = delete;
++		KexMotionScope &operator=(const KexMotionScope &) = delete;
++		~KexMotionScope() { if (on) ed.KexMotionClose(); }
++		bool On() const noexcept { return on; }
++	};
++	// Around a message that may scroll far (go to line, show found text): a jump of more than a screen slides
++	class KexJumpWatcher {
++		Editor &ed;
++		Scintilla::Message message;
++		Sci::Line top = 0;
++		bool counted = false, outer = false;
++	public:
++		KexJumpWatcher(Editor &ed_, Scintilla::Message message_) noexcept;
++		KexJumpWatcher(const KexJumpWatcher &) = delete;
++		KexJumpWatcher &operator=(const KexJumpWatcher &) = delete;
++		~KexJumpWatcher();
++	};
 +
 +	/** On GTK+, Scintilla is a container widget holding two scroll bars
 +	 * whereas on Windows there is just one window with both scroll bars turned on. */
@@ -25955,11 +27158,38 @@ index 85c1410..73beb20 100644
 +}
 +
 +#endif
+diff --git a/scintilla/src/KexSurface.h b/scintilla/src/KexSurface.h
+new file mode 100644
+index 0000000..fb5c99f
+--- /dev/null
++++ b/scintilla/src/KexSurface.h
+@@ -0,0 +1,21 @@
++// KexSurface.h - Notepad++ KEX: what the KEX additions need from a platform surface beyond Surface.
++#ifndef KEXSURFACE_H
++#define KEXSURFACE_H
++
++namespace Scintilla::Internal {
++
++class IKexSurface {
++public:
++	// Glass (SCI_KEX_GLASS): colours whose RGB is key (0xBBGGRR) draw as nothing, so what is behind the view
++	// shows through, and text is smoothed in grey (ClearType needs a solid background) or, sharp, not at all.
++	// key < 0: drawing as usual. Pictures made by AllocatePixMap afterwards take the setting with them.
++	virtual void KexSetGlass(int key, bool sharp) noexcept = 0;
++	// Draws the from part of a picture made by AllocatePixMap into dst, scaled when the sizes differ.
++	virtual void KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) = 0;
++protected:
++	~IKexSurface() = default;
++};
++
++}
++
++#endif
 diff --git a/scintilla/win32/ScintillaWin.cxx b/scintilla/win32/ScintillaWin.cxx
-index 1da0dcc..c03a028 100644
+index 1da0dcc..bcd7b19 100644
 --- a/scintilla/win32/ScintillaWin.cxx
 +++ b/scintilla/win32/ScintillaWin.cxx
-@@ -1,4202 +1,4218 @@
+@@ -1,4202 +1,4583 @@
 -// Scintilla source code edit control
 -/** @file ScintillaWin.cxx
 - ** Windows specific subclass of ScintillaBase.
@@ -30220,6 +31450,7 @@ index 1da0dcc..c03a028 100644
 +#include <d2d1_1.h>
 +#include <d3d11_1.h>
 +#include <dwrite_1.h>
++#include <dcomp.h>	// KEX glass
 +#endif
 +
 +#include "ScintillaTypes.h"
@@ -30273,6 +31504,8 @@ index 1da0dcc..c03a028 100644
 +#include "HanjaDic.h"
 +#include "ScintillaWin.h"
 +#include "BoostRegexSearch.h"
++#include "KexScintilla.h"
++#include "KexSurface.h"
 +
 +//needed for gcc builds
 +#ifndef SPI_GETWHEELSCROLLLINES
@@ -30696,6 +31929,28 @@ index 1da0dcc..c03a028 100644
 +	return S_OK;
 +}
 +
++// KEX glass (KexScintilla.h): a DirectComposition layer on top of the window that the view draws into, with
++// see-through pixels. The window under it is filled with the colour its colour-keyed host cuts out.
++struct KexGlassLayer {
++	ComPtr<IDCompositionDesktopDevice> device;
++	ComPtr<IDCompositionTarget> target;
++	ComPtr<IDCompositionVisual2> visual;
++	ComPtr<IDCompositionVirtualSurface> surface;
++	UINT width = 0;
++	UINT height = 0;
++	void Release() noexcept {
++		if (target && device) {
++			target->SetRoot(nullptr);	// off the screen at once, not when the objects happen to go
++			device->Commit();
++		}
++		surface = nullptr;
++		visual = nullptr;
++		target = nullptr;
++		device = nullptr;
++		width = height = 0;
++	}
++};
++
 +#endif
 +
 +/**
@@ -30751,6 +32006,13 @@ index 1da0dcc..c03a028 100644
 +	// rendering parameters for current monitor
 +	HMONITOR hCurrentMonitor;
 +	std::shared_ptr<RenderingParams> renderingParams;
++	// KEX glass (KexScintilla.h)
++	KexGlassLayer kexLayer;
++	int kexGlassKey = -1;
++	bool kexGlassSharp = false;
++	int kexGlassState = 0;		// 0 off, 1 on, 2 asked for but failed
++	int kexGlassStreak = 0;		// failures in a row
++	KexGlassInfo kexGlassInfo {};
 +#endif
 +
 +	explicit ScintillaWin(HWND hwnd);
@@ -30763,6 +32025,14 @@ index 1da0dcc..c03a028 100644
 +	HRESULT SetBackBuffer(HWND hwnd, IDXGISwapChain1 *pSwapChain);
 +	HRESULT CreateSwapChain(HWND hwnd);
 +	void EnsureRenderTarget(HDC hdc);
++	// KEX glass
++	bool KexGlassStart(int flags, int key);
++	void KexGlassStop() noexcept;
++	HRESULT KexGlassCreate() noexcept;
++	void KexGlassSize(UINT &width, UINT &height) const noexcept;
++	bool KexGlassPaint(HDC hdc);
++	bool KexGlassFailed(HRESULT hr) noexcept;
++	sptr_t KexGlassTestPaint(KexGlassTest *test);
 +#endif
 +	void DropRenderTarget() noexcept;
 +	[[nodiscard]] HWND MainHWND() const noexcept;
@@ -30847,6 +32117,7 @@ index 1da0dcc..c03a028 100644
 +	void Copy() override;
 +	bool CanPaste() override;
 +	void Paste() override;
++	bool KexPaintNow() override { ::UpdateWindow(MainHWND()); return true; }	// KEX motion: the picture before an edit
 +	void CreateCallTipWindow(PRectangle rc) override;
 +	void AddToPopUp(const char *label, int cmd = 0, bool enabled = true) override;
 +	void ClaimSelection() override;
@@ -31009,6 +32280,9 @@ index 1da0dcc..c03a028 100644
 +		FineTickerCancel(tr);
 +	}
 +	SetIdle(false);
++#if defined(USE_D2D)
++	kexLayer.Release();	// KEX glass
++#endif
 +	DropRenderTarget();
 +	::RevokeDragDrop(MainHWND());
 +	if (SUCCEEDED(hrOle)) {
@@ -31249,6 +32523,280 @@ index 1da0dcc..c03a028 100644
 +			DropRenderTarget();
 +		}
 +	}
++}
++
++// ---- KEX glass (KexScintilla.h) ----
++
++// SCI_KEX_GLASS: from now on the view draws into a DirectComposition layer where the key colour is see-through
++bool ScintillaWin::KexGlassStart(int flags, int key) {
++	const bool wasOn = kexGlassState == 1;
++	kexGlassKey = key & 0xFFFFFF;
++	kexGlassSharp = (flags & KEXGLASS_SHARP) != 0;
++	if (technology == Technology::Default) {	// glass needs Direct2D
++		KexGlassStop();
++		kexGlassState = 2;
++		kexGlassInfo.lastError = E_NOTIMPL;
++		return false;
++	}
++	if (!wasOn) {
++		// the window's own drawing target would cover the hole the host cuts out
++		DropRenderTarget();
++		pDXGISwapChain = nullptr;
++		kexGlassStreak = 0;
++		const HRESULT hr = KexGlassCreate();
++		if (FAILED(hr)) {
++			kexLayer.Release();
++			kexGlassState = 2;
++			kexGlassInfo.lastError = hr;
++			Redraw();
++			return false;
++		}
++	}
++	kexGlassState = 1;
++	// pictures were made without see-through pixels (or with another key)
++	DropGraphics();
++	KexDropPixmaps();
++	Redraw();
++	return true;
++}
++
++void ScintillaWin::KexGlassStop() noexcept {
++	const bool wasOn = kexGlassState == 1 || kexLayer.surface;
++	kexLayer.Release();
++	kexGlassState = 0;
++	kexGlassKey = -1;
++	if (wasOn) {
++		DropGraphics();
++		KexDropPixmaps();
++		Redraw();
++	}
++}
++
++void ScintillaWin::KexGlassSize(UINT &width, UINT &height) const noexcept {
++	const RECT rc = GetClientRect(MainHWND());
++	const int scale = GetFirstIntegralMultipleDeviceScaleFactor();
++	width = static_cast<UINT>(std::max(1L, (rc.right - rc.left) * scale));
++	height = static_cast<UINT>(std::max(1L, (rc.bottom - rc.top) * scale));
++}
++
++HRESULT ScintillaWin::KexGlassCreate() noexcept {
++	using CreateDevice2Sig = HRESULT (WINAPI *)(IUnknown *, REFIID, void **);
++	static const CreateDevice2Sig createDevice2 = [] {
++		const HMODULE dcomp = ::LoadLibraryExW(L"dcomp.dll", {}, LOAD_LIBRARY_SEARCH_SYSTEM32);
++		return dcomp ? DLLFunction<CreateDevice2Sig>(dcomp, "DCompositionCreateDevice2") : nullptr;
++	}();
++	if (!createDevice2)
++		return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
++	kexLayer.Release();
++	HRESULT hr = Create3D();	// the Direct2D device the layer is drawn with
++	if (FAILED(hr))
++		return hr;
++	hr = createDevice2(device.pDirect2DDevice.Get(), __uuidof(IDCompositionDesktopDevice),
++		reinterpret_cast<void **>(kexLayer.device.GetAddressOf()));
++	if (FAILED(hr))
++		return hr;
++	// not topmost: above what the window draws itself, below any child windows
++	hr = kexLayer.device->CreateTargetForHwnd(MainHWND(), FALSE, kexLayer.target.GetAddressOf());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.device->CreateVisual(kexLayer.visual.GetAddressOf());
++	UINT width = 1;
++	UINT height = 1;
++	KexGlassSize(width, height);
++	if (SUCCEEDED(hr))
++		hr = kexLayer.device->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
++			kexLayer.surface.GetAddressOf());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
++	if (SUCCEEDED(hr))
++		hr = kexLayer.visual->SetContent(kexLayer.surface.Get());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.target->SetRoot(kexLayer.visual.Get());
++	if (SUCCEEDED(hr))
++		hr = kexLayer.device->Commit();
++	if (FAILED(hr)) {
++		kexLayer.Release();
++		return hr;
++	}
++	kexLayer.width = width;
++	kexLayer.height = height;
++	kexGlassInfo.width = static_cast<int>(width);
++	kexGlassInfo.height = static_cast<int>(height);
++	return S_OK;
++}
++
++// a drawing attempt failed (the graphics device was lost, say): build the layer again at the next paint, and
++// after a few failures in a row draw as usual
++bool ScintillaWin::KexGlassFailed(HRESULT hr) noexcept {
++	++kexGlassInfo.failures;
++	kexGlassInfo.lastError = hr;
++	kexLayer.Release();
++	targets.Release();
++	pDXGISwapChain = nullptr;
++	device.Release();
++	DropGraphics();
++	KexDropPixmaps();
++	if (++kexGlassStreak >= 3)
++		kexGlassState = 2;
++	Redraw();
++	return false;
++}
++
++bool ScintillaWin::KexGlassPaint(HDC hdc) {
++	// the window's own pixels: the see-through colour, which the host window cuts out
++	const HWND hwnd = MainHWND();
++	if (HDC dc = hdc ? hdc : ::GetDC(hwnd)) {
++		const RECT rcFill = hdc ? RectFromPRectangle(rcPaint) : GetClientRect(hwnd);
++		const HBRUSH brush = ::CreateSolidBrush(static_cast<COLORREF>(kexGlassKey));
++		::FillRect(dc, &rcFill, brush);
++		::DeleteObject(brush);
++		if (!hdc)
++			::ReleaseDC(hwnd, dc);
++	}
++	if (!kexLayer.surface) {
++		const HRESULT hr = KexGlassCreate();
++		if (FAILED(hr))
++			return KexGlassFailed(hr);
++		DropGraphics();
++	}
++	const int scale = GetFirstIntegralMultipleDeviceScaleFactor();
++	// a slide paints the whole view each frame
++	const PRectangle rcDraw = (kexSlideCapture || kexSlideOld) ? GetClientRectangle() : rcPaint;
++	RECT update {
++		std::max(0L, static_cast<LONG>(std::floor(rcDraw.left)) * scale),
++		std::max(0L, static_cast<LONG>(std::floor(rcDraw.top)) * scale),
++		std::min(static_cast<LONG>(kexLayer.width), static_cast<LONG>(std::ceil(rcDraw.right)) * scale),
++		std::min(static_cast<LONG>(kexLayer.height), static_cast<LONG>(std::ceil(rcDraw.bottom)) * scale) };
++	if (update.right <= update.left || update.bottom <= update.top)
++		return true;
++	ComPtr<ID2D1DeviceContext> dc;
++	POINT offset {};
++	HRESULT hr = kexLayer.surface->BeginDraw(&update, __uuidof(ID2D1DeviceContext), reinterpret_cast<void **>(dc.GetAddressOf()), &offset);
++	if (FAILED(hr))
++		return KexGlassFailed(hr);
++	// the update can sit anywhere in the layer's memory: Scintilla draws in client coordinates, moved there
++	const FLOAT dpi = dpiDefault * static_cast<FLOAT>(scale);
++	dc->SetDpi(dpi, dpi);
++	dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<FLOAT>(offset.x - update.left) / static_cast<FLOAT>(scale),
++		static_cast<FLOAT>(offset.y - update.top) / static_cast<FLOAT>(scale)));
++	const D2D1_RECT_F clip = D2D1::RectF(static_cast<FLOAT>(update.left) / static_cast<FLOAT>(scale), static_cast<FLOAT>(update.top) / static_cast<FLOAT>(scale),
++		static_cast<FLOAT>(update.right) / static_cast<FLOAT>(scale), static_cast<FLOAT>(update.bottom) / static_cast<FLOAT>(scale));
++	dc->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
++	const D2D1_COLOR_F clear { 0.0f, 0.0f, 0.0f, 0.0f };
++	dc->Clear(&clear);
++	{
++		AutoSurface surfaceWindow(static_cast<ID2D1RenderTarget *>(dc.Get()), this);
++		if (surfaceWindow) {
++			SetRenderingParams(surfaceWindow);
++			if (IKexSurface *kex = dynamic_cast<IKexSurface *>(static_cast<Surface *>(surfaceWindow)))
++				kex->KexSetGlass(kexGlassKey, kexGlassSharp);
++			Paint(surfaceWindow, rcPaint);
++			surfaceWindow->Release();
++		}
++	}
++	dc->PopAxisAlignedClip();
++	dc = nullptr;
++	hr = kexLayer.surface->EndDraw();
++	if (FAILED(hr))
++		return KexGlassFailed(hr);
++	// an abandoned paint is painted again in full at once: both reach the screen together
++	if (paintState != PaintState::abandoned) {
++		hr = kexLayer.device->Commit();
++		if (FAILED(hr))
++			return KexGlassFailed(hr);
++	}
++	kexGlassStreak = 0;
++	++kexGlassInfo.frames;
++	return true;
++}
++
++// SCI_KEX_GLASSTEST: the view painted the way glass draws it, into a picture with alpha, and its pixels counted
++sptr_t ScintillaWin::KexGlassTestPaint(KexGlassTest *test) {
++	if (!test)
++		return 0;
++	test->clear = test->solid = test->partial = test->keyLeft = 0;
++	test->error = E_FAIL;
++	if (technology == Technology::Default || !LoadD2D()) {
++		test->error = E_NOTIMPL;
++		return 0;
++	}
++	const RECT rc = GetClientRect(MainHWND());
++	const int width = std::max(1L, rc.right - rc.left);
++	const int height = std::max(1L, rc.bottom - rc.top);
++	BITMAPINFO bmi {};
++	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
++	bmi.bmiHeader.biWidth = width;
++	bmi.bmiHeader.biHeight = -height;
++	bmi.bmiHeader.biPlanes = 1;
++	bmi.bmiHeader.biBitCount = 32;
++	bmi.bmiHeader.biCompression = BI_RGB;
++	void *bits = nullptr;
++	const HDC hdcMem = ::CreateCompatibleDC({});
++	const HBITMAP dib = hdcMem ? ::CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits, {}, 0) : HBITMAP {};
++	HRESULT hr = E_OUTOFMEMORY;
++	if (dib && bits) {
++		const HGDIOBJ old = ::SelectObject(hdcMem, dib);
++		const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
++			{ DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED }, dpiDefault, dpiDefault);
++		DCRenderTarget rt;
++		hr = CreateDCRenderTarget(&props, rt);
++		const RECT rcBind { 0, 0, width, height };
++		if (SUCCEEDED(hr))
++			hr = rt->BindDC(hdcMem, &rcBind);
++		if (SUCCEEDED(hr)) {
++			// the pictures in use belong to the window's drawing: this paint makes its own and drops them after
++			DropGraphics();
++			KexDropPixmaps();
++			const PaintState paintStateOld = paintState;
++			const PRectangle rcPaintOld = rcPaint;
++			const bool paintingAllTextOld = paintingAllText;
++			paintState = PaintState::painting;
++			rcPaint = GetClientRectangle();
++			paintingAllText = true;
++			rt->BeginDraw();
++			const D2D1_COLOR_F clear { 0.0f, 0.0f, 0.0f, 0.0f };
++			rt->Clear(&clear);
++			{
++				AutoSurface surface(static_cast<ID2D1RenderTarget *>(rt.Get()), this);
++				if (surface) {
++					SetRenderingParams(surface);
++					if (IKexSurface *kex = dynamic_cast<IKexSurface *>(static_cast<Surface *>(surface)))
++						kex->KexSetGlass(test->key & 0xFFFFFF, test->sharp != 0);
++					Paint(surface, rcPaint);
++					surface->Release();
++				}
++			}
++			hr = rt->EndDraw();
++			paintState = paintStateOld;
++			rcPaint = rcPaintOld;
++			paintingAllText = paintingAllTextOld;
++			DropGraphics();
++			::GdiFlush();
++		}
++		if (SUCCEEDED(hr)) {
++			const unsigned int key = static_cast<unsigned int>(test->key);
++			const unsigned int keyPixel = ((key & 0xFF) << 16) | (key & 0xFF00) | ((key >> 16) & 0xFF);
++			const unsigned int *px = static_cast<const unsigned int *>(bits);
++			for (size_t i = 0; i < static_cast<size_t>(width) * height; i++) {
++				const unsigned int a = px[i] >> 24;
++				if (a == 0)
++					test->clear++;
++				else if (a == 255) {
++					test->solid++;
++					if ((px[i] & 0xFFFFFF) == keyPixel)
++						test->keyLeft++;
++				} else
++					test->partial++;
++			}
++		}
++		::SelectObject(hdcMem, old);
++	}
++	if (dib)
++		::DeleteObject(dib);
++	if (hdcMem)
++		::DeleteDC(hdcMem);
++	test->error = hr;
++	Redraw();
++	return SUCCEEDED(hr) ? 1 : 0;
 +}
 +#endif
 +
@@ -31504,6 +33052,9 @@ index 1da0dcc..c03a028 100644
 +		// Avoid issues resizing inside Paint when calling IDXGISwapChain1->ResizeBuffers
 +		// with committed resources by refreshing the style data first.
 +		RefreshStyleData();
++
++		if (kexGlassState == 1)
++			return KexGlassPaint(hdc);	// KEX glass: into the see-through layer
 +
 +		EnsureRenderTarget(hdc);
 +		if (ID2D1RenderTarget *pRenderTarget = targets.RenderTarget()) {
@@ -32024,6 +33575,23 @@ index 1da0dcc..c03a028 100644
 +			Platform::DebugPrintf("Failed ResizeBuffers 0x%lx\n", hrResize);
 +		}
 +	}
++	if (kexGlassState == 1) {
++		// KEX glass: the layer takes the new size; there is no drawing target of the window's own to drop
++		hrResize = S_OK;
++		UINT width = 1;
++		UINT height = 1;
++		KexGlassSize(width, height);
++		if (kexLayer.surface && (width != kexLayer.width || height != kexLayer.height)) {
++			if (SUCCEEDED(kexLayer.surface->Resize(width, height))) {
++				kexLayer.width = width;
++				kexLayer.height = height;
++				kexGlassInfo.width = static_cast<int>(width);
++				kexGlassInfo.height = static_cast<int>(height);
++			} else {
++				kexLayer.Release();	// made again at the next paint
++			}
++		}
++	}
 +	if (FAILED(hrResize)) {
 +		if (paintState == PaintState::notPainting) {
 +			DropRenderTarget();
@@ -32477,6 +34045,13 @@ index 1da0dcc..c03a028 100644
 +				}
 +				DropRenderTarget();
 +				KexDropPixmaps();	// KEX: pictures of the old kind can't be drawn with the new one
++#if defined(USE_D2D)
++				if (technologyNew == Technology::Default && kexGlassState == 1) {
++					KexGlassStop();	// KEX glass needs Direct2D
++				} else if (kexGlassState == 1) {
++					pDXGISwapChain = nullptr;
++				}
++#endif
 +				technology = technologyNew;
 +				view.bufferedDraw = technologyNew == Technology::Default;
 +				// Invalidate all cached information including layout.
@@ -32532,7 +34107,7 @@ index 1da0dcc..c03a028 100644
 +
 +		case 0x4B46: {	// SCI_KEX_SLIDE (KexScintilla.h)
 +				// KEX tab slide: the picture of what the view shows is taken now, before the document changes
-+				sptr_t started = Editor::WndProc(iMessage, wParam, lParam);
++				sptr_t started = ScintillaBase::WndProc(iMessage, wParam, lParam);
 +				if (started) {
 +					::UpdateWindow(MainHWND());
 +					if (kexSlideCapture) {
@@ -32542,6 +34117,23 @@ index 1da0dcc..c03a028 100644
 +				}
 +				return started;
 +			}
++
++#if defined(USE_D2D)
++		case SCI_KEX_GLASS:
++			if (wParam & KEXGLASS_ON)
++				return KexGlassStart(static_cast<int>(wParam), static_cast<int>(lParam)) ? 1 : 0;
++			KexGlassStop();
++			return 0;
++
++		case SCI_KEX_GETGLASS:
++			kexGlassInfo.state = kexGlassState;
++			if (KexGlassInfo *info = static_cast<KexGlassInfo *>(PtrFromSPtr(lParam)))
++				*info = kexGlassInfo;
++			return kexGlassState;
++
++		case SCI_KEX_GLASSTEST:
++			return KexGlassTestPaint(static_cast<KexGlassTest *>(PtrFromSPtr(lParam)));
++#endif
 +
 +		case WM_PRINTCLIENT: {
 +				HDC hdc = reinterpret_cast<HDC>(wParam);
@@ -33349,8 +34941,11 @@ index 1da0dcc..c03a028 100644
 +	}
 +
 +	if (hasUnicodeText) {
-+		UndoGroup ug(pdoc);
 +		const PasteShape pasteShape = isRectangular ? PasteShape::rectangular : (isLine ? PasteShape::line : PasteShape::stream);
++		// KEX: the text after the caret makes room for one pasted piece
++		const KexMotionScope kexScope(*this, (sel.Count() == 1 && pasteShape != PasteShape::rectangular && !putf.empty()) ?
++			KexMotionKind::paste : KexMotionKind::none);
++		UndoGroup ug(pdoc);
 +		ClearSelection(multiPasteMode == MultiPaste::Each);
 +		InsertPasteShape(putf, pasteShape);
 +	}
@@ -34380,6 +35975,207 @@ index 1da0dcc..c03a028 100644
 +extern "C" int Scintilla_ReleaseResources() {
 +	return Scintilla::Internal::ResourcesRelease(false);
 +}
+diff --git a/scintilla/win32/SurfaceD2D.cxx b/scintilla/win32/SurfaceD2D.cxx
+index de8b7ae..999f453 100644
+--- a/scintilla/win32/SurfaceD2D.cxx
++++ b/scintilla/win32/SurfaceD2D.cxx
+@@ -70,6 +70,7 @@ using Microsoft::WRL::ComPtr;
+ #if defined(USE_D2D)
+ #include "SurfaceD2D.h"
+ #endif
++#include "KexSurface.h"
+ 
+ // __uuidof is a Microsoft extension but makes COM code neater, so disable warning
+ #if defined(__clang__)
+@@ -306,7 +307,7 @@ constexpr D2D_COLOR_F ColorFromColourAlpha(ColourRGBA colour) noexcept {
+ 
+ class BlobInline;
+ 
+-class SurfaceD2D : public Surface, public ISetRenderingParams {
++class SurfaceD2D : public Surface, public ISetRenderingParams, public IKexSurface {
+ 	SurfaceMode mode;
+ 
+ 	// Text measuring surface: both pRenderTarget and pBitmapRenderTarget are null.
+@@ -323,7 +324,10 @@ class SurfaceD2D : public Surface, public ISetRenderingParams {
+ 	int logPixelsY = USER_DEFAULT_SCREEN_DPI;
+ 	int deviceScaleFactor = 1;
+ 	std::shared_ptr<RenderingParams> renderingParams;
++	int kexGlassKey = -1;	// KEX glass: this colour draws as nothing (KexSurface.h)
++	bool kexSharp = false;
+ 
++	[[nodiscard]] D2D_COLOR_F KexColour(ColourRGBA colour) const noexcept;
+ 	void Clear() noexcept;
+ 	void SetFontQuality(FontQuality extraFontFlag);
+ 	HRESULT GetBitmap(ID2D1Bitmap **ppBitmap);
+@@ -331,7 +335,8 @@ class SurfaceD2D : public Surface, public ISetRenderingParams {
+ 
+ public:
+ 	SurfaceD2D() noexcept = default;
+-	SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_) noexcept;
++	SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_,
++		int kexGlassKey_ = -1, bool kexSharp_ = false) noexcept;
+ 	// Deleted so SurfaceD2D objects can not be copied.
+ 	SurfaceD2D(const SurfaceD2D &) = delete;
+ 	SurfaceD2D(SurfaceD2D &&) = delete;
+@@ -399,9 +404,13 @@ public:
+ 	void FlushDrawing() override;
+ 
+ 	void SetRenderingParams(std::shared_ptr<RenderingParams> renderingParams_) override;
++
++	void KexSetGlass(int key, bool sharp) noexcept override;
++	void KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) override;
+ };
+ 
+-SurfaceD2D::SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_) noexcept {
++SurfaceD2D::SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_,
++	int kexGlassKey_, bool kexSharp_) noexcept : kexGlassKey(kexGlassKey_), kexSharp(kexSharp_) {
+ 	const D2D1_SIZE_F desiredSize = D2D1::SizeF(static_cast<float>(width), static_cast<float>(height));
+ 	D2D1_PIXEL_FORMAT desiredFormat;
+ #ifdef __MINGW32__
+@@ -409,13 +418,18 @@ SurfaceD2D::SurfaceD2D(ID2D1RenderTarget *pRenderTargetCompatible, int width, in
+ #else
+ 	desiredFormat = pRenderTargetCompatible->GetPixelFormat();
+ #endif
+-	desiredFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
++	// KEX glass: a picture with see-through pixels, starting fully see-through
++	desiredFormat.alphaMode = kexGlassKey >= 0 ? D2D1_ALPHA_MODE_PREMULTIPLIED : D2D1_ALPHA_MODE_IGNORE;
+ 	const HRESULT hr = pRenderTargetCompatible->CreateCompatibleRenderTarget(
+ 		&desiredSize, nullptr, &desiredFormat, D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE, pBitmapRenderTarget.GetAddressOf());
+ 	if (SUCCEEDED(hr)) {
+ 		pRenderTarget = pBitmapRenderTarget;
+ 		SetDeviceScaleFactor(pRenderTarget.Get());
+ 		pRenderTarget->BeginDraw();
++		if (kexGlassKey >= 0) {
++			const D2D1_COLOR_F clear{ 0.0f, 0.0f, 0.0f, 0.0f };
++			pRenderTarget->Clear(&clear);
++		}
+ 	}
+ 	mode = mode_;
+ 	logPixelsY = logPixelsY_;
+@@ -474,7 +488,7 @@ void SurfaceD2D::Init(SurfaceID sid, WindowID wid) {
+ }
+ 
+ std::unique_ptr<Surface> SurfaceD2D::AllocatePixMap(int width, int height) {
+-	std::unique_ptr<SurfaceD2D> surf = std::make_unique<SurfaceD2D>(pRenderTarget.Get(), width, height, mode, logPixelsY);
++	std::unique_ptr<SurfaceD2D> surf = std::make_unique<SurfaceD2D>(pRenderTarget.Get(), width, height, mode, logPixelsY, kexGlassKey, kexSharp);
+ 	surf->SetRenderingParams(renderingParams);
+ 	return surf;
+ }
+@@ -488,9 +502,15 @@ HRESULT SurfaceD2D::GetBitmap(ID2D1Bitmap **ppBitmap) {
+ 	return pBitmapRenderTarget->GetBitmap(ppBitmap);
+ }
+ 
++D2D_COLOR_F SurfaceD2D::KexColour(ColourRGBA colour) const noexcept {
++	if (kexGlassKey >= 0 && colour.OpaqueRGB() == kexGlassKey)
++		return D2D_COLOR_F{ 0.0f, 0.0f, 0.0f, 0.0f };	// KEX glass: the see-through colour
++	return ColorFromColourAlpha(colour);
++}
++
+ void SurfaceD2D::D2DPenColourAlpha(ColourRGBA fore) noexcept {
+ 	if (pRenderTarget) {
+-		const D2D_COLOR_F col = ColorFromColourAlpha(fore);
++		const D2D_COLOR_F col = KexColour(fore);
+ 		if (pBrush) {
+ 			pBrush->SetColor(col);
+ 		} else {
+@@ -505,7 +525,10 @@ void SurfaceD2D::D2DPenColourAlpha(ColourRGBA fore) noexcept {
+ void SurfaceD2D::SetFontQuality(FontQuality extraFontFlag) {
+ 	if ((fontQuality != extraFontFlag) && renderingParams) {
+ 		fontQuality = extraFontFlag;
+-		const D2D1_TEXT_ANTIALIAS_MODE aaMode = DWriteMapFontQuality(extraFontFlag);
++		D2D1_TEXT_ANTIALIAS_MODE aaMode = DWriteMapFontQuality(extraFontFlag);
++		if (kexGlassKey >= 0)	// KEX glass: ClearType needs a solid background
++			aaMode = kexSharp ? D2D1_TEXT_ANTIALIAS_MODE_ALIASED :
++				aaMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE ? D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE : aaMode;
+ 		if (aaMode == D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE && renderingParams->customRenderingParams) {
+ 			pRenderTarget->SetTextRenderingParams(renderingParams->customRenderingParams.Get());
+ 		} else if (renderingParams->defaultRenderingParams) {
+@@ -743,7 +766,7 @@ void SurfaceD2D::GradientRectangle(PRectangle rc, const std::vector<ColourStop>
+ 
+ 		std::vector<D2D1_GRADIENT_STOP> gradientStops;
+ 		for (const ColourStop &stop : stops) {
+-			gradientStops.push_back({ static_cast<FLOAT>(stop.position), ColorFromColourAlpha(stop.colour) });
++			gradientStops.push_back({ static_cast<FLOAT>(stop.position), KexColour(stop.colour) });
+ 		}
+ 		ComPtr<ID2D1GradientStopCollection> pGradientStops;
+ 		HRESULT hr = pRenderTarget->CreateGradientStopCollection(
+@@ -1597,6 +1620,26 @@ void SurfaceD2D::SetRenderingParams(std::shared_ptr<RenderingParams> renderingPa
+ 	renderingParams = std::move(renderingParams_);
+ }
+ 
++void SurfaceD2D::KexSetGlass(int key, bool sharp) noexcept {
++	kexGlassKey = key;
++	kexSharp = sharp;
++	fontQuality = invalidFontQuality;	// text smoothing is set again at the next text
++}
++
++void SurfaceD2D::KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) {
++	SurfaceD2D *other = dynamic_cast<SurfaceD2D *>(&picture);
++	if (!pRenderTarget || !other || !other->pBitmapRenderTarget)
++		return;
++	ComPtr<ID2D1Bitmap> pBitmap;
++	const HRESULT hr = other->GetBitmap(pBitmap.GetAddressOf());
++	if (SUCCEEDED(hr) && pBitmap) {
++		const D2D1_RECT_F rcDestination = RectangleFromPRectangle(dst);
++		const D2D1_RECT_F rcSource = RectangleFromPRectangle(from);
++		pRenderTarget->DrawBitmap(pBitmap.Get(), rcDestination, std::clamp(opacity, 0.0f, 1.0f),
++			D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, rcSource);
++	}
++}
++
+ #endif
+ 
+ }
+diff --git a/scintilla/win32/SurfaceGDI.cxx b/scintilla/win32/SurfaceGDI.cxx
+index 963d165..981141f 100644
+--- a/scintilla/win32/SurfaceGDI.cxx
++++ b/scintilla/win32/SurfaceGDI.cxx
+@@ -52,6 +52,7 @@
+ #include "WinTypes.h"
+ #include "PlatWin.h"
+ #include "SurfaceGDI.h"
++#include "KexSurface.h"
+ 
+ using namespace Scintilla;
+ using namespace Scintilla::Internal;
+@@ -128,7 +129,7 @@ struct FontGDI : public FontWin {
+ 	}
+ };
+ 
+-class SurfaceGDI : public Surface {
++class SurfaceGDI : public Surface, public IKexSurface {
+ 	SurfaceMode mode;
+ 	HDC hdc{};
+ 	bool hdcOwned = false;
+@@ -217,6 +218,9 @@ public:
+ 	void PopClip() override;
+ 	void FlushCachedState() override;
+ 	void FlushDrawing() override;
++
++	void KexSetGlass(int, bool) noexcept override {}	// glass draws with Direct2D only
++	void KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) override;
+ };
+ 
+ SurfaceGDI::SurfaceGDI(HDC hdcCompatible, int width, int height, SurfaceMode mode_, int logPixelsY_) noexcept {
+@@ -636,6 +640,18 @@ void SurfaceGDI::Stadium(PRectangle rc, FillStroke fillStroke, [[maybe_unused]]
+ 	RectangleDraw(rc, fillStroke);
+ }
+ 
++// KEX: a picture scaled and faded (the document fade when a tab closes)
++void SurfaceGDI::KexDrawPicture(PRectangle dst, Surface &picture, PRectangle from, float opacity) {
++	const SurfaceGDI *other = dynamic_cast<SurfaceGDI *>(&picture);
++	if (!other || !other->hdc || !hdc)
++		return;
++	const BLENDFUNCTION blend{ AC_SRC_OVER, 0, static_cast<BYTE>(std::clamp(opacity, 0.0f, 1.0f) * 255.0f + 0.5f), 0 };
++	::GdiAlphaBlend(hdc, static_cast<int>(std::round(dst.left)), static_cast<int>(std::round(dst.top)),
++		static_cast<int>(std::round(dst.Width())), static_cast<int>(std::round(dst.Height())),
++		other->hdc, static_cast<int>(from.left), static_cast<int>(from.top),
++		static_cast<int>(from.Width()), static_cast<int>(from.Height()), blend);
++}
++
+ void SurfaceGDI::Copy(PRectangle rc, Point from, Surface &surfaceSource) {
+ 	::BitBlt(hdc,
+ 		static_cast<int>(rc.left), static_cast<int>(rc.top),
 -- 
 2.43.0
 

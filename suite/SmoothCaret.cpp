@@ -23,8 +23,10 @@ public:
 
     void loadOptions() override
     {
-        _glideMs = std::max(0, std::min(1000, settings.getInt(key(), L"GlideMs", 80)));
+        _glideMs = std::min(1000, animMs(key(), kSpeedCaretGlide));
         _snapLines = std::max(1, std::min(255, settings.getInt(key(), L"SnapAfterLines", 12)));
+        _fadeMs = animMs(key(), kSpeedCaretFade);
+        static_assert(kSpeedCaretFade.baseMs * kSpeedStretchMax <= 0xFFF, "the slowest fade fits KEXCARET_FADEMS");
         // how it blinks: 0 fades, 1 on and off like Notepad++'s caret, 2 not at all (once a checkbox, FadeBlink)
         _blink = settings.getInt(key(), L"Blink", -1);
         if (_blink < 0 || _blink > 2)
@@ -89,12 +91,12 @@ public:
     LPARAM flags() const
     {
         return KEXCARET_ON | (_blink == 0 ? KEXCARET_FADE : 0) | (_blink == 2 ? KEXCARET_NOBLINK : 0) |
-               (_overtypeBlock ? KEXCARET_OVERTYPE_BLOCK : 0) | KEXCARET_SNAPLINES(_snapLines);
+               (_overtypeBlock ? KEXCARET_OVERTYPE_BLOCK : 0) | KEXCARET_SNAPLINES(_snapLines) | KEXCARET_FADEMS(_fadeMs);
     }
     int glideMs() const { return _glideMs; }
 
 private:
-    int _glideMs = 80, _snapLines = 12, _blink = 0;
+    int _glideMs = kSpeedCaretGlide.baseMs, _snapLines = 12, _blink = 0, _fadeMs = kSpeedCaretFade.baseMs;
     bool _overtypeBlock = true;
     std::vector<HWND> _applied;
 };
@@ -119,6 +121,7 @@ CaretStats caretStats()
     st.pushes = info.frames;
     st.workMs = info.workMs;
     st.alpha = info.alpha;
+    st.fadeMs = info.fadeMs;
     return st;
 }
 

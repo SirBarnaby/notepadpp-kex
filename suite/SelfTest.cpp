@@ -4,8 +4,11 @@
 // <testdir>\selftest-log.txt. "SHOT n name" lines ask the harness (test/run-selftest.sh) for a
 // screenshot; the step machine waits for <testdir>\ackN before going on.
 // Optional argument: KexSuite_testdir=C:\path (default: <plugin config dir>\KexSuite-selftest).
+// KexSuite_demo=all (or scene names) records the README's GIFs instead of testing (see addDemoSteps).
 #include "Overlay.h"
+#include "Effects.h"
 #include "KexSuiteRes.h"
+#include "KexScintilla.h"
 #include "preference_rc.h"
 #include "SciLexer.h"
 #include <functional>
@@ -13,6 +16,8 @@
 #include <cstdarg>
 #include <cwchar>
 #include <cmath>
+#include <utility>
+#include <atomic>
 
 namespace kex {
 
@@ -33,6 +38,28 @@ int g_globalModified = 0;
 HWND g_testWnd = nullptr;        // helper window: "another program" hotkey owner, menu tracking
 PROCESS_INFORMATION g_other{};    // Wine's notepad.exe, the "previously active window"
 HWND g_otherWnd = nullptr;
+std::string g_noteText;           // the quick note's text, put back after the indentation test
+RECT g_noteGlideMid{};             // where the note was partway through its glide back to the middle
+bool g_noteGlided = false;
+HWND g_testShell = nullptr;        // a stand-in for Explorer's desktop window under Wine
+
+// A plain window registered as the shell's desktop window, at the bottom of the windows, as Progman is.
+HWND makeTestShell()
+{
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = ::DefWindowProcW;
+    wc.hInstance = ::GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"KexTestShell";
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BACKGROUND + 1);
+    ::RegisterClassW(&wc);
+    HWND h = ::CreateWindowExW(0, wc.lpszClassName, L"Program Manager", WS_POPUP, 0, 0, ::GetSystemMetrics(SM_CXSCREEN),
+                               ::GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+    using SetShell = BOOL(WINAPI*)(HWND);
+    auto setShell = reinterpret_cast<SetShell>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "SetShellWindow")));
+    if (!h || !setShell || !setShell(h)) { if (h) ::DestroyWindow(h); return nullptr; }
+    ::SetWindowPos(h, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return h;
+}
 PROCESS_INFORMATION g_second{};   // second notepad++.exe
 const UINT WM_TEST_TRACKMENU = WM_APP + 501;
 int g_origCaretWidth = 1;
@@ -73,7 +100,9 @@ void pump(int ms)
     while (nowMs() < end)
     {
         MSG m;
-        while (::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
+        // everything waiting is handled, but a view that keeps asking to be painted never holds the step up for long
+        const double cap = nowMs() + 2000;
+        while (nowMs() < cap && ::PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
         {
             // as Notepad++'s own loop: a dialog's keys go to the dialog, the rest through Notepad++'s shortcuts
             HWND active = ::GetActiveWindow();
@@ -416,6 +445,66 @@ void removeDeskSession(const wchar_t* id)
 
 POINT g_hoverPoint{};   // a point on the first tab while F12 shows the tab bar
 int g_slideDir = 0, g_slideBefore = 0, g_slideFrames = 0;   // the tab slide steps
+TabMotionStats g_motion;    // the tab fold and save glint steps
+int g_slideCloses = 0, g_closedIdx = -1;
+int g_fadeSlides = 0;       // core slides counted before a tab is closed
+int g_swipeIdx = 0;                        // the tab the swipe steps start from
+SwipeStats g_swipeBefore;
+std::vector<intptr_t> g_swipeOrder;        // the tabs in Ctrl+Tab order before a swipe
+
+// a two-finger swipe as Windows sends it: WM_MOUSEHWHEEL over the view (or its tab bar), in small steps.
+// units > 0 move toward the tab on the right with Windows' default touchpad setting (the content follows
+// the fingers, so the fingers moving right scroll left: a negative delta).
+void swipeBy(HWND target, int units, int step = 40, int gapMs = 4)
+{
+    RECT r; ::GetWindowRect(target, &r);
+    const POINT pt{ (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
+    for (int done = 0; done < std::abs(units);)
+    {
+        const int d = std::min(step, std::abs(units) - done);
+        done += d;
+        const short delta = static_cast<short>(units > 0 ? -d : d);
+        ::SendMessageW(target, WM_MOUSEHWHEEL, MAKEWPARAM(0, static_cast<WORD>(delta)), MAKELPARAM(pt.x, pt.y));
+        pump(gapMs);
+    }
+}
+// the same over the active tab of view 0's tab bar, where the pointer would be
+std::wstring g_underTab;
+void swipeOverTab(int units)
+{
+    HWND bar = views.tabBar(0);
+    RECT r{};
+    ::SendMessageW(bar, TCM_GETITEMRECT, ::SendMessageW(bar, TCM_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(&r));
+    ::MapWindowPoints(bar, nullptr, reinterpret_cast<POINT*>(&r), 2);
+    const POINT pt{ (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
+    wchar_t cls[64] = {};
+    ::GetClassNameW(kexsuite::windowFromPoint(pt), cls, 63);
+    g_underTab = cls;
+    for (int done = 0; done < std::abs(units); done += 40)
+    {
+        const short delta = static_cast<short>(units > 0 ? -40 : 40);
+        ::SendMessageW(bar, WM_MOUSEHWHEEL, MAKEWPARAM(0, static_cast<WORD>(delta)), MAKELPARAM(pt.x, pt.y));
+        pump(4);
+    }
+}
+// the buffers of every view, most recent first (Ctrl+Tab order)
+std::vector<intptr_t> recentOrder()
+{
+    std::vector<std::pair<long, intptr_t>> all;
+    for (int v = 0; v < views.count(); ++v)
+        for (int i = 0, n = views.nbFiles(v); i < n; ++i)
+        {
+            const intptr_t b = views.bufferId(v, i);
+            all.push_back({ static_cast<long>(nppMsg(NPPM_KEX_RECENTTAG, static_cast<WPARAM>(b), 0)), b });
+        }
+    std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<intptr_t> out;
+    for (const auto& a : all) out.push_back(a.second);
+    return out;
+}
+MotionStats g_motionBefore;   // the editor's motion counts before a step
+RECT g_rgWindow{};            // Notepad++'s window before a regression step made it narrow
+HotkeyStats g_zoomBefore;     // the quick note's zoom counts before a step
 std::string g_flashText;   // a.cpp before the flash steps edit it
 bool g_flashModified = false;
 
@@ -592,11 +681,12 @@ int pressHotkey()
     return 0;
 }
 
-// The on/off tick of a feature on its Preferences page, clicked the way the user does it.
-const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN };
+// The on/off tick of a feature on its KEX Settings page, clicked the way the user does it.
+const int kEnableBox[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
+                                  IDC_F_EN, IDC_GL_EN, IDC_M_EN };
 HWND enableBox(int module)
 {
-    if (!prefPage(pageOfModule(module))) { openPreferences(); pump(300); }
+    if (!prefPage(pageOfModule(module))) { openSettings(); pump(300); }
     HWND p = prefPage(pageOfModule(module));
     return p ? ::GetDlgItem(p, kEnableBox[module]) : nullptr;
 }
@@ -608,15 +698,17 @@ void clickEnable(int module)
     ::SendMessageW(::GetParent(b), WM_COMMAND, MAKEWPARAM(kEnableBox[module], BN_CLICKED), reinterpret_cast<LPARAM>(b));
 }
 bool enableTicked(int module) { HWND b = enableBox(module); return b && ::SendMessageW(b, BM_GETCHECK, 0, 0) == BST_CHECKED; }
-HWND prefDialog() { HWND p = prefPage(0); return p ? ::GetParent(p) : nullptr; }
+HWND prefDialog() { return settingsDialog(); }
+// a page of the KEX Settings window picked in its list, as the user does (the window opens first if it isn't)
 void showPrefPage(const wchar_t* name)
 {
-    HWND d = prefDialog();
+    if (!settingsDialog()) { openSettings(); pump(300); }
+    HWND d = settingsDialog();
     if (!d) return;
-    HWND list = ::GetDlgItem(d, IDC_LIST_DLGTITLE);
+    HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
     LRESULT i = ::SendMessageW(list, LB_FINDSTRINGEXACT, static_cast<WPARAM>(-1), reinterpret_cast<LPARAM>(name));
     ::SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(i), 0);
-    ::SendMessageW(d, WM_COMMAND, MAKEWPARAM(IDC_LIST_DLGTITLE, LBN_SELCHANGE), reinterpret_cast<LPARAM>(list));
+    ::SendMessageW(d, WM_COMMAND, MAKEWPARAM(IDC_KEX_PAGELIST, LBN_SELCHANGE), reinterpret_cast<LPARAM>(list));
 }
 std::wstring itemText(HWND page, int id) { wchar_t t[256] = {}; if (page) ::GetDlgItemTextW(page, id, t, 255); return t; }
 
@@ -715,12 +807,20 @@ void dragEnd()
 COLORREF g_glassBack[4] = {};
 int g_glassTech[4] = {}, g_glassQuality[4] = {};
 const UINT WM_UPDATESCINTILLAS_ = WM_USER + 5000 + 1;   // WordStyleDlg.h: Style Configurator's "apply"
-HWND glassCatcherOf(HWND host)
+HWND catcherTitled(HWND host, const wchar_t* title)
 {
     HWND h = nullptr;
-    while ((h = ::FindWindowExW(nullptr, h, L"KexGlassCatcher", nullptr)) != nullptr)
+    while ((h = ::FindWindowExW(nullptr, h, L"KexGlassCatcher", title)) != nullptr)
         if (reinterpret_cast<HWND>(::GetWindowLongPtrW(h, GWLP_USERDATA)) == host) return h;
     return nullptr;
+}
+HWND glassCatcherOf(HWND host) { return catcherTitled(host, L"KEX glass"); }
+HWND glassBlurCatcherOf(HWND host) { return catcherTitled(host, L"KEX glass (moving)"); }   // acrylic: the plain blur that moves instead
+int viewCount()
+{
+    int n = 0;
+    for (int v = 0; v < views.count(); ++v) if (views.sci(v)) ++n;
+    return n;
 }
 bool keyedWith(HWND w, COLORREF* key)
 {
@@ -876,9 +976,83 @@ std::vector<int> stylesOf(HWND s)
     return v;
 }
 
+using StepAdder = std::function<void(std::function<int()>)>;   // adds one step
+void addRegressionSteps(const StepAdder& add);
+void addMotionCostSteps(const StepAdder& add);
+
+// More tabs than the tab bar has room for: it shows its scroll arrows.
+std::wstring overflowTabName(int i)
+{
+    wchar_t n[64]; swprintf(n, 64, L"a-tab-with-a-rather-long-name-%02d.txt", i);
+    return n;
+}
+void openOverflowTabs()
+{
+    for (int i = 1; i <= 16; ++i)
+    {
+        const std::wstring n = overflowTabName(i);
+        writeFile(path(n.c_str()), "overflow\r\n");
+        open(n.c_str());
+    }
+}
+bool tabArrowsShown(HWND bar)
+{
+    HWND ud = ::FindWindowExW(bar, nullptr, UPDOWN_CLASSW, nullptr);
+    return ud && ::IsWindowVisible(ud);
+}
+// the current view's tab motion at 10, 30, 50, 70 and 90 %, saved for a look at it (frame-<what>-N0.bmp); then held half-way
+void saveTabFrames(const wchar_t* what)
+{
+    for (int k = 1; k <= 9; k += 2)
+    {
+        tabMotionTestFreeze(k / 10.0);
+        pump(60);
+        wchar_t n[64]; swprintf(n, 64, L"frame-%ls-%d0.bmp", what, k);
+        tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(n));
+    }
+    tabMotionTestFreeze(0.5);
+    pump(60);
+}
+
+// a number typed into a box of a KEX Settings page (or the window), taken as it is half a second after the last keystroke
+void typeNumber(HWND page, int id, int value)
+{
+    if (!page) return;
+    ::SetDlgItemInt(page, id, static_cast<UINT>(value), FALSE);
+    ::SendMessageW(page, WM_TIMER, 1, 0);
+}
+
+// The animations that followed only the speed for all until each got a speed box of its own.
+struct SpeedBox { int module; int id; };
+const SpeedBox kOwnSpeeds[] = { { M_LETTERS, IDC_L_SPEED }, { M_CARET, IDC_C_FADE }, { M_SNAP, IDC_S_SPEED }, { M_SWIPE, IDC_SW_MS },
+                                { M_HOTKEY, IDC_H_FADEMS }, { M_HOTKEY, IDC_H_GLIDEMS }, { M_FLASH, IDC_E_MS }, { M_SPLASH, IDC_P_MS } };
+bool g_ownSpeedTurnedOn[M_COUNT] = {};   // the features the steps switched on for them
+// typed into every one of those boxes, a page at a time (taking one page's boxes fills every page again)
+void typeOwnSpeeds(int percent)
+{
+    for (int page : { PAGE_EDITING, PAGE_TABS, PAGE_NOTE, PAGE_EFFECTS })
+    {
+        HWND p = prefPage(page);
+        if (!p) continue;
+        for (const SpeedBox& b : kOwnSpeeds)
+            if (pageOfModule(b.module) == page) ::SetDlgItemInt(p, b.id, static_cast<UINT>(percent), FALSE);
+        ::SendMessageW(p, WM_TIMER, 1, 0);
+    }
+}
+// their times now (ms), as the features use them
+struct OwnTimes {
+    int caretFade, snapGlide, swipeSettle, noteFade, noteGlide;
+    bool operator==(const OwnTimes&) const = default;
+};
+OwnTimes ownTimes()
+{
+    const HotkeyStats hs = hotkeyStats();
+    return OwnTimes{ caretStats().fadeMs, snapStats().glideMs, swipeStats().settleMs, hs.fadeMs, hs.glideMs };
+}
+
 void buildSteps()
 {
-    auto add = [](std::function<int()> f) { g_steps.push_back(f); };
+    auto add = [](std::function<int()> f) { g_steps.push_back(std::move(f)); };
 
     // ---- setup ---------------------------------------------------------------------------
     add([] {
@@ -918,49 +1092,86 @@ void buildSteps()
         return 600;
     });
 
-    // ---- the KEX group in the Settings menu, and the Preferences pages ------------------------
+    // ---- the KEX menu in the menu bar, and the KEX Settings window ---------------------------------
     add([] {
         HMENU mm = reinterpret_cast<HMENU>(nppMsg(NPPM_GETMENUHANDLE, NPPMAINMENU, 0));
-        HMENU sm = subWith(mm, IDM_SETTING_PREFERENCE);
-        const int n = sm ? ::GetMenuItemCount(sm) : 0;
-        static const wchar_t* const kNames[PAGE_COUNT] = { L"KEX Editing", L"KEX Tabs", L"KEX Windows", L"KEX Highlighting", L"KEX Quick Note", L"KEX Effects" };
-        bool group = n > PAGE_COUNT && (::GetMenuState(sm, n - PAGE_COUNT - 1, MF_BYPOSITION) & MF_SEPARATOR);
+        HMENU km = kexMenu();
+        int at = -1;
+        for (int i = 0, n = ::GetMenuItemCount(mm); i < n; ++i) if (km && ::GetSubMenu(mm, i) == km) at = i;
+        wchar_t top[64] = {}, plugins[64] = {}, window[64] = {};
+        ::GetMenuStringW(mm, at, top, 63, MF_BYPOSITION);
+        ::GetMenuStringW(mm, at - 1, plugins, 63, MF_BYPOSITION);
+        ::GetMenuStringW(mm, at + 1, window, 63, MF_BYPOSITION);
+        check(at == 11 && wcscmp(top, L"&KEX") == 0 && ::GetSubMenu(mm, at - 1) == reinterpret_cast<HMENU>(nppMsg(NPPM_GETMENUHANDLE, NPPPLUGINMENU, 0))
+              && wcscmp(window, L"&Window") == 0 && menuHasId(::GetSubMenu(mm, at + 1), IDM_WINDOW_WINDOWS), L"M1",
+              L"the menu bar has its own KEX menu, item %d, between \"%ls\" and \"%ls\"", at + 1, plugins, window);
+        const int n = km ? ::GetMenuItemCount(km) : 0;
+        bool group = n == PAGE_COUNT + 2 && (::GetMenuState(km, PAGE_COUNT, MF_BYPOSITION) & MF_SEPARATOR) && ::GetMenuItemID(km, n - 1) == IDM_SETTING_KEX;
         std::wstring names, items;
         for (int p = 0; p < PAGE_COUNT && group; ++p)
         {
             wchar_t t[64] = {};
-            ::GetMenuStringW(sm, n - PAGE_COUNT + p, t, 63, MF_BYPOSITION);
-            HMENU sub = ::GetSubMenu(sm, n - PAGE_COUNT + p);
+            ::GetMenuStringW(km, p, t, 63, MF_BYPOSITION);
+            HMENU sub = ::GetSubMenu(km, p);
             int switches = 0, onPage = 0;
             for (int i = 0; i < M_COUNT; ++i)
                 if (pageOfModule(i) == p) { ++onPage; if (menuHasId(sub, settingsSwitchId(i))) ++switches; }
             const int last = sub ? ::GetMenuItemCount(sub) - 1 : -1;
-            if (!sub || sub != settingsSubmenu(p) || wcscmp(t, kNames[p]) || switches != onPage
+            if (!sub || sub != settingsSubmenu(p) || wcscmp(t, pageTitle(p)) || switches != onPage
                 || ::GetMenuItemID(sub, last) != settingsPreferencesId(p)) group = false;
             names += (p ? L", " : L"") + std::wstring(t);
             items += (p ? L" / " : L"") + std::to_wstring(switches) + L"+1";
         }
-        check(group, L"M1", L"the Settings menu ends with the KEX group: %ls (feature switches + Preferences...: %ls)", names.c_str(), items.c_str());
-        int import = -1;
-        for (int i = 0; i < n; ++i)
+        check(group, L"M1a", L"the KEX menu: %ls (feature switches + Settings...: %ls), a line, Settings...", names.c_str(), items.c_str());
+        HMENU sm = subWith(mm, IDM_SETTING_PREFERENCE);
+        int import = -1, kexInSettings = 0;
+        for (int i = 0, c = sm ? ::GetMenuItemCount(sm) : 0; i < c; ++i)
+        {
             if (HMENU sub = ::GetSubMenu(sm, i)) if (menuHasId(sub, IDM_SETTING_IMPORTPLUGIN)) import = i;
-        check(import == 4 && !menuHasId(mm, IDM_SETTING_KEX), L"M1b",
-              L"Notepad++'s own Settings items keep their places (Import is item %d, as upstream) and the old KEX Features item is gone", import + 1);
+            wchar_t t[64] = {}; ::GetMenuStringW(sm, i, t, 63, MF_BYPOSITION);
+            if (wcsstr(t, L"KEX")) ++kexInSettings;
+        }
+        check(import == 4 && kexInSettings == 0 && !menuHasId(sm, IDM_SETTING_KEX), L"M1b",
+              L"Notepad++'s Settings menu is as upstream again: Import is item %d, nothing KEX in it", import + 1);
         HMENU pm = reinterpret_cast<HMENU>(nppMsg(NPPM_GETMENUHANDLE, NPPPLUGINMENU, 0));
         bool inPlugins = false;
-        for (int i = 0, n = ::GetMenuItemCount(pm); i < n; ++i)
+        for (int i = 0, c = ::GetMenuItemCount(pm); i < c; ++i)
         {
             wchar_t p[128] = {}; ::GetMenuStringW(pm, i, p, 127, MF_BYPOSITION);
             if (wcsstr(p, L"KEX")) inPlugins = true;
         }
         check(!inPlugins, L"M2", L"nothing KEX left in the Plugins menu (the suite is built in)");
         focusEditor();
-        ::PostMessageW(npp._nppHandle, WM_SYSCOMMAND, SC_KEYMENU, 't');   // open Settings from the menu bar
+        ::PostMessageW(npp._nppHandle, WM_SYSCOMMAND, SC_KEYMENU, 'k');   // open KEX from the menu bar (Alt+K)
         return 500;
     });
-    add([] { tap(VK_UP); tap(VK_UP); tap(VK_UP); tap(VK_RIGHT); return 500; });   // up to KEX Windows, and open it
-    add([] { return shot(L"menu-settings-kex"); });
+    add([] { tap(VK_DOWN); tap(VK_DOWN); tap(VK_RIGHT); return 500; });   // down to Windows, and open it
+    add([] { return shot(L"menu-kex"); });
     add([] { ::EndMenu(); return 300; });
+    add([] {
+        // Notepad++'s own Preferences: no KEX pages any more
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_SETTING_PREFERENCE);
+        pump(400);
+        HWND pref = nullptr;
+        for (HWND w = ::GetWindow(::GetDesktopWindow(), GW_CHILD); w && !pref; w = ::GetWindow(w, GW_HWNDNEXT))
+        {
+            wchar_t t[64] = {};
+            if (::GetWindow(w, GW_OWNER) == npp._nppHandle && ::GetWindowTextW(w, t, 63) && wcscmp(t, L"Preferences") == 0) pref = w;
+        }
+        HWND list = pref ? ::GetDlgItem(pref, IDC_LIST_DLGTITLE) : nullptr;
+        const int c = list ? static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0)) : 0;
+        int kexPages = 0;
+        for (int i = 0; i < c; ++i)
+        {
+            wchar_t t[128] = {};
+            if (::SendMessageW(list, LB_GETTEXTLEN, i, 0) < 127) ::SendMessageW(list, LB_GETTEXT, i, reinterpret_cast<LPARAM>(t));
+            if (wcsstr(t, L"KEX")) ++kexPages;
+        }
+        check(pref && c > 10 && kexPages == 0, L"M1c", L"Settings > Preferences is Notepad++'s own again: %d pages, none of them KEX", c);
+        if (pref) ::SendMessageW(pref, WM_COMMAND, IDCANCEL, 0);
+        focusEditor();
+        return 300;
+    });
     add([] {
         // the switches show what runs; picking one switches the feature and stores it, as the Preferences tick does
         bool marks = true;
@@ -972,7 +1183,7 @@ void buildSteps()
                 if (pageOfModule(i) == p && ((::GetMenuState(sub, settingsSwitchId(i), MF_BYCOMMAND) & MF_CHECKED) != 0) != modules[i]->isEnabled())
                     marks = false;
         }
-        check(marks, L"M3", L"each feature's switch in the KEX submenus is ticked exactly when the feature runs");
+        check(marks, L"M3", L"each feature's switch in the KEX menu is ticked exactly when the feature runs");
         const bool was = modules[M_CARET]->isEnabled();
         ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsSwitchId(M_CARET), 0);
         const bool flipped = modules[M_CARET]->isEnabled() != was;
@@ -980,15 +1191,26 @@ void buildSteps()
         ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsSwitchId(M_CARET), 0);
         const int back = settings.getInt(modules[M_CARET]->key(), L"Enabled", -1);
         check(flipped && stored == (was ? 0 : 1) && modules[M_CARET]->isEnabled() == was && back == (was ? 1 : 0), L"M4",
-              L"Settings > KEX Editing > Smooth caret switches it %ls and back, and remembers it (stored %d, then %d)", was ? L"off" : L"on", stored, back);
+              L"KEX > Editing > Smooth caret switches it %ls and back, and remembers it (stored %d, then %d)", was ? L"off" : L"on", stored, back);
         ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsPreferencesId(PAGE_TABS), 0);
         pump(300);
         HWND d = prefDialog(), p = prefPage(PAGE_TABS);
-        check(d && ::IsWindowVisible(d) && p && ::IsWindowVisible(p), L"M5", L"Settings > KEX Tabs > Preferences... opens Preferences on the \"KEX Tabs\" page");
+        wchar_t cap[64] = {};
+        if (d) ::GetWindowTextW(d, cap, 63);
+        check(d && ::IsWindowVisible(d) && p && ::IsWindowVisible(p) && wcscmp(cap, L"KEX Settings") == 0 && ::GetWindow(d, GW_OWNER) == npp._nppHandle
+              && ::SendDlgItemMessageW(d, IDC_KEX_PAGELIST, LB_GETCURSEL, 0, 0) == PAGE_TABS, L"M5",
+              L"KEX > Tabs > Settings... opens the \"%ls\" window on its \"Tabs\" page", cap);
+        ::SendMessageW(d, WM_COMMAND, IDCANCEL, 0);
+        pump(200);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_SETTING_KEX);
+        pump(300);
+        check(prefDialog() && prefPage(PAGE_TABS) && ::IsWindowVisible(prefPage(PAGE_TABS)), L"M6",
+              L"KEX > Settings... opens it again on the page shown last");
+        ::SendMessageW(prefDialog(), WM_COMMAND, IDCANCEL, 0);
         focusEditor();
         return 300;
     });
-    // ---- the name "Notepad++ KEX" and the badged icon ----------------------------------------
+    // ---- the name "Notepad++ KEX" and the KEX icon -------------------------------------------
     add([] {
         wchar_t cls[32] = {};
         ::GetClassNameW(npp._nppHandle, cls, 31);
@@ -998,11 +1220,14 @@ void buildSteps()
         const std::wstring desc = exeVersionString(L"FileDescription"), product = exeVersionString(L"ProductName");
         check(desc == L"Notepad++ KEX" && product == L"Notepad++ KEX", L"B2",
               L"notepad++.exe describes itself as \"%ls\" (product \"%ls\"), the name the taskbar and Task Manager show", desc.c_str(), product.c_str());
-        // the badge: a violet-blue disc in the bottom-right corner, here outside its white sparkle
+        // the KEX logo: at 32 px Notepad++'s own icon has a dark "N" at (9,9) where the KEX logo's page is white,
+        // and the corner at (21,27) is the logo's green grass (the old badge there was violet-blue)
         HICON icon = reinterpret_cast<HICON>(::GetClassLongPtrW(npp._nppHandle, GCLP_HICON));
-        COLORREF c = icon ? iconPixel(icon, 21, 27) : 0;
-        const int r = GetRValue(c), g = GetGValue(c), b = GetBValue(c);
-        check(icon && b > 180 && b - g > 70 && r > g, L"B3", L"the app icon carries the KEX badge (32 px icon at 21,27: rgb %d,%d,%d)", r, g, b);
+        const COLORREF page = icon ? iconPixel(icon, 9, 9) : 0, grass = icon ? iconPixel(icon, 21, 27) : 0;
+        const int pr = GetRValue(page), pg = GetGValue(page), pb = GetBValue(page);
+        const int gr = GetRValue(grass), gg = GetGValue(grass), gb = GetBValue(grass);
+        check(icon && std::min({ pr, pg, pb }) > 220 && gg > gr + 60 && gg > gb + 60, L"B3",
+              L"the app icon is the KEX logo (32 px icon: page at 9,9 rgb %d,%d,%d; grass at 21,27 rgb %d,%d,%d)", pr, pg, pb, gr, gg, gb);
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_ABOUT);
         return 600;
     });
@@ -1044,28 +1269,28 @@ void buildSteps()
         bool ticks = true;
         for (int i = 0; i < M_COUNT; ++i) if (enableTicked(i) != modules[i]->isEnabled()) ticks = false;
         check(d && ::IsWindowVisible(d) && p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_TABS)), L"P1",
-              L"Settings > KEX Editing > Preferences... opens Preferences on the \"KEX Editing\" page");
+              L"KEX > Editing > Settings... shows the \"Editing\" page");
         check(ticks, L"P2", L"the on/off ticks on both pages match the running features");
         tlog(L"INFO page summary: \"%ls\"", itemText(p, IDC_SUMMARY).c_str());
         return 300;
     });
     add([] { return shot(L"preferences-kex-editing"); });
     add([] {
-        showPrefPage(L"KEX Quick Note");
+        showPrefPage(L"Quick Note");
         pump(200);
         HWND p = prefPage(PAGE_NOTE);
         std::wstring k = itemText(p, IDC_H_KEYSTATUS);
-        check(p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_EDITING)), L"P3", L"\"KEX Quick Note\" page shows when picked in the list");
+        check(p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_EDITING)), L"P3", L"\"Quick Note\" page shows when picked in the list");
         check(k.find(L"works") != std::wstring::npos, L"P4", L"the page reports the quick note hotkey: \"%ls\"", k.c_str());
         return 300;
     });
     add([] { return shot(L"preferences-kex-quicknote"); });
     add([] {
-        showPrefPage(L"KEX Tabs");
+        showPrefPage(L"Tabs");
         pump(200);
         HWND p = prefPage(PAGE_TABS);
         check(p && ::IsWindowVisible(p) && !::IsWindowVisible(prefPage(PAGE_NOTE)) && ::IsDlgButtonChecked(p, IDC_S_EN) == BST_CHECKED,
-            L"P3b", L"\"KEX Tabs\" page shows tab snapping (on) and F12 hover tabs: \"%ls\"", itemText(p, IDC_S_STATUS).c_str());
+            L"P3b", L"\"Tabs\" page shows tab snapping (on) and F12 hover tabs: \"%ls\"", itemText(p, IDC_S_STATUS).c_str());
         return 300;
     });
     add([] { return shot(L"preferences-kex-tabs"); });
@@ -1099,7 +1324,7 @@ void buildSteps()
         pump(800);
         ::SendMessageW(prefDialog(), WM_COMMAND, IDCANCEL, 0);
         pump(200);
-        check(!::IsWindowVisible(prefDialog()), L"P9", L"Preferences closes");
+        check(!prefDialog(), L"P9", L"the KEX Settings window closes");
         focusEditor();
         return 300;
     });
@@ -1723,9 +1948,26 @@ void buildSteps()
         HWND q = quickNoteWindow();
         bool lostFocus = ::GetForegroundWindow() == g_otherWnd;
         pressHotkey();
-        check(q && lostFocus && quickNoteWindow() == q && ::GetForegroundWindow() == q, L"Q7", L"hotkey while the note is open but not in front: brought to front, not hidden");
+        pump(200);
+        check(q && lostFocus && !quickNoteWindow() && !::FindWindowW(L"KexQuickNote", nullptr) && ::GetForegroundWindow() == g_otherWnd, L"Q7",
+            L"clicked away, note still on screen: one press hides it and the other program keeps the focus");
+        // "Always on top" off and the note fully covered: the press brings it back instead
+        const wchar_t* k = modules[M_HOTKEY]->key();
+        settings.setInt(k, L"OnTop", 0); modules[M_HOTKEY]->loadOptions();
         pressHotkey();
-        check(!quickNoteWindow(), L"Q8", L"and the next press hides it");
+        q = quickNoteWindow();
+        RECT nr{}; if (q) ::GetWindowRect(q, &nr);
+        RECT orig{}; ::GetWindowRect(g_otherWnd, &orig);
+        ::SetWindowPos(g_otherWnd, HWND_TOP, nr.left - 30, nr.top - 30, nr.right - nr.left + 60, nr.bottom - nr.top + 60, 0);
+        ::SetForegroundWindow(g_otherWnd);
+        pump(250);
+        pressHotkey();
+        bool broughtBack = q && quickNoteWindow() == q && ::GetForegroundWindow() == q;
+        pressHotkey();
+        pump(200);
+        check(broughtBack && !quickNoteWindow(), L"Q8", L"covered by another window: a press brings it to front, the next hides it");
+        settings.setInt(k, L"OnTop", 1); modules[M_HOTKEY]->loadOptions();
+        ::MoveWindow(g_otherWnd, orig.left, orig.top, orig.right - orig.left, orig.bottom - orig.top, TRUE);
         ::ShowWindow(npp._nppHandle, SW_RESTORE);
         focusEditor();
         pump(200);
@@ -1802,6 +2044,225 @@ void buildSteps()
         ::ShowWindow(npp._nppHandle, SW_RESTORE);
         focusEditor();
         return until([] { return lettersStats().live == 0; }, 6000);
+    });
+    add([] {
+        // Enter keeps the indentation of the line above, tabs as tabs and spaces as spaces
+        tlog(L"INFO Notepad++ auto-indent on: %d", static_cast<int>(nppMsg(NPPM_ISAUTOINDENTON, 0, 0)));
+        pressHotkey();
+        pump(250);
+        HWND ed = quickNoteEditor();
+        if (!ed) { check(false, L"Q17", L"the note opens for the indentation test"); return 100; }
+        g_noteText = docText(ed);
+        sci(ed, SCI_SETEOLMODE, SC_EOL_LF);
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>("\tabc"));
+        sci(ed, SCI_DOCUMENTEND);
+        const int before = hotkeyStats().indents;
+        tap(VK_RETURN);
+        tap('X');
+        pump(100);
+        sci(ed, SCI_NEWLINE);   // the path Notepad++'s own Enter takes, as a second way in
+        pump(100);
+        const std::string tabs = docText(ed);
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>("    def f():"));
+        sci(ed, SCI_DOCUMENTEND);
+        tap(VK_RETURN);
+        pump(100);
+        const std::string spaces = docText(ed);
+        // Enter in the middle of the blanks: the new line gets the line above's indentation, not more
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>("\t\tx"));
+        sci(ed, SCI_GOTOPOS, 1);
+        tap(VK_RETURN);
+        pump(100);
+        const std::string middle = docText(ed);
+        check(tabs == "\tabc\n\tx\n\t" && spaces == "    def f():\n    " && middle == "\t\n\tx" && hotkeyStats().indents - before == 4, L"Q17",
+              L"Enter in the note keeps the line above's indentation: tabs %ls, spaces %ls, from inside the blanks %ls (%d kept)",
+              tabs == "\tabc\n\tx\n\t" ? L"ok" : L"WRONG", spaces == "    def f():\n    " ? L"ok" : L"WRONG", middle == "\t\n\tx" ? L"ok" : L"WRONG",
+              hotkeyStats().indents - before);
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(g_noteText.c_str()));
+        return 100;
+    });
+    add([] {
+        // the pin on the top strip: pins the note where it is; pinned, it sends it back to the middle
+        const wchar_t* k = modules[M_HOTKEY]->key();
+        HWND q = quickNoteWindow();
+        if (!q) { check(false, L"Q18", L"the note is open for the pin test"); return 100; }
+        ::SetWindowPos(q, nullptr, 80, 70, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        pump(50);
+        const RECT pin = quickNotePinRect();
+        RECT r{}; ::GetWindowRect(q, &r);
+        const POINT pc{ (pin.left + pin.right) / 2, (pin.top + pin.bottom) / 2 };
+        const int onPin = static_cast<int>(::SendMessageW(q, WM_NCHITTEST, 0, MAKELPARAM(pc.x, pc.y)));
+        const int strip = static_cast<int>(::SendMessageW(q, WM_NCHITTEST, 0, MAKELPARAM(pin.left - 20, pc.y)));
+        check(pin.right > pin.left && pin.right <= r.right && pin.top >= r.top && pin.bottom - r.top <= 30 && onPin == HTCLIENT && strip == HTCAPTION, L"Q18",
+              L"the pin sits on the top strip at the right %ls: a button there (%d), the strip beside it still moves the note (%d)",
+              rectStr(pin).c_str(), onPin, strip);
+        const int pins = hotkeyStats().pins;
+        clickAt(pc.x, pc.y);
+        waitFor([pins] { return hotkeyStats().pins != pins; }, 1500);   // letters may still be falling from Q14: the click can take a while
+        pump(50);
+        check(hotkeyStats().pins == pins + 1 && settings.getInt(k, L"RememberPlace", 0) == 1 && settings.getInt(k, L"X", 0) == 80 &&
+              settings.getInt(k, L"Y", 0) == 70 && ::GetFocus() == quickNoteEditor(), L"Q19",
+              L"clicking the pin pins the note at 80,70 (\"Open where I left it\" on), the typing focus stays in the note");
+        return shot(L"quick-note-pinned");
+    });
+    add([] {
+        pressHotkey();
+        pump(250);
+        pressHotkey();
+        pump(250);
+        HWND q = quickNoteWindow();
+        RECT r{}; if (q) ::GetWindowRect(q, &r);
+        check(q && r.left == 80 && r.top == 70, L"Q20", L"pinned: hidden and shown again, it comes back at %ls", rectStr(r).c_str());
+        const int resets = hotkeyStats().resets;
+        const RECT pin = quickNotePinRect();
+        clickAt((pin.left + pin.right) / 2, (pin.top + pin.bottom) / 2);
+        pump(80);
+        RECT mid{}; if (q) ::GetWindowRect(q, &mid);
+        g_noteGlideMid = mid;
+        g_noteGlided = quickNoteGliding();
+        return until([] { return !quickNoteGliding(); }, 2000);
+    });
+    add([] {
+        const wchar_t* k = modules[M_HOTKEY]->key();
+        HWND q = quickNoteWindow();
+        RECT r{}; if (q) ::GetWindowRect(q, &r);
+        MONITORINFO mi{ sizeof(mi) }; ::GetMonitorInfoW(::MonitorFromWindow(q, MONITOR_DEFAULTTONEAREST), &mi);
+        const int cx = (mi.rcWork.left + mi.rcWork.right) / 2 - (r.left + r.right) / 2, cy = (mi.rcWork.top + mi.rcWork.bottom) / 2 - (r.top + r.bottom) / 2;
+        const bool between = g_noteGlideMid.left > 80 && g_noteGlideMid.left < r.left;
+        check(q && g_untilOk && g_noteGlided && between && std::abs(cx) <= 1 && std::abs(cy) <= 1 && hotkeyStats().resets >= 1 &&
+              settings.getInt(k, L"RememberPlace", 1) == 0, L"Q21",
+              L"clicking it again: the note glides back to the middle (at %d px partway, off by %d,%d at the end) and is unpinned",
+              g_noteGlideMid.left, cx, cy);
+        pressHotkey();
+        pump(250);
+        pressHotkey();
+        pump(250);
+        RECT r2{}; if (quickNoteWindow()) ::GetWindowRect(quickNoteWindow(), &r2);
+        check(quickNoteWindow() && r2.left == r.left && r2.top == r.top, L"Q22", L"unpinned: it opens in the middle again, %ls", rectStr(r2).c_str());
+        pressHotkey();
+        pump(250);
+        return 100;
+    });
+    add([] {
+        // Virtual desktops (fake ones here). The note is a tool window, shown on every desktop, so handing
+        // the focus to a window of another desktop would make Windows switch there. Every window open now
+        // is on desktop 1 (index 0); the user goes to desktop 2, where nothing is open.
+        EnumWindows([](HWND h, LPARAM) -> BOOL { if (::IsWindowVisible(h)) fakeWindowDesktop(h); return TRUE; }, 0);
+        ::ShowWindow(npp._nppHandle, SW_RESTORE);
+        std::wstring report;
+        bool ok = true;
+        // Windows' desktop window (Explorer's Progman) is on every desktop; Wine's virtual desktop has none,
+        // so a stand-in is made here, at the bottom of the windows
+        if (!::GetShellWindow()) g_testShell = makeTestShell();
+        const HWND shell = ::GetShellWindow();
+        tlog(L"INFO shell window %p (%ls)", shell, g_testShell ? L"a stand-in for Explorer's" : L"Explorer's");
+        for (HWND stale : { g_otherWnd, npp._nppHandle })
+        {
+            fakeSwitchTo(0);
+            ::SetForegroundWindow(stale);
+            pump(200);
+            fakeSwitchTo(1);   // Windows can still name the window of the desktop that was left as the foreground
+            const HotkeyStats a = hotkeyStats();
+            pressHotkey();
+            pump(250);
+            const bool opened = quickNoteWindow() && ::GetForegroundWindow() == quickNoteWindow();
+            pressHotkey();
+            pump(300);
+            const HotkeyStats b = hotkeyStats();
+            const HWND fg = ::GetForegroundWindow();
+            const bool good = opened && !quickNoteWindow() && b.otherDesktopFg == a.otherDesktopFg + 1 && b.focusFallbacks == a.focusFallbacks + 1 &&
+                              b.lastFocusTo != g_otherWnd && b.lastFocusTo != npp._nppHandle && shell && b.lastFocusTo == shell &&
+                              fg != g_otherWnd && fg != npp._nppHandle;
+            ok = ok && good;
+            wchar_t line[160];
+            swprintf(line, 160, L"%ls %ls on desktop 1, focus then to %p (%ls); ", good ? L"ok" : L"WRONG",
+                     stale == g_otherWnd ? L"another program" : L"Notepad++", b.lastFocusTo, b.lastFocusTo == shell ? L"the desktop" : L"a window");
+            report += line;
+        }
+        check(ok, L"Q23", L"on an empty desktop 2 with the last window of desktop 1 still named the foreground: the note opens here and, hidden, "
+                          L"hands the focus to the desktop, never to desktop 1: %ls", report.c_str());
+        return 100;
+    });
+    add([] {
+        // the window you were in is on this desktop: the focus goes back to it, as on one desktop
+        DesktopProvider* p = desktopProvider();
+        if (p) p->moveWindow(g_otherWnd, fakeDesktopGuid(1));
+        ::SetForegroundWindow(g_otherWnd);
+        pump(200);
+        const HotkeyStats a = hotkeyStats();
+        pressHotkey();
+        pump(250);
+        pressHotkey();
+        pump(300);
+        const HotkeyStats b = hotkeyStats();
+        check(b.otherDesktopFg == a.otherDesktopFg && b.focusFallbacks == a.focusFallbacks && b.lastFocusTo == g_otherWnd && ::GetForegroundWindow() == g_otherWnd,
+              L"Q24", L"a program open on desktop 2 too: hidden, the note gives the focus back to it");
+        // the user moves to desktop 3 while the note is open, then hides it (the hotkey, then Esc)
+        std::wstring how;
+        bool ok = true;
+        for (int esc = 0; esc < 2; ++esc)
+        {
+            fakeSwitchTo(1);
+            ::SetForegroundWindow(g_otherWnd);
+            pump(150);
+            pressHotkey();
+            pump(250);
+            fakeSwitchTo(2);
+            const HotkeyStats c = hotkeyStats();
+            if (esc) tap(VK_ESCAPE); else pressHotkey();
+            pump(300);
+            const HotkeyStats d = hotkeyStats();
+            const bool good = !quickNoteWindow() && d.focusFallbacks == c.focusFallbacks + 1 && d.lastFocusTo != g_otherWnd && ::GetForegroundWindow() != g_otherWnd;
+            ok = ok && good;
+            how += esc ? (good ? L"Esc ok" : L"Esc WRONG") : (good ? L"hotkey ok, " : L"hotkey WRONG, ");
+        }
+        check(ok, L"Q25", L"opened on desktop 2, hidden after a move to desktop 3: the focus stays on desktop 3 (%ls)", how.c_str());
+        fakeSwitchTo(0);
+        if (p) p->moveWindow(g_otherWnd, fakeDesktopGuid(0));
+        if (g_testShell) { ::DestroyWindow(g_testShell); g_testShell = nullptr; }
+        ::ShowWindow(npp._nppHandle, SW_RESTORE);
+        focusEditor();
+        return 200;
+    });
+    add([] {
+        // "Zoom in as it opens" (off by default): a picture of the note grows from 94 % into place as it fades in
+        check(settings.getInt(modules[M_HOTKEY]->key(), L"ZoomOpen", 0) == 0, L"Q26", L"the quick note's zoom is off by default");
+        settings.setInt(modules[M_HOTKEY]->key(), L"ZoomOpen", 1);
+        modules[M_HOTKEY]->loadOptions();
+        g_zoomBefore = hotkeyStats();
+        quickNoteZoomFreeze(0.3);
+        hotkeyPress();
+        pump(250);
+        const HotkeyStats h = hotkeyStats();
+        HWND ov = ::FindWindowW(L"KexSuiteOverlay", L"KEX quick note zoom");
+        check(h.noteOpen && h.zooms == g_zoomBefore.zooms + 1 && h.zoomLive && h.zoomOpening && h.zoomScale > 0.94f && h.zoomScale < 1.0f
+              && h.zoomAlpha > 0.0f && h.zoomAlpha < 1.0f && ov && ::IsWindowVisible(ov), L"Q27",
+              L"switched on: the note zooms in (held at %.1f %% of its size, %.0f %% opaque)", h.zoomScale * 100.0, h.zoomAlpha * 100.0);
+        return shot(L"quick-note-zoom-in");
+    });
+    add([] {
+        // typing ends it: the note is there at once
+        HWND e = quickNoteEditor();
+        if (e) ::SendMessageW(e, WM_KEYDOWN, VK_RIGHT, 0);
+        pump(80);
+        const HotkeyStats h = hotkeyStats();
+        check(!h.zoomLive && !::FindWindowW(L"KexSuiteOverlay", L"KEX quick note zoom"), L"Q28", L"a key pressed while it zooms: the note is there at once");
+        // hiding it: the picture shrinks a little as it fades out
+        g_zoomBefore = h;
+        hotkeyPress();
+        pump(150);
+        const HotkeyStats c = hotkeyStats();
+        check(!c.noteOpen && c.zooms == g_zoomBefore.zooms + 1 && c.zoomLive && !c.zoomOpening && c.zoomScale < 1.0f && c.zoomScale > 0.95f, L"Q29",
+              L"hidden: it zooms out (%.1f %%) as it fades", c.zoomScale * 100.0);
+        quickNoteZoomFreeze(-1);
+        return until([] { return !hotkeyStats().zoomLive; }, 2000);
+    });
+    add([] {
+        check(g_untilOk && !::FindWindowW(L"KexSuiteOverlay", L"KEX quick note zoom"), L"Q30", L"the zoom's picture goes when it is done");
+        settings.setInt(modules[M_HOTKEY]->key(), L"ZoomOpen", 0);
+        modules[M_HOTKEY]->loadOptions();
+        focusEditor();
+        return 100;
     });
 
     // ---- F12 hover tabs --------------------------------------------------------------------------
@@ -1938,6 +2399,342 @@ void buildSteps()
         focusEditor();
         return until([] { return !slideStats(curSci()).active; }, 2000);
     });
+    // ---- tab close and open, save glint -------------------------------------------------------------
+    add([] {
+        check(modules[M_TABFOLD]->isEnabled() && modules[M_GLINT]->isEnabled(), L"TF0", L"tab fold and save glint on by default");
+        writeFile(path(L"f1.txt"), "fold one\r\n");
+        writeFile(path(L"f2.txt"), "fold two\r\n");
+        writeFile(path(L"f3.txt"), "fold three\r\n");
+        writeFile(path(L"sv.txt"), "save me\r\n");
+        views.activate(0, 0);
+        switchTo(L"a.cpp");
+        focusEditor();
+        pump(200);
+        g_motion = tabMotionStats();
+        tabMotionTestFreeze(0.5);
+        open(L"f1.txt");
+        return 200;
+    });
+    add([] {
+        const TabMotionStats st = tabMotionStats();
+        check(curName() == L"f1.txt" && st.unfolds == g_motion.unfolds + 1 && st.overlayShown && std::fabs(st.lastFraction - 0.5f) < 0.01f && st.lastDx > 0
+              && st.foldFrames > g_motion.foldFrames && st.lastDrop > 0 && st.lastWidth > st.lastDx * 0.9f, L"TF1",
+              L"opening f1.txt: the tabs on its right have made room (%.1f of %d px) and the tab rises into it (%d px still to go; held at %.2f, skipped %d)",
+              st.lastWidth, st.lastDx, st.lastDrop, st.lastFraction, st.foldSkipped - g_motion.foldSkipped);
+        saveTabFrames(L"tab-open");
+        return shot(L"tab-unfold-half-way");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        slideTestFreeze(-1);
+        return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 3000);
+    });
+    add([] {
+        check(g_untilOk, L"TF2", L"the unfold ends and its window goes: the real tab bar shows again");
+        // closing it: the tab sinks (never squeezed, never faded), the tabs on its right close the gap; the document
+        // that takes its place is simply there (only the tab moves)
+        g_motion = tabMotionStats();
+        g_fadeSlides = slideStats(curSci()).slides;
+        g_slideCloses = slideStats(curSci()).afterClose;
+        g_closedIdx = views.currentIndex(views.viewOf(curSci()));
+        tabMotionTestFreeze(0.5);
+        slideTestFreeze(0.5);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        return 200;
+    });
+    add([] {
+        const TabMotionStats st = tabMotionStats();
+        const SlideStats sl = slideStats(curSci());
+        // half-way: the gap has been closing on a spring since 20 % of the time; the tab has sunk most of the way
+        const double u = (0.5 - 0.2) / 0.8;
+        const float expect = static_cast<float>(st.lastDx * (1.0 + 7.43 * u) * std::exp(-7.43 * u));
+        check(curName() != L"f1.txt" && st.folds == g_motion.folds + 1 && st.overlayShown && std::fabs(st.lastWidth - expect) < 1.0f && st.lastDrop > 0, L"TF3",
+              L"closing f1.txt: its tab sinks into the bar (%d px down, no fade), the tabs on its right gliding over (%.1f of %d px left half-way)",
+              st.lastDrop, st.lastWidth, st.lastDx);
+        check(!sl.active && sl.slides == g_fadeSlides && sl.afterClose == g_slideCloses + 1, L"TF3b",
+              L"%ls takes the closed tab's place at once: the document neither slides nor fades, only the tab moves", curName().c_str());
+        saveTabFrames(L"tab-close");
+        return shot(L"tab-close-fold");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        slideTestFreeze(-1);
+        ::InvalidateRect(curSci(), nullptr, FALSE);
+        return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 3000);
+    });
+    add([] {
+        check(g_untilOk, L"TF4", L"the collapse and the slide end: the bar and the document as they are");
+        // several tabs in one go (a session, Close All): they just change. In view 2, which has room for them
+        // (a bar with scroll arrows never folds)
+        views.activate(1, 0);
+        pump(150);
+        g_motion = tabMotionStats();
+        open(L"f2.txt");
+        open(L"f3.txt");
+        pump(300);
+        const TabMotionStats st = tabMotionStats();
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(300);
+        const TabMotionStats st2 = tabMotionStats();
+        check(st.foldBulk == g_motion.foldBulk + 1 && st.unfolds == g_motion.unfolds && st2.foldBulk == st.foldBulk + 1 && st2.folds == st.folds
+              && !st2.overlayShown, L"TF5", L"two tabs opened in one go, then two closed: no folding, they just change (in one go %d and %d, folds %d, skipped %d)",
+              st.foldBulk - g_motion.foldBulk, st2.foldBulk - st.foldBulk, st.unfolds - g_motion.unfolds + st2.folds - st.folds, st2.foldSkipped - g_motion.foldSkipped);
+        switchTo(L"a.cpp");
+        return until([] { return !slideStats(curSci()).active; }, 2000);
+    });
+    add([] {
+        // saving: a glint across the tab
+        open(L"sv.txt");
+        focusEditor();
+        pump(150);
+        HWND s = curSci();
+        sci(s, SCI_DOCUMENTEND);
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        g_motion = tabMotionStats();
+        tabMotionTestFreeze(0.5);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        return 200;
+    });
+    add([] {
+        const TabMotionStats st = tabMotionStats();
+        check(st.saves == g_motion.saves + 1 && st.glints == g_motion.glints + 2 && st.glintLines == g_motion.glintLines + 1 && st.overlayShown
+              && st.glintFrames > g_motion.glintFrames && sci(curSci(), SCI_GETMODIFY) == 0, L"TF6",
+              L"saving sv.txt sends a glint across its tab and along the top of its view");
+        check(std::fabs(st.lineAtCross - st.tabMiddle) < 3.0f && (st.tabGlintDelay < 1.0 || st.lineGlintDelay < 1.0) && st.tabGlintDelay >= 0 && st.lineGlintDelay >= 0,
+              L"TF6b", L"... as one light: the line's band is under the tab (x %.0f, the tab's middle %.0f) just as the tab's band crosses it (tab starts %.0f ms, line %.0f ms after the save)",
+              st.lineAtCross, st.tabMiddle, st.tabGlintDelay, st.lineGlintDelay);
+        tabMotionTestSave(views.tabBar(views.viewOf(curSci())), path(L"frame-glint-half.bmp"));
+        tabMotionTestSave(curSci(), path(L"frame-glint-half-line.bmp"));
+        return shot(L"save-glint-half-way");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        return until([] { return !tabMotionStats().overlayShown; }, 2000);
+    });
+    add([] {
+        check(g_untilOk, L"TF7", L"the glint passes and its window goes");
+        // a bar with more tabs than room (scroll arrows): the glint still goes across the tab, not along the view
+        views.activate(0, 0);
+        openOverflowTabs();
+        pump(400);
+        HWND bar = views.tabBar(0);
+        const bool arrows = tabArrowsShown(bar);
+        HWND s = curSci();
+        sci(s, SCI_DOCUMENTEND);
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        g_motion = tabMotionStats();
+        tabMotionTestFreeze(0.5);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        pump(150);
+        const TabMotionStats st = tabMotionStats();
+        check(arrows && st.glints == g_motion.glints + 2 && st.glintLines == g_motion.glintLines + 1 && st.overlayShown, L"TF7b",
+              L"a bar with scroll arrows (%ls): saving %ls sends the glint across its tab and the top of the view, as everywhere else",
+              arrows ? L"shown" : L"NOT shown", curName().c_str());
+        pump(250);   // to half way
+        tabMotionTestSave(bar, path(L"frame-glint-scroll-arrows.bmp"));
+        return shot(L"save-glint-scroll-arrows");
+    });
+    add([] {
+        tabMotionTestFreeze(-1);
+        waitFor([] { return !tabMotionStats().overlayShown; }, 2000);
+        for (int i = 1; i <= 16; ++i)
+        {
+            const std::wstring n = overflowTabName(i);
+            switchTo(n.c_str());
+            if (curName() == n) nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        }
+        views.activate(1, 0);
+        switchTo(L"sv.txt");
+        return until([] { return !tabMotionStats().overlayShown; }, 2000);
+    });
+    add([] {
+        // the tab bar hidden: a line of light along the top of the view
+        nppMsg(NPPM_HIDETABBAR, 0, TRUE);
+        pump(200);
+        HWND s = curSci();
+        g_motion = tabMotionStats();
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        pump(100);
+        const TabMotionStats st = tabMotionStats();
+        check(st.glints == g_motion.glints + 1 && st.glintLines == g_motion.glintLines + 1, L"TF8", L"with the tab bar hidden the glint runs along the top of the view");
+        nppMsg(NPPM_HIDETABBAR, 0, FALSE);
+        waitFor([] { return !tabMotionStats().overlayShown; }, 2000);
+        // their switches
+        setModuleEnabled(M_GLINT, false, false);
+        setModuleEnabled(M_TABFOLD, false, false);
+        const TabMotionStats b2 = tabMotionStats();
+        sci(s, SCI_ADDTEXT, 1, reinterpret_cast<LPARAM>("!"));
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_SAVE);
+        open(L"f1.txt");
+        pump(150);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(200);
+        const TabMotionStats st2 = tabMotionStats();
+        check(st2.glints == b2.glints && st2.unfolds == b2.unfolds && st2.folds == b2.folds && !st2.overlayShown, L"TF9",
+              L"tab fold and save glint off: tabs and saves change at once");
+        setModuleEnabled(M_GLINT, true, false);
+        setModuleEnabled(M_TABFOLD, true, false);
+        switchTo(L"sv.txt");
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        switchTo(L"a.cpp");
+        focusEditor();
+        return until([] { return !tabMotionStats().overlayShown && !slideStats(curSci()).active; }, 2000);
+    });
+    // ---- touchpad tab swipe ---------------------------------------------------------------------
+    add([] {
+        setModuleEnabled(M_SWIPE, true, false);
+        check(modules[M_SWIPE]->isEnabled(), L"SW0", L"touchpad tab swipe on (touchpad reports %ls)",
+              swipeStats().rawRegistered ? L"registered" : L"not available here");
+        views.activate(0, 0);
+        focusEditor();
+        pump(300);
+        g_swipeIdx = views.currentIndex(0);
+        g_swipeBefore = swipeStats();
+        g_swipeOrder = recentOrder();
+        // two fingers down, half a swipe to the right
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), 400);
+        settle(150);
+        return 100;
+    });
+    add([] {
+        HWND s = views.sci(0);
+        const SwipeStats st = swipeStats();
+        const SlideStats sl = slideStats(s);
+        check(st.holding && sl.active && std::fabs(sl.fraction - 0.5f) < 0.02f && views.currentIndex(0) == g_swipeIdx + 1 && st.lastDir == 1, L"SW1",
+              L"half a swipe: the tab on the right is half way in (at %.2f, tab %d -> %d)", sl.fraction, g_swipeIdx, views.currentIndex(0));
+        return shot(L"tab-swipe-half-way");
+    });
+    add([] {
+        pump(450);   // the fingers rest on the pad: no wheel messages, the slide stays
+        const SlideStats sl = slideStats(views.sci(0));
+        check(swipeStats().holding && sl.active && std::fabs(sl.fraction - 0.5f) < 0.02f, L"SW2",
+              L"fingers resting: the slide holds where they left it (%.2f after 450 ms)", sl.fraction);
+        // back to 0.3, then let go: it slides back
+        swipeBy(views.sci(0), -160);
+        settle(60);
+        const float back = slideStats(views.sci(0)).fraction;
+        swipeTestFingers(0);
+        check(std::fabs(back - 0.3f) < 0.02f, L"SW3a", L"the slide follows the fingers back (%.2f)", back);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        const std::vector<intptr_t> order = recentOrder();
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx && st.cancels == g_swipeBefore.cancels + 1 && st.commits == g_swipeBefore.commits,
+              L"SW3", L"let go before half way: it slides back to the first tab (tab %d)", views.currentIndex(0));
+        check(order == g_swipeOrder, L"SW3b", L"the Ctrl+Tab order is as it was before the swipe (%d tabs)", static_cast<int>(order.size()));
+        // most of the way, then let go: the tab on the right stays
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), 560);
+        swipeTestFingers(0);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        const SlideStats sl = slideStats(views.sci(0));
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx + 1 && st.commits == g_swipeBefore.commits + 1 && std::fabs(sl.fraction - 1.0f) < 0.001f,
+              L"SW4", L"let go past half way: the switch finishes (tab %d, last frame at %.2f)", views.currentIndex(0), sl.fraction);
+        // a quick flick the other way, only a fifth of a swipe long: back to the tab on the left
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), -160, 40, 6);
+        swipeTestFingers(0);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx && st.lastDir == -1 && st.commits == g_swipeBefore.commits + 2, L"SW5",
+              L"a short quick flick to the left switches to the tab on the left (tab %d)", views.currentIndex(0));
+        // the first tab: there is nothing on the left
+        const SwipeStats before = st;
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), -480);
+        const bool moved = slideStats(views.sci(0)).active;
+        swipeTestFingers(0);
+        pump(200);
+        check(!moved && views.currentIndex(0) == 0 && swipeStats().edges == before.edges + 1 && swipeStats().slides == before.slides, L"SW6",
+              L"swiping left on the first tab does nothing");
+        // no precision touchpad (an older driver): a pause is letting go
+        swipeTestFingers(-1);
+        pump(300);
+        g_swipeBefore = swipeStats();
+        swipeBy(views.sci(0), 560, 35);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        const SwipeStats st = swipeStats();
+        check(g_untilOk && views.currentIndex(0) == 1 && st.commits == g_swipeBefore.commits + 1, L"SW7",
+              L"without touchpad reports a pause in the swipe lets go (tab %d;%ls)", views.currentIndex(0), st.trace.c_str());
+        // a mouse's tilt wheel: one notch, one tab
+        pump(300);
+        const SwipeStats before = swipeStats();
+        HWND s = views.sci(0);
+        RECT r; ::GetWindowRect(s, &r);
+        ::SendMessageW(s, WM_MOUSEHWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        pump(50);
+        check(views.currentIndex(0) == 2 && swipeStats().notches == before.notches + 1, L"SW8", L"tilt wheel right: the next tab at once (tab %d)", views.currentIndex(0));
+        pump(300);
+        // a long line that scrolls sideways: the swipe scrolls it
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_NEW);
+        pump(150);
+        s = views.sci(0);
+        sci(s, SCI_SETWRAPMODE, SC_WRAP_NONE);
+        std::string line(3000, 'x');
+        sci(s, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(line.c_str()));
+        sci(s, SCI_GOTOPOS, 0);
+        sci(s, SCI_SETXOFFSET, 0);
+        settle(100);
+        g_swipeIdx = views.currentIndex(0);
+        g_swipeBefore = swipeStats();
+        swipeTestFingers(2);
+        swipeBy(s, -240);   // toward the left tab, which scrolls the text to the right
+        settle(60);
+        return 100;
+    });
+    add([] {
+        HWND s = views.sci(0);
+        const SwipeStats st = swipeStats();
+        const intptr_t x = sci(s, SCI_GETXOFFSET);
+        check(x > 0 && !slideStats(s).active && views.currentIndex(0) == g_swipeIdx && st.textScrolls == g_swipeBefore.textScrolls + 1, L"SW9",
+              L"where the line scrolls sideways the swipe scrolls it (x offset %d), no tab moves", static_cast<int>(x));
+        swipeTestFingers(0);
+        pump(300);
+        // over the tab bar it switches anyway
+        swipeTestFingers(2);
+        swipeOverTab(-560);
+        swipeTestFingers(0);
+        return until([] { return !swipeStats().active && !slideStats(views.sci(0)).active; }, 2000);
+    });
+    add([] {
+        check(g_untilOk && views.currentIndex(0) == g_swipeIdx - 1 && swipeStats().commits == g_swipeBefore.commits + 1, L"SW10",
+              L"over the tab bar the swipe switches tabs even where the line could scroll (tab %d from %d, under the pointer: %ls;%ls)", views.currentIndex(0), g_swipeIdx, g_underTab.c_str(), swipeStats().trace.c_str());
+        // the new tab goes again
+        views.activate(0, g_swipeIdx);
+        pump(100);
+        HWND s = views.sci(0);
+        sci(s, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(""));
+        sci(s, SCI_EMPTYUNDOBUFFER);
+        sci(s, SCI_SETSAVEPOINT);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(200);
+        // off: a swipe does what Notepad++ does without KEX
+        setModuleEnabled(M_SWIPE, false, false);
+        views.activate(0, 0);
+        pump(100);
+        const SwipeStats before = swipeStats();
+        swipeTestFingers(2);
+        swipeBy(views.sci(0), 560);
+        pump(300);
+        check(views.currentIndex(0) == 0 && !slideStats(views.sci(0)).active && swipeStats().gestures == before.gestures, L"SW11",
+              L"touchpad tab swipe off: swiping does not switch tabs");
+        setModuleEnabled(M_SWIPE, true, false);
+        swipeTestFingers(-1);
+        switchTo(L"a.cpp");
+        focusEditor();
+        return 200;
+    });
     add([] {
         // copy: the selection flashes once
         HWND s = curSci();
@@ -1952,7 +2749,7 @@ void buildSteps()
         pump(120);
         const FlashStats st = flashStats();
         HWND ov = ::FindWindowW(L"KexSuiteOverlay", L"KEX effects");
-        check(st.copies == before.copies + 1 && st.cuts == before.cuts && st.lastRects == 1 && st.spawned == before.spawned + 1 && st.live >= 1
+        check(st.copies == before.copies + 1 && st.lastRects == 1 && st.spawned == before.spawned + 1 && st.live >= 1
               && ov && ::IsWindowVisible(ov), L"X1", L"Edit > Copy: the selection flashes (%d rectangle, %d live)", st.lastRects, st.live);
         // over three lines: a rectangle per line, as the selection is drawn
         sci(s, SCI_SETSEL, posOf(s, 0, 2), posOf(s, 2, 3));
@@ -1962,64 +2759,401 @@ void buildSteps()
         return 100;
     });
     add([] {
-        // cut: a double flash, not also counted as a copy
-        HWND s = curSci();
+        // ---- editing motion (EditMotion.cpp, drawn by Scintilla: SCI_KEX_SETMOTIONS) ----
+        // a.cpp as it was after the copies; the motions get a file of their own
         lettersFreezeAfter(-1);
-        waitFor([] { return flashStats().live == 0; }, 3000);
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        const FlashStats before = flashStats();
-        tokCommand(IDM_EDIT_CUT);
-        pump(250);
-        const FlashStats st = flashStats();
-        check(st.cuts == before.cuts + 1 && st.copies == before.copies && st.deletes == before.deletes && st.spawned == before.spawned + 1, L"X3",
-              L"Edit > Cut: one double flash (cuts %d, copies %d)", st.cuts - before.cuts, st.copies - before.copies);
-        sci(s, SCI_UNDO);
-        // delete: a red flash
+        HWND a = curSci();
+        if (docText(a) != g_flashText)
+        {
+            sci(a, SCI_TARGETWHOLEDOCUMENT);
+            sci(a, SCI_REPLACETARGET, static_cast<WPARAM>(g_flashText.size()), reinterpret_cast<LPARAM>(g_flashText.c_str()));
+        }
+        if (!g_flashModified) sci(a, SCI_SETSAVEPOINT);
+        std::string text = "// KEX motion test\r\nint alpha = 1;\r\nint beta = 2;\r\nint gamma = 3;\r\nvoid fold_me()\r\n{\r\n"
+                           "    int a = 1; // alpha\r\n    int b = 2;\r\n    int c = 3;\r\n}\r\nzeta\r\neta\r\ntheta\r\niota\r\nkappa\r\n";
+        for (int i = 15; i < 200; ++i)
+        {
+            char b[64];
+            snprintf(b, sizeof(b), i == 180 ? "int needle = %d;\r\n" : "// filler %03d ----------------\r\n", i);
+            text += b;
+        }
+        writeFile(path(L"mo.cpp"), text);
+        open(L"mo.cpp");
         focusEditor();
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        lettersFreezeAfter(40);
-        tap(VK_DELETE);
-        pump(150);
-        const FlashStats st2 = flashStats();
-        check(st2.deletes == st.deletes + 1 && st2.cuts == st.cuts && st2.lastRects == 1, L"X4", L"Delete on a selection: a red flash (deletes %d)", st2.deletes - st.deletes);
-        return shot(L"delete-flash");
+        HWND s = curSci();
+        sci(s, SCI_COLOURISE, 0, -1);
+        // out of the box: every motion at the speed the user tuned it to, "editing fast" within 50 ms
+        auto tunedMs = [](int k) { return std::min(kMotionMaxMs, animMs(kMotionDefs[k].speed.baseMs, kMotionDefs[k].speed.defPercent)); };
+        int tuned = 0;
+        for (int k = 0; k < kMotionCount; ++k)
+            if (motionMs(k) == tunedMs(k)) ++tuned;
+        const int rapidDefault = settings.getInt(modules[M_MOTION]->key(), L"RapidMs", -1);
+        // the steps run at the designed times (100 %) and come quickly: each its own motion
+        for (const MotionDef& d : kMotionDefs) settings.setInt(modules[M_MOTION]->key(), d.speed.key, 100);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        settle(200);
+        const MotionStats st = motionStats(s);
+        check(modules[M_MOTION]->isEnabled() && !st.active && tuned == kMotionCount && rapidDefault == -1, L"MO0",
+              L"editing motion on by default (%d motions so far), %d of %d at their default speeds (Cut %d ms, Paste %d ms), editing fast within %d ms",
+              st.total, tuned, kMotionCount, tunedMs(0), tunedMs(3), kMotionRapidMs);
+        return 100;
+    });
+    add([] {
+        // cut: picked up (lifted, a soft shadow), then gone while the rest of the line closes up; not a copy flash
+        HWND s = curSci();
+        focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        g_motionBefore = motionStats(s);
+        const FlashStats fb = flashStats();
+        slideTestFreeze(0.5);
+        tokCommand(IDM_EDIT_CUT);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[0] == g_motionBefore.started[0] + 1 && m.lastKind == 0 && m.style == 1 && m.gap > 0.1f && m.gap < 0.9f
+              && flashStats().copies == fb.copies, L"MO1", L"Edit > Cut: the text is picked up, then the line closes up (%.0f %% of the way to go, %d frames); no copy flash",
+              m.gap * 100.0, m.frames - g_motionBefore.frames);
+        return shot(L"motion-cut-half-way");
     });
     add([] {
         HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        const MotionStats m = motionStats(s);
+        check(!m.active && m.ended == g_motionBefore.ended && m.gap < 0.01f, L"MO1b", L"... and it settles by itself (gap %.3f)", m.gap);
         sci(s, SCI_UNDO);
-        lettersFreezeAfter(-1);
-        // typing over a selection, or deleting single characters, flashes nothing
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // Delete on a selection within a line: wiped away from its end back to the caret
         focusEditor();
-        const FlashStats before = flashStats();
-        sci(s, SCI_SETSEL, posOf(s, 2, 0), posOf(s, 2, 5));
-        tap('X');
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.5);
+        tap(VK_DELETE);
+        pump(200);
+        const MotionStats d = motionStats(s);
+        check(d.active && d.started[1] == g_motionBefore.started[1] + 1 && d.style == 2 && d.gap > 0.1f && d.gap < 1.0f, L"MO2",
+              L"Delete on a selection in a line: wiped away (%.0f %% to go)", d.gap * 100.0);
+        return shot(L"motion-delete-wipe-half-way");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // across three lines: it fades where it was while the lines below glide up
+        focusEditor();
+        sci(s, SCI_SETSEL, posOf(s, 1, 4), posOf(s, 3, 4));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.5);
+        tap(VK_DELETE);
+        pump(200);
+        const MotionStats d = motionStats(s);
+        check(d.active && d.started[2] == g_motionBefore.started[2] + 1 && d.style == 3 && d.gap > 0.0f && d.gap < 0.9f, L"MO3",
+              L"Delete across three lines: the text fades, the lines below glide up (%.0f %% to go)", d.gap * 100.0);
+        return shot(L"motion-delete-lines-half-way");
+    });
+    add([] {
+        // typing during a motion ends it at once: the editor never waits for an animation
+        HWND s = curSci();
+        g_motionBefore = motionStats(s);
+        focusEditor();
+        tap('Q');
         pump(100);
-        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 2, 1));
+        const MotionStats m = motionStats(s);
+        check(!m.active && m.ended == g_motionBefore.ended + 1, L"MO4", L"a key pressed during the motion ends it at once (ended %d)", m.ended - g_motionBefore.ended);
+        slideTestFreeze(-1);
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // typing over a selection, deleting single characters: no motion
+        const MotionStats b = motionStats(s);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        tap('X');
+        pump(80);
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 2, 5));
         tap(VK_DELETE);
         tap(VK_BACK);
         pump(100);
-        const FlashStats st = flashStats();
-        check(st.deletes == before.deletes && st.cuts == before.cuts && st.copies == before.copies, L"X5",
-              L"typing over a selection and deleting single characters: no flash");
-        // its own switch: copies stay quiet
-        settings.setInt(modules[M_FLASH]->key(), L"Copy", 0);
-        modules[M_FLASH]->loadOptions();
-        sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 1, 4));
-        const FlashStats b2 = flashStats();
+        check(motionStats(s).total == b.total, L"MO5", L"typing over a selection and deleting single characters: no motion");
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // paste: the text after the caret makes room and the pasted text is uncovered, lit for a moment
+        HWND s = curSci();
+        sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 3, 0));
         tokCommand(IDM_EDIT_COPY);
+        pump(100);
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 0));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.2);
+        tokCommand(IDM_EDIT_PASTE);
         pump(200);
-        check(flashStats().spawned == b2.spawned, L"X6", L"\"Copy\" unticked: copying flashes nothing");
-        settings.setInt(modules[M_FLASH]->key(), L"Copy", 1);
-        modules[M_FLASH]->loadOptions();
-        // a.cpp as it was
-        if (docText(s) != g_flashText)
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[3] == g_motionBefore.started[3] + 1 && m.style == 4 && m.gap > 0.0f && m.gap < 1.0f, L"MO6",
+              L"Edit > Paste: room is made, the pasted lines are uncovered and lit (%.0f %% to go)", m.gap * 100.0);
+        return shot(L"motion-paste");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // undo shows what goes (the pasted lines close up), redo what comes back
+        g_motionBefore = motionStats(s);
+        tokCommand(IDM_EDIT_UNDO);
+        pump(60);
+        const MotionStats u = motionStats(s);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_REDO);
+        pump(60);
+        const MotionStats r = motionStats(s);
+        check(u.started[4] == g_motionBefore.started[4] + 1 && u.style == 3 && r.started[4] == u.started[4] + 1 && r.style == 4, L"MO7",
+              L"undo: the pasted lines close up (style %d); redo: they come back, uncovered (style %d)", u.style, r.style);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_UNDO);
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // move line: the line and the one it passes slide past each other
+        HWND s = curSci();
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 11, 1));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_EDIT_LINE_DOWN);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[5] == g_motionBefore.started[5] + 1 && m.lines == 1 && m.gap > 0.0f && m.gap < 1.0f
+              && lineText(s, 12) == "eta" && lineText(s, 11) == "theta", L"MO8", L"Ctrl+Shift+Down: \"eta\" slides down past \"theta\" (%.0f %% to go)", m.gap * 100.0);
+        return shot(L"motion-move-line");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_LINE_UP);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // indent: several lines glide to their new indentation
+        sci(s, SCI_SETSEL, posOf(s, 10, 0), posOf(s, 13, 2));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        sci(s, SCI_TAB);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[7] == g_motionBefore.started[7] + 1 && m.lines == 4 && m.gap > 0.0f && m.gap < 1.0f, L"MO9",
+              L"Tab on four lines: they glide to their new indentation (%d lines, %.0f %% to go)", m.lines, m.gap * 100.0);
+        return shot(L"motion-indent");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_BACKTAB);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // duplicate: the copy slides out from under the line
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 12, 2));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.2);
+        tokCommand(IDM_EDIT_DUP_LINE);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[8] == g_motionBefore.started[8] + 1 && m.style == 5 && lineText(s, 13) == "theta", L"MO10",
+              L"Ctrl+D: the copy of \"theta\" slides out from under it");
+        return shot(L"motion-duplicate");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // fold: the lines below slide up over the folded ones, and down again
+        const intptr_t header = sci(s, SCI_GETFOLDPARENT, 7);
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        sci(s, SCI_TOGGLEFOLD, header);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(header >= 0 && m.active && m.started[10] == g_motionBefore.started[10] + 1 && m.lines >= 3 && m.gap > 0.0f, L"MO11",
+              L"folding fold_me() (line %d): the lines below slide up over %d hidden lines", static_cast<int>(header) + 1, m.lines);
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_TOGGLEFOLD, header);
+        pump(60);
+        const MotionStats e = motionStats(s);
+        check(e.started[10] == m.started[10] + 1, L"MO11b", L"... unfolding: they slide down again");
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // sort: each line glides to its new place
+        HWND s = curSci();
+        sci(s, SCI_SETSEL, posOf(s, 10, 0), posOf(s, 14, 5));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[11] == g_motionBefore.started[11] + 1 && m.lines == 5 && lineText(s, 10) == "eta" && lineText(s, 14) == "zeta", L"MO12",
+              L"sorting zeta..kappa: each of the %d lines glides to its new place", m.lines);
+        return shot(L"motion-sort");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_UNDO);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // find: a ring closes onto the match (Select and Find Next, Ctrl+F3)
+        sci(s, SCI_SETSEL, posOf(s, 1, 4), posOf(s, 1, 9));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_SEARCH_SETANDFINDNEXT);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        const intptr_t line = sci(s, SCI_LINEFROMPOSITION, sci(s, SCI_GETSELECTIONSTART));
+        check(m.started[6] == g_motionBefore.started[6] + 1 && m.ringFrames > g_motionBefore.ringFrames && line == 6, L"MO13",
+              L"Select and Find Next: a ring closes onto \"alpha\" on line %d (%d frames)", static_cast<int>(line) + 1, m.ringFrames - g_motionBefore.ringFrames);
+        return shot(L"motion-find-ring");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        pump(700);
+        // a far jump slides the page there, then a band marks the caret's line
+        sci(s, SCI_SETEMPTYSELECTION, 0);
+        sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+        pump(100);
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.15);
+        sci(s, SCI_GOTOLINE, 180);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        check(m.active && m.started[9] == g_motionBefore.started[9] + 1 && m.jumpLines > 20 && m.gap > 0.0f && m.gap < 1.0f, L"MO14",
+              L"go to line 181: the page slides down %d lines (%.0f %% to go)", m.jumpLines, m.gap * 100.0);
+        return shot(L"motion-jump");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        // scrolling a little does nothing; a document just switched to shows where it was left, without a slide
+        g_motionBefore = motionStats(s);
+        sci(s, SCI_GOTOLINE, 176);
+        pump(100);
+        switchTo(L"a.cpp");
+        pump(50);
+        switchTo(L"mo.cpp");
+        sci(s, SCI_GOTOLINE, 2);
+        pump(100);
+        check(motionStats(s).started[9] == g_motionBefore.started[9], L"MO15", L"small scrolls and a document just switched to: no jump slide");
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        pump(600);
+        return 50;
+    });
+    add([] {
+        // each has its own switch; and "editing fast": a motion right after another is skipped
+        HWND s = curSci();
+        focusEditor();
+        sci(s, SCI_GOTOLINE, 0);
+        pump(600);
+        settings.setInt(modules[M_MOTION]->key(), L"Cut", 0);
+        modules[M_MOTION]->loadOptions();
+        g_motionBefore = motionStats(s);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        tokCommand(IDM_EDIT_CUT);
+        pump(150);
+        const MotionStats off = motionStats(s);
+        sci(s, SCI_UNDO);
+        pump(80);
+        settings.setInt(modules[M_MOTION]->key(), L"Cut", 1);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 400);
+        modules[M_MOTION]->loadOptions();
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        pump(450);
+        focusEditor();
+        const MotionStats b = motionStats(s);
+        const SlideStats sb = slideStats(s);
+        const bool focused = ::GetFocus() == s;
+        const intptr_t len0 = sci(s, SCI_GETLENGTH);
+        sci(s, SCI_SETSEL, posOf(s, 2, 4), posOf(s, 2, 8));
+        tokCommand(IDM_EDIT_CUT);
+        pump(100);   // the cut's motion has its first frames
+        const MotionStats cut = motionStats(s);
+        const intptr_t len1 = sci(s, SCI_GETLENGTH);
+        sci(s, SCI_SETSEL, posOf(s, 3, 4), posOf(s, 3, 8));
+        tap(VK_DELETE);
+        pump(100);
+        const MotionStats fast = motionStats(s);
+        const intptr_t len2 = sci(s, SCI_GETLENGTH);
+        check(off.started[0] == g_motionBefore.started[0] && fast.started[0] == b.started[0] + 1 && fast.started[1] == b.started[1] && fast.skipped == b.skipped + 1,
+              L"MO16", L"\"Cut\" unticked: no motion (%d); a Delete 100 ms after a cut (within \"editing fast\", 400 ms): skipped, the text just goes (cuts %d, deletes %d, skipped %d)",
+              off.started[0] - g_motionBefore.started[0], fast.started[0] - b.started[0], fast.started[1] - b.started[1], fast.skipped - b.skipped);
+        if (fast.started[0] != b.started[0] + 1)
+            tlog(L"INFO MO16: before the cut motion %d slide %d (stop %d), focus %d; cut: -%d chars, refused +%d skipped +%d last %d; delete: -%d chars, refused +%d",
+                 b.active, sb.active, sb.stopReason, focused, static_cast<int>(len0 - len1), cut.refused - b.refused, cut.skipped - b.skipped, cut.lastKind,
+                 static_cast<int>(len1 - len2), fast.refused - cut.refused);
+        sci(s, SCI_UNDO);
+        sci(s, SCI_UNDO);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        return until([s] { return !motionStats(s).active; }, 2000);
+    });
+    add([] {
+        // the KEX menu's Motion submenu: a switch for each, ticked as set; the Motion page: a tick and a time for each
+        HMENU sub = settingsSubmenu(PAGE_MOTION);
+        ::SendMessageW(npp._nppHandle, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(sub), MAKELPARAM(0, FALSE));
+        int marked = 0;
+        for (int k = 0; k < kMotionCount; ++k)
+            if (menuHasId(sub, settingsMotionId(k)) && ((::GetMenuState(sub, settingsMotionId(k), MF_BYCOMMAND) & MF_CHECKED) != 0) == motionOn(k)) ++marked;
+        ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsMotionId(11), 0);
+        const bool flipped = !motionOn(11) && settings.getInt(modules[M_MOTION]->key(), L"Sort", -1) == 0;
+        ::SendMessageW(npp._nppHandle, WM_COMMAND, settingsMotionId(11), 0);
+        check(marked == kMotionCount && flipped && motionOn(11), L"MO17", L"KEX > Motion: %d of %d switches, each ticked as set; picking one switches it and stores it",
+              marked, kMotionCount);
+        openSettings(PAGE_MOTION);
+        pump(300);
+        HWND p = prefPage(PAGE_MOTION);
+        int boxes = 0;
+        for (int k = 0; p && k < kMotionCount; ++k)
         {
-            sci(s, SCI_TARGETWHOLEDOCUMENT);
-            sci(s, SCI_REPLACETARGET, static_cast<WPARAM>(g_flashText.size()), reinterpret_cast<LPARAM>(g_flashText.c_str()));
+            BOOL ok = FALSE;
+            const UINT ms = ::GetDlgItemInt(p, IDC_M_MS0 + k, &ok, FALSE);
+            if ((::IsDlgButtonChecked(p, IDC_M_ON0 + k) == BST_CHECKED) == motionOn(k) && ok && ms == 100 && motionMs(k) == kMotionDefs[k].speed.baseMs) ++boxes;
         }
-        if (!g_flashModified) sci(s, SCI_SETSAVEPOINT);
-        sci(s, SCI_SETEMPTYSELECTION, posOf(s, 0, 0));
-        return until([] { return flashStats().live == 0; }, 3000);
+        check(boxes == kMotionCount, L"MO18", L"KEX Settings > Motion: %d of %d motions with their tick and speed (100 %%: the designed time)", boxes, kMotionCount);
+        return shot(L"settings-motion-page");
+    });
+    add([] {
+        // a speed typed on the page reaches the editor: Sort at 200 % takes half its time; all animations at 200 %
+        // (the box at the bottom of the window) halve it again, and every other animation's time with it
+        HWND p = prefPage(PAGE_MOTION);
+        typeNumber(p, IDC_M_MS0 + 11, 200);
+        pump(100);
+        const int sortMs = motionMs(11);
+        HWND d = settingsDialog();
+        typeNumber(d, IDC_KEX_SPEED, 200);
+        pump(100);
+        const int sortAll = motionMs(11), cutAll = motionMs(0);
+        typeNumber(p, IDC_M_MS0 + 11, 900);   // more than the most: 400
+        pump(100);
+        const int capped = settings.getInt(modules[M_MOTION]->key(), L"SortSpeed", -1);
+        check(capped == 400 && sortMs == 170 && sortAll == 85 && cutAll == 160 && animSpeedAll() == 200,
+              L"MO19", L"Sort at 200 %% on the Motion page: %d ms (designed 340); all animations at 200 %%: %d ms, Cut %d ms (designed 320); 900 %% typed is kept at %d %%",
+              sortMs, sortAll, cutAll, capped);
+        typeNumber(p, IDC_M_MS0 + 11, 100);
+        typeNumber(d, IDC_KEX_SPEED, 100);
+        if (d) ::SendMessageW(d, WM_CLOSE, 0, 0);
+        HWND s = curSci();
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", kMotionRapidMs);
+        modules[M_MOTION]->loadOptions();
+        // mo.cpp goes without asking
+        sci(s, SCI_SETSAVEPOINT);
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        switchTo(L"a.cpp");
+        if (!g_flashModified) sci(curSci(), SCI_SETSAVEPOINT);
+        return until([] { return flashStats().live == 0 && !motionStats(curSci()).active; }, 3000);
     });
     add([] {
         // paint splash: Style All Occurrences of Token splashes every new occurrence
@@ -2072,7 +3206,7 @@ void buildSteps()
         nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
         pump(150);
         // the Effects page: a line on how the effects are drawn and how fast
-        showPrefPage(L"KEX Effects");
+        showPrefPage(L"Effects");
         const std::wstring info = itemText(prefPage(PAGE_EFFECTS), IDC_E_INFO);
         check(prefPage(PAGE_EFFECTS) && !info.empty(), L"P5", L"KEX Effects page: \"%ls\"", info.c_str());
         switchTo(L"a.cpp");
@@ -2102,6 +3236,9 @@ void buildSteps()
             case M_FLASH: restored = flashStats().live == 0; extra = L"no flashes left"; break;
             case M_SPLASH: restored = splashStats().live == 0; extra = L"no paint left"; break;
             case M_SLIDE: restored = !slideStats(views.sci(0)).active && !slideStats(views.sci(1)).active; extra = L"no slide running"; break;
+            case M_TABFOLD: restored = !tabMotionStats().overlayShown; extra = L"tab bars unhooked, no fold window"; break;
+            case M_GLINT: restored = !tabMotionStats().overlayShown; extra = L"no glint window"; break;
+            case M_SWIPE: restored = !swipeStats().active && !swipeStats().rawRegistered && !slideStats(views.sci(0)).active; extra = L"touchpad reports released, no slide held"; break;
             case M_CARET:
             {
                 int now = static_cast<int>(sci(views.sci(0), SCI_GETCARETSTYLE));
@@ -2358,6 +3495,8 @@ void buildSteps()
                 nppMsg(NPPM_MENUCOMMAND, 0, IDM_KEX_DOC_TO_VIEW1);
                 pump(80);
             }
+        // the KEX Settings window, open from the steps before, would sit over the places the tabs are dropped
+        if (HWND d = settingsDialog()) ::SendMessageW(d, WM_COMMAND, IDCANCEL, 0);
         ::ShowWindow(npp._nppHandle, SW_RESTORE);
         ::MoveWindow(npp._nppHandle, 20, 16, 960, 660, TRUE);
         ::SetForegroundWindow(npp._nppHandle);
@@ -2378,6 +3517,20 @@ void buildSteps()
         bool rightHalf = st.target.left > mid - 12 && st.target.left < mid + 12 && std::abs(st.target.right - rv.right) <= 3
                       && std::abs(st.target.top - rv.top) <= 3 && std::abs(st.target.bottom - rv.bottom) <= 3;
         bool inside = st.window.left >= st.target.left && st.window.right <= st.target.right && st.window.top >= st.target.top && st.window.bottom <= st.target.bottom;
+        if (!st.visible)
+        {
+            // what the pointer is over, as the core's hit test sees it
+            POINT at; ::GetCursorPos(&at);
+            HWND hit = kexsuite::windowFromPoint(at);
+            wchar_t cls[64] = L"", rootCls[64] = L"", rootTitle[96] = L"";
+            HWND root = hit ? ::GetAncestor(hit, GA_ROOT) : nullptr;
+            if (hit) ::GetClassNameW(hit, cls, 64);
+            if (root) { ::GetClassNameW(root, rootCls, 64); ::GetWindowTextW(root, rootTitle, 96); }
+            LONG_PTR hex = root ? ::GetWindowLongPtrW(root, GWL_EXSTYLE) : 0;
+            tlog(L"INFO no preview: cursor (%d,%d) over %ls, root %ls \"%ls\" (exstyle %llx, ours %d), lmb %d ctrl %d",
+                 at.x, at.y, cls, rootCls, rootTitle, static_cast<unsigned long long>(hex), root == npp._nppHandle,
+                 (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, (::GetKeyState(VK_LCONTROL) & 0x8000) != 0);
+        }
         check(st.visible && rightHalf && inside, L"N1", L"dragging %ls to the right edge previews the right half: %ls (view %ls, preview window %ls)",
             g_dragFile.c_str(), rectStr(st.target).c_str(), rectStr(rv).c_str(), rectStr(st.window).c_str());
         HWND pw = ::FindWindowW(L"KexSuiteSnapPreview", nullptr);
@@ -2558,11 +3711,19 @@ void buildSteps()
             ts += std::to_wstring(o) + L">" + std::to_wstring(now) + L" ";
         }
         check(tech, L"G3", L"Direct2D window renderers drawn through a DC while the glass is on (view renderers %ls)", ts.c_str());
+        // each view's text goes on a see-through layer of its own (DirectComposition); where there is none (Wine has
+        // only stubs) the view draws through a DC without smoothing, so letters get no outline
         bool sharp = true;
         for (int v = 0; v < views.count(); ++v)
             if (HWND s = views.sci(v)) sharp = sharp && sci(s, SCI_GETFONTQUALITY) == SC_EFF_QUALITY_NON_ANTIALIASED;
-        check(sharp, L"G16", L"the views draw their text without smoothing while the glass is on (Notepad++ had quality %d), so letters get no outline",
-              g_glassQuality[0]);
+        const int nv = viewCount();
+        if (underWine)
+            check(g.fallbackViews == nv && g.layerViews == 0 && sharp, L"G16",
+                  L"no see-through layer under Wine: all %d views fall back to text without smoothing (Notepad++ had quality %d, layer error 0x%08lx)",
+                  nv, g_glassQuality[0], g.layerError);
+        else
+            check(g.layerViews == nv && g.fallbackViews == 0, L"G16", L"all %d views draw their text on a see-through layer (%d fell back, error 0x%08lx)",
+                  nv, g.fallbackViews, g.layerError);
         HWND c = glassCatcherOf(npp._nppHandle);
         RECT cr = clientOnScreen(npp._nppHandle), kr = screenRectOf(c);
         check(c && ::IsWindowVisible(c) && ::EqualRect(&cr, &kr) && nextVisible(npp._nppHandle) == c && g.hosts >= 1, L"G4",
@@ -2635,33 +3796,89 @@ void buildSteps()
         RECT cr = clientOnScreen(npp._nppHandle), kr = screenRectOf(c);
         check(nextVisible(npp._nppHandle) == c && ::EqualRect(&cr, &kr), L"G13",
               L"after another program was in front and the window moved, the catcher is still right behind it at %ls", rectStr(kr).c_str());
-        openPreferences();
+        openSettings();
         pump(300);
-        showPrefPage(L"KEX Windows");
+        showPrefPage(L"Windows");
         pump(200);
         HWND p = prefPage(PAGE_WINDOWS);
         std::wstring st = itemText(p, IDC_G_STATUS), info = itemText(p, IDC_G_INFO), tint = itemText(p, IDC_G_TINT);
         std::wstring style = itemText(p, IDC_G_STYLE), edges = itemText(p, IDC_G_EDGES);
-        check(st == L"Running" && info.rfind(L"On:", 0) == 0 && tint == L"40" && style == L"Blur" && edges.rfind(L"Sharp", 0) == 0, L"G14",
+        check(st == L"Running" && info.rfind(L"On:", 0) == 0 && tint == L"40" && style == L"Blur" && edges == L"Smooth"
+              && ::IsDlgButtonChecked(p, IDC_G_SMOOTHMOVE) == BST_CHECKED, L"G14",
               L"KEX Windows page: \"%ls\", \"%ls\", style %ls, tint %ls%%, text edges %ls", st.c_str(), info.c_str(), style.c_str(), tint.c_str(), edges.c_str());
         return 200;
     });
     add([] { return shot(L"preferences-kex-windows-glass"); });
     add([] {
         HWND p = prefPage(PAGE_WINDOWS);
-        pickCombo(p, IDC_G_EDGES, 2);   // "As Notepad++ draws them"
+        pickCombo(p, IDC_G_EDGES, 1);   // Sharp
         pump(300);
-        bool own = true;
+        const GlassStats g = glassStats();
+        bool sharp = true;
         for (int v = 0; v < views.count(); ++v)
-            if (HWND s = views.sci(v)) own = own && sci(s, SCI_GETFONTQUALITY) == g_glassQuality[v];
-        check(glassStats().active && own && settings.getInt(L"Glass", L"TextEdges", 0) == 2, L"G17",
-              L"Text edges \"As Notepad++ draws them\": the glass stays on and the views keep Notepad++'s own text smoothing");
+            if (HWND s = views.sci(v)) sharp = sharp && (g.layerViews > 0 || sci(s, SCI_GETFONTQUALITY) == SC_EFF_QUALITY_NON_ANTIALIASED);
+        check(g.active && sharp && settings.getInt(L"Glass", L"Edges", 0) == 1 && g.layerViews + g.fallbackViews == viewCount(), L"G17",
+              L"Text edges Sharp is remembered and the glass restarts with it (%d views on a layer, %d without)", g.layerViews, g.fallbackViews);
+        pickCombo(p, IDC_G_EDGES, 0);
         pickCombo(p, IDC_G_STYLE, 1);   // acrylic: the test engine has no blur, the setting must still be taken
         pump(200);
         check(glassStats().active && settings.getInt(L"Glass", L"Style", 0) == 1, L"G18", L"Style Acrylic is remembered and the glass restarts with it");
+        // acrylic lags behind a moving window, a plain blur doesn't: during a drag the plain blur moves instead
+        HWND host = npp._nppHandle, cat = glassCatcherOf(host), blur = glassBlurCatcherOf(host);
+        if (!blur) { tlog(L"SKIP G21-G22 no acrylic on this Windows (build below 1803)"); return 100; }
+        const GlassStats g0 = glassStats();
+        ::SendMessageW(host, WM_ENTERSIZEMOVE, 0, 0);
+        const bool under = ::IsWindowVisible(blur) && ::IsWindowVisible(cat) && nextVisible(cat) == blur;
+        RECT wr; ::GetWindowRect(host, &wr);
+        RECT cr = clientOnScreen(host);
+        ::OffsetRect(&wr, 30, 20);
+        ::OffsetRect(&cr, 30, 20);
+        ::SendMessageW(host, WM_MOVING, WMSZ_LEFT, reinterpret_cast<LPARAM>(&wr));
+        RECT br = screenRectOf(blur);
+        const bool swapped = glassStats().swaps == g0.swaps + 1 && ::IsWindowVisible(blur) && !::IsWindowVisible(cat) && nextVisible(host) == blur && ::EqualRect(&br, &cr);
+        ::SendMessageW(host, WM_EXITSIZEMOVE, 0, 0);
+        const bool back = glassStats().swapsBack == g0.swapsBack + 1 && ::IsWindowVisible(cat) && nextVisible(host) == cat;
+        check(under && swapped && back, L"G21",
+              L"a drag with acrylic: the plain blur waits under it (%d), takes over on the first move at %ls (%d), the acrylic comes back when the drag ends (%d)",
+              under ? 1 : 0, rectStr(br).c_str(), swapped ? 1 : 0, back ? 1 : 0);
+        return 400;
+    });
+    add([] {
+        HWND blur = glassBlurCatcherOf(npp._nppHandle);
+        if (blur) check(!::IsWindowVisible(blur) && ::IsWindowVisible(glassCatcherOf(npp._nppHandle)), L"G22", L"the plain blur goes once the acrylic is back");
+        HWND p = prefPage(PAGE_WINDOWS);
         pickCombo(p, IDC_G_STYLE, 0);
-        pickCombo(p, IDC_G_EDGES, 0);
         pump(300);
+        check(!glassBlurCatcherOf(npp._nppHandle), L"G23", L"Style Blur: no second catcher (nothing to swap)");
+        return 100;
+    });
+    add([] {
+        // the text layer as Scintilla draws it (into a bitmap, so it can be counted): the key colour comes out
+        // see-through, the text stays; Smooth gives soft edges, Sharp hard ones
+        const COLORREF key = glassStats().key;
+        HWND s = views.sci(viewOfFile(L"g.txt") >= 0 ? viewOfFile(L"g.txt") : 0);
+        const int tech = static_cast<int>(sci(s, SCI_GETTECHNOLOGY)), quality = static_cast<int>(sci(s, SCI_GETFONTQUALITY));
+        if (tech == SC_TECHNOLOGY_DEFAULT) sci(s, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITEDC);
+        if (sci(s, SCI_GETTECHNOLOGY) == SC_TECHNOLOGY_DEFAULT) { tlog(L"SKIP G19-G20 no Direct2D in this Wine"); return 50; }
+        sci(s, SCI_SETFONTQUALITY, SC_EFF_QUALITY_ANTIALIASED);
+        KexGlassTest smooth{}, hard{};
+        smooth.key = hard.key = static_cast<int>(key);
+        hard.sharp = 1;
+        const LRESULT ok1 = sci(s, SCI_KEX_GLASSTEST, 0, reinterpret_cast<LPARAM>(&smooth));
+        const LRESULT ok2 = sci(s, SCI_KEX_GLASSTEST, 0, reinterpret_cast<LPARAM>(&hard));
+        sci(s, SCI_SETFONTQUALITY, quality);
+        if (tech == SC_TECHNOLOGY_DEFAULT) sci(s, SCI_SETTECHNOLOGY, tech);
+        tlog(L"INFO glass layer test: smooth %d clear, %d solid, %d soft, %d key (0x%08x); sharp %d clear, %d solid, %d soft, %d key (0x%08x)",
+             smooth.clear, smooth.solid, smooth.partial, smooth.keyLeft, static_cast<unsigned>(smooth.error), hard.clear, hard.solid, hard.partial, hard.keyLeft,
+             static_cast<unsigned>(hard.error));
+        check(ok1 && ok2 && smooth.clear > 0 && smooth.keyLeft == 0 && hard.keyLeft == 0 && smooth.solid + smooth.partial > 0, L"G19",
+              L"the text layer: the key comes out see-through (%d clear pixels, %d of the key left), the text stays (%d solid, %d soft)",
+              smooth.clear, smooth.keyLeft, smooth.solid, smooth.partial);
+        if (underWine && smooth.partial == 0 && hard.partial == 0)
+            tlog(L"SKIP G20 Wine's Direct2D draws text without smoothing, so soft edges can only be counted on Windows");
+        else
+            check(smooth.partial > hard.partial, L"G20", L"Smooth text edges are soft on the layer (%d partly see-through pixels), Sharp ones hard (%d)",
+                  smooth.partial, hard.partial);
         return 100;
     });
     add([] {
@@ -2862,16 +4079,16 @@ void buildSteps()
         const std::vector<intptr_t> ga = wordsIn(s, "gamma");
         check(curName() == L"k.cpp" && tokenRuleCount(s) == 2 && tokOurs(s, 24, wordsIn(s, "beta")[0], 4) && styledAs(s, ga, 5, 1, -1, &why), L"L17",
               L"closed and opened again, k.cpp has its styled tokens back: \"beta\" coloured, \"gamma\" bold %ls %ls", why.c_str(), tokDiag(s).c_str());
-        openPreferences();
+        openSettings();
         pump(300);
-        showPrefPage(L"KEX Highlighting");
+        showPrefPage(L"Highlighting");
         pump(200);
         HWND p = prefPage(PAGE_HIGHLIGHT);
         const std::wstring st = itemText(p, IDC_K_STATUS), info = itemText(p, IDC_K_INFO), key = itemText(p, IDC_K_KEY);
         wchar_t item[128] = {};
         ::GetMenuStringW(settingsSubmenu(PAGE_HIGHLIGHT), static_cast<UINT>(tokenMenuCommandId()), item, 128, MF_BYCOMMAND);
         check(p && ::IsWindowVisible(p) && st == L"Running" && key == L"Ctrl+Shift+H" && std::wstring(item) == L"Token Style Menu\tCtrl+Shift+H" && info.find(L"2 tokens") != std::wstring::npos,
-              L"L18", L"KEX Highlighting page: \"%ls\", menu key %ls (Settings > KEX Highlighting > \"%ls\"), \"%ls\"", st.c_str(), key.c_str(), item, info.c_str());
+              L"L18", L"KEX Highlighting page: \"%ls\", menu key %ls (KEX > Highlighting > \"%ls\"), \"%ls\"", st.c_str(), key.c_str(), item, info.c_str());
         return 200;
     });
     add([] { return shot(L"preferences-kex-highlighting"); });
@@ -3043,11 +4260,1079 @@ void buildSteps()
         pump(200);
         return 100;
     });
+    addRegressionSteps(add);
     add([] {
         if (g_other.hProcess) { ::TerminateProcess(g_other.hProcess, 0); ::CloseHandle(g_other.hProcess); ::CloseHandle(g_other.hThread); }
         tlog(L"RESULT %d passed, %d failed", g_pass, g_fail);
         tlog(L"DONE");
         g_done = true;
+        return 0;
+    });
+}
+
+// Every animation has a speed of its own, besides the speed for all (round 11b): the ones that had only the speed for all.
+void addOwnSpeedSteps(const StepAdder& add)
+{
+    add([] {
+        // ---- every animation has a speed of its own (the ones that followed only the speed for all before) ----
+        // the box on its page shows 100 %; 200 % typed there halves its time; the speed for all at 200 % halves it again
+        for (const SpeedBox& b : kOwnSpeeds)
+            if (!modules[b.module]->isEnabled())
+            {
+                g_ownSpeedTurnedOn[b.module] = true;
+                setModuleEnabled(b.module, true, false);
+            }
+        openSettings(PAGE_EDITING);
+        pump(300);
+        int shown = 0;
+        for (const SpeedBox& b : kOwnSpeeds)
+        {
+            BOOL ok = FALSE;
+            HWND p = prefPage(pageOfModule(b.module));
+            if (p && ::GetDlgItem(p, b.id) && ::GetDlgItemInt(p, b.id, &ok, FALSE) == 100 && ok) ++shown;
+        }
+        const int boxes = static_cast<int>(std::size(kOwnSpeeds));
+        check(shown == boxes, L"SP1", L"KEX Settings: %d of %d animations that had only the speed for all show a speed box of their own, at 100 %%",
+              shown, boxes);
+        typeOwnSpeeds(200);
+        focusEditor();
+        pump(150);
+        const fx::Stats fs = fx::stats();
+        const OwnTimes own = ownTimes();
+        check(fs.speed[fx::K_LETTER] == 200 && fs.speed[fx::K_FLASH] == 200 && fs.speed[fx::K_DROP] == 200 && own == OwnTimes{ 70, 60, 110, 75, 160 },
+              L"SP2", L"each at 200 %%: falling letters, copy flash and paint splash at %d/%d/%d %%; caret fade %d ms (designed 140), tab snapping %d ms (120), "
+              L"swipe settle %d ms (220), quick note fade %d ms (150), glide to the middle %d ms (320)",
+              fs.speed[fx::K_LETTER], fs.speed[fx::K_FLASH], fs.speed[fx::K_DROP], own.caretFade, own.snapGlide, own.swipeSettle, own.noteFade, own.noteGlide);
+        HWND d = settingsDialog();
+        typeNumber(d, IDC_KEX_SPEED, 200);
+        focusEditor();
+        pump(150);
+        const OwnTimes all = ownTimes();
+        check(animSpeedAll() == 200 && fx::stats().speed[fx::K_FLASH] == 200 && all == OwnTimes{ 35, 30, 55, 38, 80 },
+              L"SP3", L"and all animations at 200 %%: caret fade %d ms, tab snapping %d ms, swipe settle %d ms, quick note fade %d ms, glide %d ms",
+              all.caretFade, all.snapGlide, all.swipeSettle, all.noteFade, all.noteGlide);
+        typeNumber(d, IDC_KEX_SPEED, 100);
+        openSettings(PAGE_EFFECTS);   // in front again (Wine puts the window under Notepad++ when the editor takes the focus)
+        return 300;
+    });
+    add([] { return shot(L"settings-effects-page"); });
+    add([] {
+        // the copy flash at its own speed: at 400 % it is gone long before its designed 300 ms, at 25 % still there after them
+        open(L"rg.txt");
+        HWND s = curSci();
+        focusEditor();
+        lettersFreezeAfter(-1);
+        auto flashAt = [s](int percent, int waitMs) {
+            typeNumber(prefPage(PAGE_EFFECTS), IDC_E_MS, percent);
+            until([] { return flashStats().live == 0; }, 2000);
+            sci(s, SCI_SETSEL, posOf(s, 1, 0), posOf(s, 1, 8));
+            const FlashStats before = flashStats();
+            tokCommand(IDM_EDIT_COPY);
+            waitFor([before] { return flashStats().spawned > before.spawned; }, 1500);
+            pump(waitMs);
+            return flashStats();
+        };
+        const FlashStats fast = flashAt(400, 260);
+        const FlashStats slow = flashAt(25, 500);
+        check(fast.live == 0 && slow.live >= 1, L"SP4", L"copy flash at 400 %%: %d left after 260 ms; at 25 %%: %d still showing after 500 ms", fast.live, slow.live);
+        typeOwnSpeeds(100);
+        if (HWND d = settingsDialog()) ::SendMessageW(d, WM_CLOSE, 0, 0);
+        for (int m = 0; m < M_COUNT; ++m)
+            if (std::exchange(g_ownSpeedTurnedOn[m], false)) setModuleEnabled(m, false, false);
+        return until([] { return flashStats().live == 0; }, 3000);
+    });
+}
+
+// Motions that did not play on the user's PC (round 11): a line moved past or as a wrapped line, a tab closed and
+// opened with the tab bar showing its scroll arrows, and the quick note opening where it was left.
+void addRegressionSteps(const StepAdder& add)
+{
+    add([] {
+        std::string text;
+        for (int i = 0; i < 60; ++i) { char b[48]; snprintf(b, sizeof(b), "line %02d of the regression test\r\n", i); text += b; }
+        writeFile(path(L"rg.txt"), text);
+        open(L"rg.txt");
+        focusEditor();
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        settle(200);
+        return 100;
+    });
+    auto moveWrapped = [add](int line, const wchar_t* id, const wchar_t* what) {
+        add([line, id, what] {
+            HWND s = curSci();
+            focusEditor();
+            sci(s, SCI_SETWRAPMODE, SC_WRAP_WORD);
+            if (line == 10)
+            {
+                std::string longLine;
+                for (int i = 0; i < 40; ++i) longLine += "wrapped words ";
+                sci(s, SCI_SETTARGETRANGE, posOf(s, 11, 0), sci(s, SCI_GETLINEENDPOSITION, 11));
+                sci(s, SCI_REPLACETARGET, longLine.size(), reinterpret_cast<LPARAM>(longLine.c_str()));
+            }
+            sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+            settle(200);
+            const int rows = static_cast<int>(std::max(sci(s, SCI_WRAPCOUNT, 10), sci(s, SCI_WRAPCOUNT, 11)));
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 2));
+            g_motionBefore = motionStats(s);
+            slideTestFreeze(0.3);
+            tokCommand(IDM_EDIT_LINE_DOWN);
+            pump(200);
+            const MotionStats m = motionStats(s);
+            check(rows > 1 && m.started[5] == g_motionBefore.started[5] + 1 && m.frames > g_motionBefore.frames, id,
+                  L"word wrap on: %ls slides (the long line takes %d rows; started %d, frames +%d, refused +%d, skipped +%d)", what, rows,
+                  m.started[5] - g_motionBefore.started[5], m.frames - g_motionBefore.frames, m.refused - g_motionBefore.refused,
+                  m.skipped - g_motionBefore.skipped);
+            wchar_t n[64]; swprintf(n, 64, L"move-wrapped-%ls", id);
+            return shot(n);
+        });
+        add([] {
+            HWND s = curSci();
+            slideTestFreeze(-1);
+            waitFor([s] { return !motionStats(s).active; }, 2000);
+            return 100;
+        });
+    };
+    moveWrapped(10, L"RG1", L"a line moving down past a wrapped line");
+    moveWrapped(11, L"RG2", L"the wrapped line itself moving down");
+    add([] {
+        HWND s = curSci();
+        tokCommand(IDM_EDIT_UNDO);
+        tokCommand(IDM_EDIT_UNDO);
+        tokCommand(IDM_EDIT_UNDO);
+        sci(s, SCI_SETWRAPMODE, SC_WRAP_NONE);
+        settle(200);
+        // the last line in sight moving down: the view scrolls by a line to keep it in sight, and it still slides
+        const int rows = static_cast<int>(sci(s, SCI_LINESONSCREEN));
+        const int last = std::min(55, std::max(30, rows + 5));
+        sci(s, SCI_SETEMPTYSELECTION, posOf(s, last, 2));
+        sci(s, SCI_SETFIRSTVISIBLELINE, last - rows + 1);
+        settle(200);
+        const int top = static_cast<int>(sci(s, SCI_GETFIRSTVISIBLELINE));
+        g_motionBefore = motionStats(s);
+        slideTestFreeze(0.3);
+        tokCommand(IDM_EDIT_LINE_DOWN);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        const int scrolled = static_cast<int>(sci(s, SCI_GETFIRSTVISIBLELINE)) - top;
+        check(scrolled > 0 && m.started[5] == g_motionBefore.started[5] + 1 && m.frames > g_motionBefore.frames, L"RG2b",
+              L"the bottom line in sight moving down: the view scrolls by %d line(s) and the line slides (started %d, refused +%d)",
+              scrolled, m.started[5] - g_motionBefore.started[5], m.refused - g_motionBefore.refused);
+        return shot(L"move-line-at-edge");
+    });
+    add([] {
+        HWND s = curSci();
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        tokCommand(IDM_EDIT_UNDO);
+        settle(200);
+        openOverflowTabs();
+        settle(300);
+        return 100;
+    });
+    auto tabStep = [add](const wchar_t* id, const wchar_t* what, const wchar_t* pics, const std::function<void()>& act, bool closing) {
+        add([id, what, pics, act, closing] {
+            const bool arrows = tabArrowsShown(views.tabBar(views.viewOf(curSci())));
+            g_motion = tabMotionStats();
+            tabMotionTestFreeze(0.5);
+            act();
+            pump(250);
+            const TabMotionStats st = tabMotionStats();
+            const int played = closing ? st.folds - g_motion.folds : st.unfolds - g_motion.unfolds;
+            check(arrows && played == 1 && st.overlayShown && st.foldFrames > g_motion.foldFrames, id,
+                  L"tab bar with scroll arrows (%ls): %ls plays (played %d, skipped +%d, in one go +%d; %.1f of %d px)", arrows ? L"shown" : L"NOT shown",
+                  what, played, st.foldSkipped - g_motion.foldSkipped, st.foldBulk - g_motion.foldBulk, st.lastWidth, st.lastDx);
+            saveTabFrames(pics);
+            return shot(pics);
+        });
+        add([] {
+            tabMotionTestFreeze(-1);
+            return until([] { return !tabMotionStats().overlayShown; }, 3000);
+        });
+    };
+    tabStep(L"RG3", L"closing the last tab", L"arrows-close-last", [] { nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE); }, true);
+    tabStep(L"RG4", L"opening a file (the bar scrolls to its tab)", L"arrows-open", [] {
+        writeFile(path(L"a-tab-opened-with-arrows.txt"), "new\r\n");
+        open(L"a-tab-opened-with-arrows.txt");
+    }, false);
+    add([] {
+        // the bar scrolled back to its start, on its second tab (closing it brings back the first, used before it)
+        const int v = views.viewOf(curSci());
+        views.activate(v, 0);
+        settle(300);
+        views.activate(v, 1);
+        settle(300);
+        return 100;
+    });
+    tabStep(L"RG5", L"closing the second tab (a hidden tab comes in from behind the arrows)", L"arrows-close-second",
+            [] { nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE); }, true);
+    add([] {
+        // a narrow window: a new tab has to be scrolled to
+        ::GetWindowRect(npp._nppHandle, &g_rgWindow);
+        ::MoveWindow(npp._nppHandle, g_rgWindow.left, g_rgWindow.top, 520, g_rgWindow.bottom - g_rgWindow.top, TRUE);
+        settle(300);
+        return 100;
+    });
+    tabStep(L"RG4b", L"opening a file in a narrow window (the bar scrolls a long way to its tab)", L"arrows-open-narrow", [] {
+        writeFile(path(L"a-tab-opened-narrow.txt"), "new\r\n");
+        open(L"a-tab-opened-narrow.txt");
+    }, false);
+    add([] {
+        ::MoveWindow(npp._nppHandle, g_rgWindow.left, g_rgWindow.top, g_rgWindow.right - g_rgWindow.left, g_rgWindow.bottom - g_rgWindow.top, TRUE);
+        settle(300);
+        return 100;
+    });
+    add([] {
+        // the quick note opens where it was left: same lines at the top, same caret
+        pressHotkey();
+        pump(300);
+        HWND ed = quickNoteEditor();
+        if (!ed) { check(false, L"RG6", L"the quick note opens"); return 100; }
+        std::string t;
+        for (int i = 0; i < 300; ++i) { char b[32]; snprintf(b, sizeof(b), "note line %03d\n", i); t += b; }
+        sci(ed, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(t.c_str()));
+        const LRESULT caret = posOf(ed, 130, 3);
+        sci(ed, SCI_SETSEL, caret, caret);
+        sci(ed, SCI_SETFIRSTVISIBLELINE, 120);
+        pump(100);
+        pressHotkey();   // hides it (and saves)
+        pump(400);
+        const bool gone = !quickNoteWindow();
+        pressHotkey();
+        pump(400);
+        ed = quickNoteEditor();
+        const int first = ed ? static_cast<int>(sci(ed, SCI_GETFIRSTVISIBLELINE)) : -1;
+        const LRESULT pos = ed ? sci(ed, SCI_GETCURRENTPOS) : -1;
+        check(gone && first == 120 && pos == caret, L"RG6", L"Ctrl+Alt+M hidden and shown again: the note shows line %d at the top (was 120), caret at %d (was %d)",
+              first, static_cast<int>(pos), static_cast<int>(caret));
+        pressHotkey();
+        pump(400);
+        ::SetForegroundWindow(npp._nppHandle);
+        focusEditor();
+        return 100;
+    });
+    // The caret in an edit motion (round 11b): it goes on top of each frame and moves only by its own glide. It used to
+    // be painted into the picture of the text after the edit, so it glided and moved with that text as well: an undo
+    // right after a paste threw the caret far to the right before it came back.
+    auto caretRides = [add](const wchar_t* id, bool paste) {
+        add([id, paste] {
+            open(L"rg.txt");
+            HWND s = curSci();
+            focusEditor();
+            sci(s, SCI_SETWRAPMODE, SC_WRAP_NONE);
+            sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+            sci(s, SCI_SETXOFFSET, 0);   // the view may be a narrow one of four: nothing here scrolls it sideways
+            const int line = paste ? 3 : 5;
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, line, 4));
+            settle(300);
+            const float toX = caretStats().mainX;   // where the caret ends up after the edit
+            if (paste)
+            {
+                const std::string clip = "PASTED words";
+                sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
+                tokCommand(IDM_EDIT_PASTE);
+                settle(800);
+            }
+            else
+            {
+                sci(s, SCI_SETSEL, posOf(s, line, 4), posOf(s, line, 18));   // selected rightwards: the caret at its end
+                settle(300);
+            }
+            const float fromX = caretStats().mainX;   // and where it is before
+            // the caret glides slowly (320 ms) and doesn't blink, the motion holds near its start
+            settings.setInt(modules[M_CARET]->key(), L"GlideSpeed", 25);
+            modules[M_CARET]->loadOptions();
+            caretTestFreeze(-1, true);
+            slideTestFreeze(0.05);
+            g_motionBefore = motionStats(s);
+            if (paste) tokCommand(IDM_EDIT_UNDO);
+            else tap(VK_DELETE);
+            pump(200);
+            const MotionStats m = motionStats(s);
+            const int kind = paste ? 4 : 1;
+            check(m.active && m.started[kind] == g_motionBefore.started[kind] + 1 && m.caretX <= fromX + 1.5f && m.caretX >= toX - 1.5f, id,
+                  L"%ls: the caret shows between where it was and where it goes, never past them (x %.0f, was %.0f, goes to %.0f; text %.0f %% to go)",
+                  paste ? L"undo right after a paste" : L"Delete on a selection made rightwards", m.caretX, fromX, toX, m.gap * 100.0);
+            return shot(paste ? L"undo-after-paste-caret" : L"delete-selection-caret");
+        });
+        add([paste] {
+            HWND s = curSci();
+            caretTestFreeze(-1, false);
+            slideTestFreeze(-1);
+            settings.setInt(modules[M_CARET]->key(), L"GlideSpeed", 100);
+            modules[M_CARET]->loadOptions();
+            waitFor([s] { return !motionStats(s).active; }, 2000);
+            if (!paste) sci(s, SCI_UNDO);   // the deleted text back (the undone paste stays undone)
+            return until([s] { return !motionStats(s).active; }, 2000);
+        });
+    };
+    caretRides(L"RG7", true);
+    caretRides(L"RG7b", false);
+    add([] {
+        // Scintilla's own caret (the smooth caret off) is held back from the motion's picture too: at its place, on top
+        open(L"rg.txt");
+        HWND s = curSci();
+        focusEditor();
+        const bool caretWas = modules[M_CARET]->isEnabled();
+        if (caretWas) setModuleEnabled(M_CARET, false, false);
+        const LRESULT period = sci(s, SCI_GETCARETPERIOD);
+        sci(s, SCI_SETCARETPERIOD, 0);   // never blinks off
+        sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+        sci(s, SCI_SETXOFFSET, 0);
+        const intptr_t at = posOf(s, 3, 4);
+        const std::string clip = "PASTED words";
+        sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
+        sci(s, SCI_SETEMPTYSELECTION, at);
+        settle(300);
+        tokCommand(IDM_EDIT_PASTE);
+        settle(800);
+        slideTestFreeze(0.05);
+        g_motionBefore = motionStats(s);
+        tokCommand(IDM_EDIT_UNDO);
+        pump(200);
+        const MotionStats m = motionStats(s);
+        const float place = static_cast<float>(sci(s, SCI_POINTXFROMPOSITION, 0, at));
+        check(m.active && m.started[4] == g_motionBefore.started[4] + 1 && std::abs(m.caretX - place) <= 2.0f, L"RG7c",
+              L"smooth caret off, undo right after a paste: Scintilla's own caret shows at its place over the moving text (x %.0f, its place %.0f; text %.0f %% to go)",
+              m.caretX, place, m.gap * 100.0);
+        slideTestFreeze(-1);
+        waitFor([s] { return !motionStats(s).active; }, 2000);
+        sci(s, SCI_SETCARETPERIOD, static_cast<WPARAM>(period));
+        if (caretWas) setModuleEnabled(M_CARET, true, false);
+        settle(200);
+        return 100;
+    });
+    addOwnSpeedSteps(add);
+    addMotionCostSteps(add);
+}
+
+// What an editing motion's frames cost (the speed pass after round 11): run in the focused mode and the full suite.
+void addMotionCostSteps(const StepAdder& add)
+{
+    add([] {
+        // an editing motion's frames: the view's picture is painted for its first frame (and again only when the view
+        // changes), the others are put together from it; against painting it for every frame, as before
+        std::string text;
+        for (int i = 1; i <= 80; ++i) text += "static int value" + std::to_string(i) + " = " + std::to_string(i * 7) + ";   // a line of the motion speed test\r\n";
+        writeFile(path(L"perf-motion.cpp"), text);
+        open(L"perf-motion.cpp");
+        focusEditor();
+        HWND s = curSci();
+        sci(s, SCI_COLOURISE, 0, -1);
+        settings.setInt(modules[M_MOTION]->key(), L"PasteSpeed", 25);   // a long paste: about a second of frames
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        settle(200);
+        struct Cost { int frames = 0, renders = 0; double ms = 0, renderMs = 0; };
+        auto paste = [s](bool everyFrame) {
+            motionTestEveryFrame(everyFrame);
+            const std::string clip = "pasted words, pasted words\r\nand a second line of them\r\n";
+            sci(s, SCI_COPYTEXT, clip.size(), reinterpret_cast<LPARAM>(clip.c_str()));
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 0));
+            settle(300);
+            const MotionStats a = motionStats(s);
+            tokCommand(IDM_EDIT_PASTE);
+            waitFor([s] { return !motionStats(s).active; }, 4000);
+            const MotionStats b = motionStats(s);
+            Cost c;
+            c.frames = b.renders + b.reuses - a.renders - a.reuses;
+            c.renders = b.renders - a.renders;
+            c.renderMs = (b.renderMs - a.renderMs) / std::max(1, c.frames);
+            c.ms = c.renderMs + (b.presentMs - a.presentMs) / std::max(1, c.frames);
+            tokCommand(IDM_EDIT_UNDO);
+            waitFor([s] { return !motionStats(s).active; }, 4000);
+            settle(200);
+            return c;
+        };
+        const Cost every = paste(true);
+        const Cost once = paste(false);
+        motionTestEveryFrame(false);
+        tlog(L"INFO PERF editing motion, a frame: %.2f ms with the view painted once (%d of %d frames painted it, %.2f ms of that), "
+             L"%.2f ms painting it for every frame (%.2f ms of that)", once.ms, once.renders, once.frames, once.renderMs, every.ms, every.renderMs);
+        check(once.frames >= 10 && once.renders * 4 <= once.frames && every.renders == every.frames && every.frames >= 10, L"PERF2",
+              L"an editing motion paints the view once and puts its frames together from it: %d of %d frames painted it (%.2f ms a frame), "
+              L"against %d of %d (%.2f ms a frame)", once.renders, once.frames, once.ms, every.renders, every.frames, every.ms);
+        settings.setInt(modules[M_MOTION]->key(), L"PasteSpeed", 100);
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", kMotionRapidMs);
+        modules[M_MOTION]->loadOptions();
+        nppMsg(NPPM_MENUCOMMAND, 0, IDM_FILE_CLOSE);
+        pump(200);
+        return 100;
+    });
+}
+
+// The views draw with DirectWrite, as Notepad++ does on Windows (under Wine it falls back to GDI by itself):
+// the editing motion and the tab slide on that path. Run alone with KexSuite_only=directwrite.
+void addDirectWriteSteps(const StepAdder& add)
+{
+    add([] {
+        std::string text;
+        for (int i = 0; i < 60; ++i) { char b[48]; snprintf(b, sizeof(b), "line %02d of the DirectWrite test\r\n", i); text += b; }
+        writeFile(path(L"dw.txt"), text);
+        writeFile(path(L"dw2.txt"), "the other document\r\n");
+        open(L"dw2.txt");
+        open(L"dw.txt");
+        focusEditor();
+        settings.setInt(modules[M_MOTION]->key(), L"RapidMs", 0);
+        modules[M_MOTION]->loadOptions();
+        for (int v = 0; v < views.count(); ++v)
+            if (HWND s = views.sci(v)) sci(s, SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITE);
+        settle(300);
+        const int tech = static_cast<int>(sci(curSci(), SCI_GETTECHNOLOGY));
+        check(tech == SC_TECHNOLOGY_DIRECTWRITE, L"DW0", L"the views draw with DirectWrite, as on Windows (technology %d)", tech);
+        return 100;
+    });
+    // (Edit > Cut is not tried here: Wine's Direct2D paints nothing and asks to paint again at once, so a held cut
+    // would never let go. The full run tries it with GDI.)
+    auto moveLine = [add](UINT cmd, const wchar_t* id, const wchar_t* what) {
+        add([cmd, id, what] {
+            HWND s = curSci();
+            focusEditor();
+            sci(s, SCI_SETEMPTYSELECTION, posOf(s, 10, 2));
+            g_motionBefore = motionStats(s);
+            slideTestFreeze(0.3);
+            tokCommand(cmd);
+            pump(200);
+            const MotionStats m = motionStats(s);
+            KexSlideInfo si{};
+            sci(s, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&si));
+            check(m.started[5] == g_motionBefore.started[5] + 1 && m.frames > g_motionBefore.frames, id,
+                  L"DirectWrite: %ls slides (started %d, frames +%d, refused +%d, skipped +%d, ended +%d, gap %.2f; slide stop reason %d)",
+                  what, m.started[5] - g_motionBefore.started[5], m.frames - g_motionBefore.frames, m.refused - g_motionBefore.refused,
+                  m.skipped - g_motionBefore.skipped, m.ended - g_motionBefore.ended, m.gap, si.stopReason);
+            slideTestFreeze(-1);
+            waitFor([s] { return !motionStats(s).active; }, 2000);
+            return 100;
+        });
+    };
+    moveLine(IDM_EDIT_LINE_DOWN, L"DW1", L"Ctrl+Shift+Down");
+    moveLine(IDM_EDIT_LINE_UP, L"DW2", L"Ctrl+Shift+Up");
+    add([] {
+        HWND s = curSci();
+        KexSlideInfo b{};
+        sci(s, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&b));
+        slideTestFreeze(0.5);
+        tokCommand(IDM_VIEW_TAB_PREV);
+        pump(200);
+        KexSlideInfo a{};
+        sci(s, SCI_KEX_GETSLIDEINFO, 0, reinterpret_cast<LPARAM>(&a));
+        check(a.slides == b.slides + 1 && a.frames > b.frames, L"DW4", L"DirectWrite: switching tabs slides (slides +%d, frames +%d, stop reason %d)",
+              a.slides - b.slides, a.frames - b.frames, a.stopReason);
+        slideTestFreeze(-1);
+        pump(400);
+        tokCommand(IDM_VIEW_TAB_NEXT);
+        pump(400);
+        return 100;
+    });
+}
+
+// ---- GIF recording: KexSuite_demo ---------------------------------------------------------------
+// -pluginMessage="KexSuite_selftest=1;KexSuite_demo=all;KexSuite_testdir=DIR" plays short scenes of the
+// features at a person's pace and records each one from the screen into DIR\<scene>.kexrec, for the
+// README's GIFs (suite/test/kexrec2gif.py makes the GIF). KexSuite_demo can also name scenes: "motion,tabs".
+// The pointer is drawn into the frames where a scene puts it, so the real mouse never moves, and the edits
+// are made with Notepad++'s own commands, so nothing depends on keyboard focus.
+
+std::atomic<int> g_ptrX{ -100000 }, g_ptrY{ -100000 }, g_ptrShape{ 0 };   // the drawn pointer (screen px): 0 arrow, 1 I-beam
+
+// The screen inside a rectangle, about 50 times a second. A frame is written only when something changed,
+// as the rectangle that changed XORed with what was there before, so a zip of the file is small.
+// File: "KEXREC1\n", int32 width, height; then per frame uint32 ms, int32 x, y, w, h and w*h uint32 pixels
+// (0x00RRGGBB, XOR with the frame before); the last record has w = h = 0 and the time the recording ended.
+class ScreenRecorder {
+public:
+    bool start(const std::wstring& file, const RECT& rc)
+    {
+        _rc = rc; _w = rc.right - rc.left; _h = rc.bottom - rc.top;
+        if (_w <= 0 || _h <= 0 || _thread) return false;
+        _f = _wfopen(file.c_str(), L"wb");
+        if (!_f) return false;
+        setvbuf(_f, nullptr, _IOFBF, 1 << 22);
+        fwrite("KEXREC1\n", 1, 8, _f);
+        const int32_t size[2] = { _w, _h };
+        fwrite(size, sizeof(int32_t), 2, _f);
+        _prev.assign(static_cast<size_t>(_w) * _h, 0xFF000000u);   // differs from every first-frame pixel
+        _stop = false; _frames = 0; _grabMs = 0;
+        _thread = ::CreateThread(nullptr, 0, run, this, 0, nullptr);
+        if (!_thread) { fclose(_f); _f = nullptr; }
+        return _thread != nullptr;
+    }
+    int stop()
+    {
+        if (!_thread) return 0;
+        _stop = true;
+        ::WaitForSingleObject(_thread, 10000);
+        ::CloseHandle(_thread); _thread = nullptr;
+        fclose(_f); _f = nullptr;
+        return _frames;
+    }
+    double grabMs() const { return _grabMs; }
+
+private:
+    static DWORD WINAPI run(void* p) { static_cast<ScreenRecorder*>(p)->loop(); return 0; }
+
+    void writeFrame(uint32_t ms, int x, int y, int w, int h, const uint32_t* px)
+    {
+        const int32_t head[4] = { x, y, w, h };
+        fwrite(&ms, sizeof(ms), 1, _f);
+        fwrite(head, sizeof(int32_t), 4, _f);
+        _row.resize(static_cast<size_t>(w));
+        for (int r = y; r < y + h; ++r)
+        {
+            const size_t at = static_cast<size_t>(r) * _w + x;
+            for (int c = 0; c < w; ++c) { _row[c] = px[at + c] ^ _prev[at + c]; _prev[at + c] = px[at + c]; }
+            fwrite(_row.data(), sizeof(uint32_t), _row.size(), _f);
+        }
+    }
+
+    void loop()
+    {
+        using Period = UINT(WINAPI*)(UINT);
+        HMODULE winmm = ::LoadLibraryW(L"winmm.dll");
+        auto beginPeriod = winmm ? reinterpret_cast<Period>(reinterpret_cast<void*>(::GetProcAddress(winmm, "timeBeginPeriod"))) : nullptr;
+        auto endPeriod = winmm ? reinterpret_cast<Period>(reinterpret_cast<void*>(::GetProcAddress(winmm, "timeEndPeriod"))) : nullptr;
+        if (beginPeriod) beginPeriod(1);   // Sleep() to the millisecond
+        HDC screen = ::GetDC(nullptr), mem = ::CreateCompatibleDC(screen);
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader); bi.bmiHeader.biWidth = _w; bi.bmiHeader.biHeight = -_h;
+        bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HBITMAP dib = ::CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HGDIOBJ old = ::SelectObject(mem, dib);
+        HCURSOR cursor[2] = { ::LoadCursorW(nullptr, IDC_ARROW), ::LoadCursorW(nullptr, IDC_IBEAM) };
+        POINT hot[2] = {};
+        for (int i = 0; i < 2; ++i)
+        {
+            ICONINFO ii{};
+            if (!::GetIconInfo(cursor[i], &ii)) continue;
+            hot[i] = POINT{ static_cast<LONG>(ii.xHotspot), static_cast<LONG>(ii.yHotspot) };
+            if (ii.hbmMask) ::DeleteObject(ii.hbmMask);
+            if (ii.hbmColor) ::DeleteObject(ii.hbmColor);
+        }
+        uint32_t* px = static_cast<uint32_t*>(bits);
+        const double t0 = nowMs();
+        double next = t0, grabTotal = 0;
+        int grabs = 0;
+        while (!_stop && px)
+        {
+            const double g0 = nowMs();
+            ::BitBlt(mem, 0, 0, _w, _h, screen, _rc.left, _rc.top, SRCCOPY | CAPTUREBLT);
+            const int k = g_ptrShape == 1 ? 1 : 0, x = g_ptrX, y = g_ptrY;
+            if (x > -100000) ::DrawIconEx(mem, x - _rc.left - hot[k].x, y - _rc.top - hot[k].y, cursor[k], 0, 0, 0, nullptr, DI_NORMAL);
+            ::GdiFlush();
+            const size_t n = static_cast<size_t>(_w) * _h;
+            for (size_t i = 0; i < n; ++i) px[i] &= 0x00FFFFFFu;
+            grabTotal += nowMs() - g0; ++grabs;
+            int top = -1, bottom = -1, left = _w, right = -1;
+            for (int r = 0; r < _h; ++r)
+            {
+                const uint32_t* a = px + static_cast<size_t>(r) * _w;
+                const uint32_t* b = _prev.data() + static_cast<size_t>(r) * _w;
+                if (!memcmp(a, b, sizeof(uint32_t) * _w)) continue;
+                if (top < 0) top = r;
+                bottom = r;
+                int c0 = 0, c1 = _w - 1;
+                while (c0 < left && a[c0] == b[c0]) ++c0;
+                while (c1 > right && a[c1] == b[c1]) --c1;
+                left = std::min(left, c0); right = std::max(right, c1);
+            }
+            if (top >= 0)
+            {
+                writeFrame(static_cast<uint32_t>(g0 - t0), left, top, right - left + 1, bottom - top + 1, px);
+                ++_frames;
+            }
+            next += 20;
+            const double now = nowMs();
+            if (next > now) ::Sleep(static_cast<DWORD>(next - now));
+            else next = now;
+        }
+        const uint32_t end = static_cast<uint32_t>(nowMs() - t0);
+        const int32_t none[4] = {};
+        fwrite(&end, sizeof(end), 1, _f);
+        fwrite(none, sizeof(int32_t), 4, _f);
+        _grabMs = grabs ? grabTotal / grabs : 0;
+        ::SelectObject(mem, old); ::DeleteObject(dib); ::DeleteDC(mem); ::ReleaseDC(nullptr, screen);
+        if (endPeriod) endPeriod(1);
+    }
+
+    RECT _rc{};
+    int _w = 0, _h = 0;
+    FILE* _f = nullptr;
+    HANDLE _thread = nullptr;
+    std::atomic<bool> _stop{ false };
+    std::vector<uint32_t> _prev, _row;
+    int _frames = 0;
+    double _grabMs = 0;
+};
+ScreenRecorder g_rec;
+std::wstring g_demoScenes;   // KexSuite_demo's value
+std::wstring g_demoFiles;    // where the scenes' documents are
+double g_dpiScale = 1.0;
+
+bool demoWanted(const wchar_t* scene)
+{
+    if (g_demoScenes == L"all") return true;
+    const std::wstring list = L"," + g_demoScenes + L",";
+    return list.find(std::wstring(L",") + scene + L",") != std::wstring::npos;
+}
+int px(int v) { return static_cast<int>(std::lround(v * g_dpiScale)); }
+
+// a window's rectangle as it shows (Windows 10 adds invisible borders around it for resizing)
+RECT shownRect(HWND w)
+{
+    RECT r{};
+    ::GetWindowRect(w, &r);
+    using GetAttr = HRESULT(WINAPI*)(HWND, DWORD, PVOID, DWORD);
+    static GetAttr get = [] {
+        HMODULE m = ::LoadLibraryW(L"dwmapi.dll");
+        return m ? reinterpret_cast<GetAttr>(reinterpret_cast<void*>(::GetProcAddress(m, "DwmGetWindowAttribute"))) : nullptr;
+    }();
+    RECT f{};
+    if (get && SUCCEEDED(get(w, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, &f, sizeof(f))) && f.right > f.left) r = f;
+    return r;
+}
+// in front and drawn as the active window (a window started from a script can't always take the foreground)
+bool takeFront(HWND w)
+{
+    const DWORD fg = ::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr), me = ::GetCurrentThreadId();
+    if (fg && fg != me) ::AttachThreadInput(me, fg, TRUE);
+    ::SetForegroundWindow(w);
+    ::BringWindowToTop(w);
+    if (fg && fg != me) ::AttachThreadInput(me, fg, FALSE);
+    ::SendMessageW(w, WM_NCACTIVATE, TRUE, 0);   // a white title, also when Windows kept another window in front
+    return ::GetForegroundWindow() == w;
+}
+void recordStart(const wchar_t* scene, HWND target)
+{
+    const bool front = takeFront(target);
+    wchar_t other[64] = L"";
+    if (!front) ::GetClassNameW(::GetForegroundWindow(), other, 64);
+    for (int v = 0; v < views.count(); ++v) if (HWND s = views.sci(v)) ::UpdateWindow(s);
+    pump(150);
+    const RECT r = shownRect(target);
+    const bool ok = g_rec.start(path((std::wstring(scene) + L".kexrec").c_str()), r);
+    tlog(L"DEMO %ls: recording %ls, %ls%ls%ls", scene, rectStr(r).c_str(), front ? L"in front" : L"in front of it: ", other,
+         ok ? L"" : L", FAILED to start");
+}
+void recordStop(const wchar_t* scene)
+{
+    const int frames = g_rec.stop();
+    tlog(L"DEMO %ls: %d frames, %.1f ms a grab", scene, frames, g_rec.grabMs());
+}
+
+// the drawn pointer: an I-beam over a view's text, an arrow elsewhere
+int shapeAt(POINT p)
+{
+    for (int v = 0; v < views.count(); ++v)
+    {
+        HWND s = views.sci(v);
+        if (!s || !::IsWindowVisible(s)) continue;
+        RECT r = clientOnScreen(s);
+        int margins = 0;
+        for (int m = 0; m < 5; ++m) margins += static_cast<int>(sci(s, SCI_GETMARGINWIDTHN, m));
+        r.left += margins;
+        r.right -= ::GetSystemMetrics(SM_CXVSCROLL);
+        if (::PtInRect(&r, p)) return 1;
+    }
+    return 0;
+}
+void pointerAt(POINT p) { g_ptrShape = shapeAt(p); g_ptrX = p.x; g_ptrY = p.y; }
+// glides there as a hand moves a mouse: slow, fast, slow
+void pointerTo(POINT p, int ms = 450)
+{
+    const POINT a{ g_ptrX, g_ptrY };
+    if (a.x <= -100000 || ms <= 0) { pointerAt(p); return; }
+    const double t0 = nowMs();
+    for (;;)
+    {
+        const double u = std::min(1.0, (nowMs() - t0) / ms);
+        const double e = u < 0.5 ? 4 * u * u * u : 1 - std::pow(-2 * u + 2, 3) / 2;
+        pointerAt(POINT{ static_cast<LONG>(std::lround(a.x + (p.x - a.x) * e)), static_cast<LONG>(std::lround(a.y + (p.y - a.y) * e)) });
+        if (u >= 1) break;
+        pump(8);
+    }
+}
+// a point in a view's text: line, column (the middle of that character cell)
+POINT textPoint(HWND s, int line, int col)
+{
+    const intptr_t pos = posOf(s, line, col);
+    POINT p{ static_cast<LONG>(sci(s, SCI_POINTXFROMPOSITION, 0, pos)), static_cast<LONG>(sci(s, SCI_POINTYFROMPOSITION, 0, pos)) };
+    p.y += static_cast<LONG>(sci(s, SCI_TEXTHEIGHT, line)) / 2;
+    ::ClientToScreen(s, &p);
+    return p;
+}
+RECT tabOnScreen(int v, int idx)
+{
+    HWND bar = views.tabBar(v);
+    RECT r{};
+    ::SendMessageW(bar, TCM_GETITEMRECT, static_cast<WPARAM>(idx), reinterpret_cast<LPARAM>(&r));
+    ::MapWindowPoints(bar, nullptr, reinterpret_cast<POINT*>(&r), 2);
+    return r;
+}
+int tabIndexOf(int v, const wchar_t* name)
+{
+    for (int i = 0; i < views.nbFiles(v); ++i)
+        if (fileNameOf(bufferPath(views.bufferId(v, i))) == name) return i;
+    return -1;
+}
+POINT tabCentre(const wchar_t* name)
+{
+    const RECT r = tabOnScreen(0, std::max(0, tabIndexOf(0, name)));
+    return POINT{ (r.left + r.right) / 2 - px(8), (r.top + r.bottom) / 2 + px(2) };
+}
+POINT tabCloseButton(const wchar_t* name)
+{
+    const RECT r = tabOnScreen(0, std::max(0, tabIndexOf(0, name)));
+    return POINT{ r.right - px(12), (r.top + r.bottom) / 2 + px(1) };
+}
+// typed as a person types: a little uneven
+void typeText(HWND s, const char* text, int msPerChar = 85)
+{
+    static unsigned seed = 7;
+    for (const char* c = text; *c; ++c)
+    {
+        if (*c == '\n') sci(s, SCI_NEWLINE);
+        else ::SendMessageW(s, WM_CHAR, static_cast<WPARAM>(static_cast<unsigned char>(*c)), 1);
+        seed = seed * 1103515245u + 12345u;
+        pump(msPerChar / 2 + static_cast<int>((seed >> 16) % static_cast<unsigned>(msPerChar)));
+    }
+}
+void selectLine(HWND s, int line)
+{
+    sci(s, SCI_SETSEL, sci(s, SCI_POSITIONFROMLINE, line), sci(s, SCI_POSITIONFROMLINE, line + 1));
+}
+int lineWith(HWND s, const char* text)
+{
+    const intptr_t lines = sci(s, SCI_GETLINECOUNT);
+    for (intptr_t l = 0; l < lines; ++l)
+        if (lineText(s, l).find(text) != std::string::npos) return static_cast<int>(l);
+    return 0;
+}
+intptr_t posIn(HWND s, int line, const char* word)
+{
+    const size_t at = lineText(s, line).find(word);
+    return sci(s, SCI_POSITIONFROMLINE, line) + static_cast<intptr_t>(at == std::string::npos ? 0 : at);
+}
+void cmd(UINT id) { nppMsg(NPPM_MENUCOMMAND, 0, id); }
+void caretTo(HWND s, intptr_t pos) { sci(s, SCI_SETEMPTYSELECTION, pos); }
+void demoSwitch(const wchar_t* name)
+{
+    nppMsg(NPPM_SWITCHTOFILE, 0, reinterpret_cast<LPARAM>((g_demoFiles + L"\\" + name).c_str()));
+    sci(curSci(), SCI_SETFOCUS, 1);   // the caret shows as in a focused editor, whatever window has the focus
+}
+const char* demoText(const wchar_t* name);
+// a scene's document as it starts: its first text, unchanged, at the top, nothing moving
+void resetDoc(const wchar_t* name)
+{
+    demoSwitch(name);
+    HWND s = curSci();
+    const char* text = demoText(name);
+    if (docText(s) != text)
+    {
+        sci(s, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(text));
+        sci(s, SCI_EMPTYUNDOBUFFER);
+        sci(s, SCI_SETSAVEPOINT);
+    }
+    sci(s, SCI_SETFIRSTVISIBLELINE, 0);
+    caretTo(s, 0);
+    waitFor([s] { return !motionStats(s).active && lettersStats().live == 0 && flashStats().live == 0 && !slideStats(s).active; }, 3000);
+}
+
+const char* kDemoMain =
+    "#include <stdint.h>\r\n"
+    "#include <stdbool.h>\r\n"
+    "#include \"gpio.h\"\r\n"
+    "\r\n"
+    "static uint32_t ticks;\r\n"
+    "static bool led_on;\r\n"
+    "\r\n"
+    "void toggle_led(void);\r\n"
+    "void read_button(void);\r\n"
+    "void delay_ms(uint32_t ms);\r\n"
+    "\r\n"
+    "int main(void) {\r\n"
+    "    gpio_init();\r\n"
+    "\r\n"
+    "    while (true) {\r\n"
+    "        read_button();\r\n"
+    "        delay_ms(250);\r\n"
+    "        toggle_led();\r\n"
+    "        ticks++;\r\n"
+    "    }\r\n"
+    "}\r\n"
+    "\r\n"
+    "void toggle_led(void) {\r\n"
+    "    led_on = !led_on;\r\n"
+    "    gpio_write(LED_PIN, led_on);\r\n"
+    "}\r\n"
+    "\r\n"
+    "void read_button(void) {\r\n"
+    "    if (gpio_read(BUTTON_PIN)) {\r\n"
+    "        led_on = false;\r\n"
+    "        ticks = 0;\r\n"
+    "    }\r\n"
+    "}\r\n";
+const char* kDemoGpio =
+    "#pragma once\r\n"
+    "\r\n"
+    "#define LED_PIN     5\r\n"
+    "#define BUTTON_PIN  4\r\n"
+    "\r\n"
+    "void gpio_init(void);\r\n"
+    "bool gpio_read(int pin);\r\n"
+    "void gpio_write(int pin, bool on);\r\n";
+const char* kDemoNotes =
+    "Lab 6 notes\r\n"
+    "\r\n"
+    "- LED blinks every 250 ms\r\n"
+    "- button resets the counter\r\n"
+    "- ask about the timer interrupt\r\n";
+const char* kDemoTodo =
+    "# To do\r\n"
+    "\r\n"
+    "1. Debounce the button\r\n"
+    "2. Measure the current draw\r\n"
+    "3. Write the report\r\n";
+
+const char* demoText(const wchar_t* name)
+{
+    const std::wstring n = name;
+    return n == L"main.c" ? kDemoMain : n == L"gpio.h" ? kDemoGpio : n == L"notes.txt" ? kDemoNotes : kDemoTodo;
+}
+
+void addDemoSteps(const StepAdder& add)
+{
+    // ---- setup: a window the size of the old GIFs, the scenes' documents ---------------------------------
+    add([] {
+        g_demoFiles = g_dir + L"\\lab6";
+        ::CreateDirectoryW(g_demoFiles.c_str(), nullptr);
+        writeFile(g_demoFiles + L"\\main.c", kDemoMain);
+        writeFile(g_demoFiles + L"\\gpio.h", kDemoGpio);
+        writeFile(g_demoFiles + L"\\notes.txt", kDemoNotes);
+        writeFile(g_demoFiles + L"\\todo.md", kDemoTodo);
+        using GetDpi = UINT(WINAPI*)(HWND);
+        auto getDpi = reinterpret_cast<GetDpi>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
+        g_dpiScale = getDpi ? getDpi(npp._nppHandle) / 96.0 : 1.0;
+        if (g_dpiScale < 1.0) g_dpiScale = 1.0;
+        ::ShowWindow(npp._nppHandle, SW_RESTORE);
+        RECT work{};
+        ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        ::SetWindowPos(npp._nppHandle, HWND_TOPMOST, work.left + px(60), work.top + px(40), px(820), px(600), SWP_SHOWWINDOW);
+        for (const wchar_t* f : { L"main.c", L"gpio.h", L"notes.txt", L"todo.md" })
+            nppMsg(NPPM_DOOPEN, 0, reinterpret_cast<LPARAM>((g_demoFiles + L"\\" + f).c_str()));
+        // the empty "new 1" Notepad++ starts with
+        for (int i = views.nbFiles(0) - 1; i >= 0; --i)
+            if (bufferPath(views.bufferId(0, i)).find(L'\\') == std::wstring::npos) { views.activate(0, i); cmd(IDM_FILE_CLOSE); }
+        takeFront(npp._nppHandle);
+        // as the user runs it: no falling letters, no flash on cut and delete (the motions show those)
+        setModuleEnabled(M_LETTERS, false, false);
+        settings.setInt(modules[M_FLASH]->key(), L"Cut", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"Delete", 0);
+        settings.setInt(modules[M_FLASH]->key(), L"DeleteFade", 0);
+        modules[M_FLASH]->loadOptions();
+        focusEditor();
+        demoSwitch(L"main.c");
+        tlog(L"DEMO setup: dpi scale %.2f, foreground %ls, files in %ls", g_dpiScale,
+             ::GetForegroundWindow() == npp._nppHandle ? L"yes" : L"NO", g_demoFiles.c_str());
+        return 1500;
+    });
+
+    // ---- editing motion ---------------------------------------------------------------------------------
+    if (demoWanted(L"motion")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        const int loopLine = lineWith(s, "read_button();");
+        caretTo(s, posOf(s, loopLine, 8));
+        pointerAt(textPoint(s, 6, 40));
+        settle(300);
+        recordStart(L"motion", npp._nppHandle);
+        pump(400);
+        // moved lines slide past each other
+        cmd(IDM_EDIT_LINE_DOWN); pump(650);
+        cmd(IDM_EDIT_LINE_UP); pump(800);
+        // cut a line: it lifts and goes, the lines below close up
+        const int delayLine = lineWith(s, "delay_ms(250);");
+        pointerTo(textPoint(s, delayLine, 12), 350);
+        selectLine(s, delayLine); pump(450);
+        cmd(IDM_EDIT_CUT); pump(850);
+        // paste it above: room is made and it lights up
+        caretTo(s, sci(s, SCI_POSITIONFROMLINE, lineWith(s, "read_button();")));
+        pump(300);
+        cmd(IDM_EDIT_PASTE); pump(1000);
+        // duplicate a line: the copy slides out; undo shows it going again
+        caretTo(s, posOf(s, lineWith(s, "ticks++;"), 8));
+        pump(300);
+        cmd(IDM_EDIT_DUP_LINE); pump(800);
+        cmd(IDM_EDIT_UNDO); pump(800);
+        // delete within a line: wiped away
+        const int ledLine = lineWith(s, "led_on = !led_on;");
+        const intptr_t bang = posIn(s, ledLine, "!led_on");
+        pointerTo(textPoint(s, ledLine, 16), 350);
+        sci(s, SCI_SETSEL, bang, bang + 1); pump(450);
+        cmd(IDM_EDIT_DELETE); pump(800);
+        cmd(IDM_EDIT_UNDO); pump(600);
+        // fold and unfold: the lines slide like a drawer
+        caretTo(s, posOf(s, lineWith(s, "void toggle_led(void) {"), 5));
+        pump(300);
+        cmd(IDM_VIEW_FOLD_CURRENT); pump(900);
+        cmd(IDM_VIEW_UNFOLD_CURRENT); pump(900);
+        // sort lines: each glides to its place
+        const int first = lineWith(s, "void toggle_led(void);");
+        pointerTo(textPoint(s, first + 1, 22), 350);
+        sci(s, SCI_SETSEL, sci(s, SCI_POSITIONFROMLINE, first), sci(s, SCI_GETLINEENDPOSITION, first + 2));
+        pump(500);
+        cmd(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING); pump(1100);
+        caretTo(s, sci(s, SCI_GETLINEENDPOSITION, first + 2));
+        pump(500);
+        recordStop(L"motion");
+        return 300;
+    });
+
+    // ---- tabs: switching slides, a closed tab sinks, a new one rises -----------------------------------
+    if (demoWanted(L"tabs")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        caretTo(s, posOf(s, 11, 16));
+        pointerAt(textPoint(s, 13, 30));
+        settle(300);
+        recordStart(L"tabs", npp._nppHandle);
+        pump(400);
+        for (const wchar_t* name : { L"gpio.h", L"notes.txt" })
+        {
+            pointerTo(tabCentre(name), 500); pump(200);
+            demoSwitch(name); pump(1000);
+        }
+        pointerTo(tabCloseButton(L"notes.txt"), 450); pump(300);
+        cmd(IDM_FILE_CLOSE); pump(1200);
+        pointerTo(textPoint(curSci(), 4, 34), 500); pump(200);
+        cmd(IDM_FILE_NEW); sci(curSci(), SCI_SETFOCUS, 1); pump(900);
+        typeText(curSci(), "scratch");
+        pump(700);
+        pointerTo(tabCentre(L"main.c"), 600); pump(200);
+        demoSwitch(L"main.c"); pump(1100);
+        recordStop(L"tabs");
+        // back as the other scenes expect: notes.txt open again, the new document gone unsaved
+        for (int i = views.nbFiles(0) - 1; i >= 0; --i)
+            if (bufferPath(views.bufferId(0, i)).find(L'\\') == std::wstring::npos)
+            {
+                views.activate(0, i);
+                sci(curSci(), SCI_SETSAVEPOINT);
+                cmd(IDM_FILE_CLOSE);
+            }
+        nppMsg(NPPM_DOOPEN, 0, reinterpret_cast<LPARAM>((g_demoFiles + L"\\notes.txt").c_str()));
+        demoSwitch(L"main.c");
+        return 600;
+    });
+
+    // ---- copy flash and save glint -----------------------------------------------------------------------
+    if (demoWanted(L"glint")) add([] {
+        resetDoc(L"notes.txt");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        caretTo(s, sci(s, SCI_GETLINEENDPOSITION, 4));
+        pointerAt(textPoint(s, 8, 40));
+        settle(300);
+        recordStart(L"glint", npp._nppHandle);
+        pump(400);
+        typeText(s, "\n- order a second display");
+        pump(500);
+        const int line = 5;
+        const intptr_t a = posIn(s, line, "second display");
+        pointerTo(textPoint(s, line, 22), 400);
+        sci(s, SCI_SETSEL, a, a + 14); pump(500);
+        cmd(IDM_EDIT_COPY); pump(1000);
+        caretTo(s, sci(s, SCI_GETLINEENDPOSITION, line)); pump(500);
+        cmd(IDM_FILE_SAVE); pump(1500);
+        recordStop(L"glint");
+        return 300;
+    });
+
+    // ---- paint splash ----------------------------------------------------------------------------------
+    if (demoWanted(L"splash")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        caretTo(s, posOf(s, 0, 0));
+        pointerAt(textPoint(s, 3, 30));
+        settle(300);
+        recordStart(L"splash", npp._nppHandle);
+        pump(400);
+        const int l1 = lineWith(s, "static bool led_on;");
+        const intptr_t a = posIn(s, l1, "led_on");
+        pointerTo(textPoint(s, l1, 15), 450);
+        sci(s, SCI_SETSEL, a, a + 6); pump(600);
+        cmd(IDM_SEARCH_MARKALLEXT3); pump(1300);
+        const int l2 = lineWith(s, "static uint32_t ticks;");
+        const intptr_t b = posIn(s, l2, "ticks");
+        pointerTo(textPoint(s, l2, 18), 450);
+        sci(s, SCI_SETSEL, b, b + 5); pump(600);
+        cmd(IDM_SEARCH_MARKALLEXT1); pump(1500);
+        caretTo(s, b + 5); pump(500);
+        recordStop(L"splash");
+        cmd(IDM_SEARCH_UNMARKALLEXT1);
+        cmd(IDM_SEARCH_UNMARKALLEXT3);
+        return 300;
+    });
+
+    // ---- touchpad swipe: the tabs follow the fingers -----------------------------------------------------
+    if (demoWanted(L"swipe")) add([] {
+        resetDoc(L"main.c");
+        HWND s = curSci();
+        sci(s, SCI_SETFOCUS, 1);
+        pointerAt(textPoint(s, 13, 30));
+        settle(300);
+        recordStart(L"swipe", npp._nppHandle);
+        pump(400);
+        // the tab follows the fingers: let go a third of the way and it slides back
+        for (int i = 0; i < 9; ++i) { swipeBy(s, 30, 30, 0); pump(30); }
+        pump(1000);
+        // past half way, slowly: on to the next tab
+        for (int i = 0; i < 18; ++i) { swipeBy(curSci(), 30, 30, 0); pump(30); }
+        pump(1000);
+        // quick flicks: on to the next one, and back twice
+        swipeBy(curSci(), 560, 70, 10); pump(1000);
+        swipeBy(curSci(), -560, 70, 10); pump(1000);
+        swipeBy(curSci(), -560, 70, 10); pump(1100);
+        recordStop(L"swipe");
+        return 300;
+    });
+
+    // ---- the KEX Settings window -------------------------------------------------------------------------
+    if (demoWanted(L"settings")) add([] {
+        openSettings(PAGE_EDITING);
+        pump(500);
+        HWND d = settingsDialog();
+        if (!d) { tlog(L"DEMO settings: the window didn't open"); return 100; }
+        RECT nr{}; ::GetWindowRect(npp._nppHandle, &nr);
+        ::SetWindowPos(d, HWND_TOPMOST, nr.left + px(30), nr.top + px(70), 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
+        auto itemPoint = [list](int i) {
+            RECT r{};
+            ::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(i), reinterpret_cast<LPARAM>(&r));
+            POINT p{ r.left + px(28), (r.top + r.bottom) / 2 };
+            ::ClientToScreen(list, &p);
+            return p;
+        };
+        pointerAt(itemPoint(PAGE_EDITING));
+        pump(400);
+        recordStart(L"settings", d);
+        pump(600);
+        for (int page : { PAGE_TABS, PAGE_EFFECTS, PAGE_MOTION, PAGE_NOTE })
+        {
+            pointerTo(itemPoint(page), 380); pump(150);
+            showPrefPage(pageTitle(page)); pump(1300);
+        }
+        recordStop(L"settings");
+        ::SendMessageW(d, WM_CLOSE, 0, 0);
+        return 300;
+    });
+
+    add([] {
+        tlog(L"DONE");
+        g_done = true;
+        // nothing to keep: no session, no settings written on the way out
+        ::TerminateProcess(::GetCurrentProcess(), 0);
         return 0;
     });
 }
@@ -3098,7 +5383,24 @@ void selfTestStart(const std::wstring& args)
     WNDCLASSW wc{}; wc.lpfnWndProc = testWndProc; wc.hInstance = hInst; wc.lpszClassName = L"KexSuiteTestWnd";
     ::RegisterClassW(&wc);
     g_testWnd = ::CreateWindowExW(0, L"KexSuiteTestWnd", L"test", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, hInst, nullptr);
-    buildSteps();
+    const size_t demo = args.find(L"KexSuite_demo=");
+    if (demo != std::wstring::npos)
+    {
+        // the README's GIFs, not a test
+        const size_t e = args.find(L';', demo);
+        g_demoScenes = args.substr(demo + 14, e == std::wstring::npos ? std::wstring::npos : e - demo - 14);
+        addDemoSteps([](std::function<int()> f) { g_steps.push_back(std::move(f)); });
+    }
+    else if (args.find(L"KexSuite_only=") != std::wstring::npos)
+    {
+        // just the DirectWrite steps (the editor as it draws on Windows) and the round's regression steps, then the result
+        auto add = [](std::function<int()> f) { g_steps.push_back(std::move(f)); };
+        add([] { ::MoveWindow(npp._nppHandle, 20, 16, 960, 660, TRUE); return 300; });
+        addRegressionSteps(add);
+        addDirectWriteSteps(add);
+        add([] { tlog(L"RESULT %d passed, %d failed", g_pass, g_fail); tlog(L"DONE"); g_done = true; return 0; });
+    }
+    else buildSteps();
     g_nextAt = nowMs() + 800;
     ::SetTimer(nullptr, 0, 40, tick);
 }

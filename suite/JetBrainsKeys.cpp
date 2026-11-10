@@ -1,5 +1,5 @@
 // JetBrainsKeys.cpp - "JetBrains shortcuts": the IntelliJ editor keys in Notepad++.
-// Each key is a real Notepad++ command of KEX's (Settings > KEX Editing > JetBrains Commands), so
+// Each key is a real Notepad++ command of KEX's (KEX > Editing > JetBrains Commands), so
 // Settings > Shortcut Mapper lists them under Plugin commands (plugin "KEX"), where any of them can get
 // another key or none, and Notepad++ warns about clashes. The KEX patch puts these keys before
 // Notepad++'s own. Switching the feature off takes the keys away (the menu items still work); with
@@ -346,7 +346,7 @@ template<int... I> std::array<void (*)(), sizeof...(I)> makeRunners(std::integer
 Module* createJetBrainsKeys() { return new JetBrainsKeys(); }
 JetBrainsStats jetBrainsStats() { return s_stats; }
 
-// Settings > KEX Editing > JetBrains Commands: the commands, added once (Notepad++ keeps them until it closes)
+// KEX > Editing > JetBrains Commands: the commands, added once (Notepad++ keeps them until it closes)
 void addJetBrainsCommands(HMENU parent, int position)
 {
     if (g_cmdIds[0] || !parent) return;

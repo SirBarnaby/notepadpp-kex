@@ -1,12 +1,16 @@
-// KexSuiteRes.h - the KEX Preferences pages: dialog ids (IDD_KEX_PREF_FIRST + page, KexSuiteHost.h)
-// and control ids
+// KexSuiteRes.h - the KEX Settings window and its pages (IDD_KEX_PAGE_EDITING + page): dialog and control ids
 #pragma once
+#define IDD_KEX_SETTINGS     30520
+#define IDC_KEX_PAGELIST     1010
+#define IDC_KEX_CLOSE        1011
+#define IDC_KEX_SPEED        1012   // the speed of all animations (%)
 #define IDD_KEX_PAGE_EDITING 30500
 #define IDD_KEX_PAGE_TABS    30501
 #define IDD_KEX_PAGE_WINDOWS 30502
 #define IDD_KEX_PAGE_HIGHLIGHT 30503
 #define IDD_KEX_PAGE_NOTE    30504
 #define IDD_KEX_PAGE_EFFECTS 30505
+#define IDD_KEX_PAGE_MOTION  30506
 
 #define IDC_SUMMARY        1001
 #define IDC_L_EN           1100
@@ -18,12 +22,14 @@
 #define IDC_L_RESPECT      1106
 #define IDC_L_UNDO         1107
 #define IDC_L_OPACITY      1108
+#define IDC_L_SPEED        1109
 #define IDC_C_EN           1200
 #define IDC_C_STATUS       1201
 #define IDC_C_GLIDE        1202
 #define IDC_C_SNAP         1203
 #define IDC_C_BLINK        1204
 #define IDC_C_OVB          1205
+#define IDC_C_FADE         1206   // the blink's fade speed (%)
 #define IDC_H_EN           1300
 #define IDC_H_STATUS       1301
 #define IDC_H_KEY          1302
@@ -44,6 +50,10 @@
 #define IDC_H_LETTERS      1317
 #define IDC_H_FLASH        1318
 #define IDC_H_OPACITY      1319
+#define IDC_H_ZOOM         1320
+#define IDC_H_ZOOMMS       1321
+#define IDC_H_FADEMS       1322
+#define IDC_H_GLIDEMS      1323
 #define IDC_T_EN           1400
 #define IDC_T_STATUS       1401
 #define IDC_T_ZONE         1402
@@ -55,6 +65,7 @@
 #define IDC_S_STATUS       1601
 #define IDC_S_ANIM         1602
 #define IDC_S_LIFT         1603
+#define IDC_S_SPEED        1604
 #define IDC_J_EN           1700
 #define IDC_J_STATUS       1701
 #define IDC_J_ALL          1702
@@ -68,6 +79,7 @@
 #define IDC_G_INFO         1804
 #define IDC_G_STYLE        1805
 #define IDC_G_EDGES        1806
+#define IDC_G_SMOOTHMOVE   1807
 #define IDC_K_EN           1900
 #define IDC_K_STATUS       1901
 #define IDC_K_KEY          1902
@@ -76,17 +88,32 @@
 #define IDC_K_INFO         1905
 #define IDC_E_EN           2000
 #define IDC_E_STATUS       2001
-#define IDC_E_COPY         2002
-#define IDC_E_CUT          2003
-#define IDC_E_DEL          2004
 #define IDC_E_STRENGTH     2005
-#define IDC_E_RESPECT      2006
+#define IDC_E_MS           2006
 #define IDC_E_INFO         2007
 #define IDC_W_EN           2100
 #define IDC_W_STATUS       2101
 #define IDC_W_MS           2102
-#define IDC_W_RESPECT      2103
 #define IDC_P_EN           2200
 #define IDC_P_STATUS       2201
 #define IDC_P_DROPS        2202
-#define IDC_P_RESPECT      2203
+#define IDC_P_MS           2203
+#define IDC_SW_EN          2300
+#define IDC_SW_STATUS      2301
+#define IDC_SW_SENS        2302
+#define IDC_SW_REVERSE     2303
+#define IDC_SW_MS          2304
+#define IDC_F_EN           2400
+#define IDC_F_STATUS       2401
+#define IDC_F_MS           2402
+#define IDC_GL_EN          2500
+#define IDC_GL_STATUS      2501
+#define IDC_GL_MS          2502
+#define IDC_FX_RESPECT     2600
+#define IDC_M_EN           2700
+#define IDC_M_STATUS       2701
+#define IDC_M_GLOW         2702
+#define IDC_M_RAPID        2703
+#define IDC_M_NOTE         2704
+#define IDC_M_ON0          2710   // + KEXM_* kind: a motion's switch
+#define IDC_M_MS0          2730   // + KEXM_* kind: its time

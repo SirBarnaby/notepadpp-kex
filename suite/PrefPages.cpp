@@ -1,7 +1,9 @@
-// PrefPages.cpp - Settings > Preferences > "KEX Editing", "KEX Tabs", "KEX Windows", "KEX Highlighting", "KEX Quick Note" and "KEX Effects" (the core
-// creates the pages inside Notepad++'s Preferences dialog and hands their messages to prefPageProc).
-// Like the other Preferences pages, every change takes effect at once; numbers apply half a second
-// after the last keystroke.
+// PrefPages.cpp - the KEX Settings window (KEX > Settings...): KEX's own settings, apart from Notepad++'s
+// Preferences but built the same way: the pages "Editing", "Tabs", "Windows", "Highlighting", "Quick Note",
+// "Effects" and "Motion" in a list on the left, the picked page on the right, the speed of all animations and a
+// Close button at the bottom, Notepad++'s dark mode.
+// Like the Preferences pages, every change takes effect at once; numbers apply half a second after the
+// last keystroke (or when the window closes).
 #include "KexSuite.h"
 #include "KexSuiteRes.h"
 #include <cwchar>
@@ -13,26 +15,56 @@ namespace {
 
 const UINT_PTR TIMER_APPLY = 1;
 HWND g_pages[PAGE_COUNT] = {};
-const wchar_t* const kPageTitle[PAGE_COUNT] = { L"KEX Editing", L"KEX Tabs", L"KEX Windows", L"KEX Highlighting", L"KEX Quick Note", L"KEX Effects" };
-const wchar_t* const kPageName[PAGE_COUNT] = { L"KexEditing", L"KexTabs", L"KexWindows", L"KexHighlighting", L"KexQuickNote", L"KexEffects" };
+HWND g_dialog = nullptr;
+int g_page = 0;                 // the page showing (or shown last)
+const wchar_t* const kPageTitle[PAGE_COUNT] = { L"Editing", L"Tabs", L"Windows", L"Highlighting", L"Quick Note", L"Effects", L"Motion" };
 bool g_filling = false;
 
-struct IntField { int id; int module; const wchar_t* key; int def; };
+// a number box, or an animation's own speed (%) (KexSuite.h)
+struct IntField { int id = 0; int module = 0; const wchar_t* key = nullptr; int def = 0; const SpeedDef* speed = nullptr; };
+constexpr IntField speedBox(int id, int module, const SpeedDef& s) { return { id, module, s.key, s.defPercent, &s }; }
 const IntField kInts[] = {
     { IDC_L_GRAVITY, M_LETTERS, L"Gravity", 2200 },
     { IDC_L_MAX, M_LETTERS, L"MaxLetters", 200 },
     { IDC_L_SPIN, M_LETTERS, L"SpinDegPerSec", 260 },
     { IDC_L_DRIFT, M_LETTERS, L"DriftPxPerSec", 90 },
     { IDC_L_OPACITY, M_LETTERS, L"Opacity", 100 },
-    { IDC_C_GLIDE, M_CARET, L"GlideMs", 80 },
+    speedBox(IDC_L_SPEED, M_LETTERS, kSpeedLetters),
+    speedBox(IDC_C_GLIDE, M_CARET, kSpeedCaretGlide),
     { IDC_C_SNAP, M_CARET, L"SnapAfterLines", 12 },
+    speedBox(IDC_C_FADE, M_CARET, kSpeedCaretFade),
     { IDC_T_ZONE, M_TABS, L"HotZonePx", 6 },
     { IDC_T_DELAY, M_TABS, L"HideDelayMs", 350 },
     { IDC_G_TINT, M_GLASS, L"Tint", 40 },
     { IDC_H_OPACITY, M_HOTKEY, L"Opacity", 100 },
     { IDC_E_STRENGTH, M_FLASH, L"Strength", 100 },
-    { IDC_W_MS, M_SLIDE, L"DurationMs", 200 },
+    speedBox(IDC_E_MS, M_FLASH, kSpeedFlash),
+    speedBox(IDC_W_MS, M_SLIDE, kSpeedSlide),
     { IDC_P_DROPS, M_SPLASH, L"DropsPerToken", 7 },
+    speedBox(IDC_P_MS, M_SPLASH, kSpeedSplash),
+    { IDC_SW_SENS, M_SWIPE, L"Sensitivity", 100 },
+    speedBox(IDC_SW_MS, M_SWIPE, kSpeedSwipe),
+    speedBox(IDC_S_SPEED, M_SNAP, kSpeedSnap),
+    speedBox(IDC_F_MS, M_TABFOLD, kSpeedFold),
+    speedBox(IDC_GL_MS, M_GLINT, kSpeedGlint),
+    speedBox(IDC_H_ZOOMMS, M_HOTKEY, kSpeedNoteZoom),
+    speedBox(IDC_H_FADEMS, M_HOTKEY, kSpeedNoteFade),
+    speedBox(IDC_H_GLIDEMS, M_HOTKEY, kSpeedNoteGlide),
+    speedBox(IDC_M_GLOW, M_MOTION, kSpeedMotionGlow),
+    { IDC_M_RAPID, M_MOTION, L"RapidMs", kMotionRapidMs },
+    // the motions' speeds, in KEXM_* order
+    speedBox(IDC_M_MS0 + 0, M_MOTION, kMotionDefs[0].speed),
+    speedBox(IDC_M_MS0 + 1, M_MOTION, kMotionDefs[1].speed),
+    speedBox(IDC_M_MS0 + 2, M_MOTION, kMotionDefs[2].speed),
+    speedBox(IDC_M_MS0 + 3, M_MOTION, kMotionDefs[3].speed),
+    speedBox(IDC_M_MS0 + 4, M_MOTION, kMotionDefs[4].speed),
+    speedBox(IDC_M_MS0 + 5, M_MOTION, kMotionDefs[5].speed),
+    speedBox(IDC_M_MS0 + 6, M_MOTION, kMotionDefs[6].speed),
+    speedBox(IDC_M_MS0 + 7, M_MOTION, kMotionDefs[7].speed),
+    speedBox(IDC_M_MS0 + 8, M_MOTION, kMotionDefs[8].speed),
+    speedBox(IDC_M_MS0 + 9, M_MOTION, kMotionDefs[9].speed),
+    speedBox(IDC_M_MS0 + 10, M_MOTION, kMotionDefs[10].speed),
+    speedBox(IDC_M_MS0 + 11, M_MOTION, kMotionDefs[11].speed),
 };
 struct BoolField { int id; int module; const wchar_t* key; int def; };
 const BoolField kBools[] = {
@@ -50,24 +82,37 @@ const BoolField kBools[] = {
     { IDC_S_LIFT, M_SNAP, L"LiftTab", 1 },
     { IDC_J_ALL, M_KEYS, L"AlsoNotepadKeys", 1 },
     { IDC_G_MARGINS, M_GLASS, L"Margins", 1 },
+    { IDC_G_SMOOTHMOVE, M_GLASS, L"SmoothMove", 1 },
     { IDC_K_REMEMBER, M_TOKENS, L"Remember", 1 },
     { IDC_H_AUTOHIDE, M_HOTKEY, L"HideWhenInactive", 0 },
     { IDC_H_CARET, M_HOTKEY, L"SmoothCaret", 1 },
     { IDC_H_LETTERS, M_LETTERS, L"InQuickNote", 1 },
     { IDC_H_FLASH, M_FLASH, L"InQuickNote", 1 },
-    { IDC_E_COPY, M_FLASH, L"Copy", 1 },
-    { IDC_E_CUT, M_FLASH, L"Cut", 1 },
-    { IDC_E_DEL, M_FLASH, L"Delete", 1 },
-    { IDC_E_RESPECT, M_FLASH, L"RespectSystemAnimationSetting", 1 },
-    { IDC_W_RESPECT, M_SLIDE, L"RespectSystemAnimationSetting", 1 },
-    { IDC_P_RESPECT, M_SPLASH, L"RespectSystemAnimationSetting", 1 },
+    { IDC_SW_REVERSE, M_SWIPE, L"Reverse", 0 },
+    { IDC_H_ZOOM, M_HOTKEY, L"ZoomOpen", 0 },
+    { IDC_M_NOTE, M_MOTION, L"InQuickNote", 1 },
+    { IDC_M_ON0 + 0, M_MOTION, L"Cut", 1 },
+    { IDC_M_ON0 + 1, M_MOTION, L"Delete", 1 },
+    { IDC_M_ON0 + 2, M_MOTION, L"DeleteLines", 1 },
+    { IDC_M_ON0 + 3, M_MOTION, L"Paste", 1 },
+    { IDC_M_ON0 + 4, M_MOTION, L"Undo", 1 },
+    { IDC_M_ON0 + 5, M_MOTION, L"MoveLine", 1 },
+    { IDC_M_ON0 + 6, M_MOTION, L"Find", 1 },
+    { IDC_M_ON0 + 7, M_MOTION, L"Indent", 1 },
+    { IDC_M_ON0 + 8, M_MOTION, L"Duplicate", 1 },
+    { IDC_M_ON0 + 9, M_MOTION, L"Jump", 1 },
+    { IDC_M_ON0 + 10, M_MOTION, L"Fold", 1 },
+    { IDC_M_ON0 + 11, M_MOTION, L"Sort", 1 },
 };
-// options the feature reads again at once: no restart (which would close the quick note, or take the token styles away)
+// one box on the Effects page for all of its animations: "Not when Windows animation effects are off"
+const int kRespectModules[] = { M_FLASH, M_SLIDE, M_SPLASH, M_TABFOLD, M_GLINT, M_MOTION };
+// options the feature reads again at once: no restart (which would close the quick note, or take the token styles away);
+// every speed is one of them
 bool liveOption(int id, int module)
 {
-    return module == M_TOKENS || id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY ||
-           id == IDC_E_COPY || id == IDC_E_CUT || id == IDC_E_DEL || id == IDC_E_STRENGTH || id == IDC_E_RESPECT ||
-           id == IDC_W_MS || id == IDC_W_RESPECT || id == IDC_P_DROPS || id == IDC_P_RESPECT || id == IDC_C_BLINK;
+    return module == M_TOKENS || module == M_MOTION || module == M_CARET || module == M_SWIPE || module == M_TABFOLD || module == M_GLINT ||
+           id == IDC_H_AUTOHIDE || id == IDC_H_CARET || id == IDC_H_OPACITY || id == IDC_H_PLACE || id == IDC_H_ZOOM || id == IDC_E_STRENGTH ||
+           id == IDC_P_DROPS;
 }
 // a drop-down list: the setting is the index of the picked item
 struct ComboField { int id; int module; const wchar_t* key; int def; const wchar_t* items; };
@@ -76,13 +121,20 @@ const ComboField kCombos[] = {
     { IDC_J_CASE, M_KEYS, L"OccurrenceCase", 0, L"Like Smart Highlighting|Match case|Ignore case" },
     { IDC_J_WORDS, M_KEYS, L"OccurrenceWords", 0, L"Like Smart Highlighting|From a bare caret (IntelliJ)|Always|Never" },
     { IDC_G_STYLE, M_GLASS, L"Style", 0, L"Blur|Acrylic" },
-    { IDC_G_EDGES, M_GLASS, L"TextEdges", 0, L"Sharp (no outlines on the glass)|Smooth|As Notepad++ draws them" },
+    { IDC_G_EDGES, M_GLASS, L"Edges", 0, L"Smooth|Sharp" },
 };
-const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN };
+const int kEnable[M_COUNT] = { IDC_L_EN, IDC_C_EN, IDC_H_EN, IDC_T_EN, IDC_D_EN, IDC_S_EN, IDC_J_EN, IDC_G_EN, IDC_K_EN, IDC_E_EN, IDC_W_EN, IDC_P_EN, IDC_SW_EN,
+                              IDC_F_EN, IDC_GL_EN, IDC_M_EN };
 const int kStatus[M_COUNT] = { IDC_L_STATUS, IDC_C_STATUS, IDC_H_STATUS, IDC_T_STATUS, IDC_D_STATUS, IDC_S_STATUS, IDC_J_STATUS, IDC_G_STATUS, IDC_K_STATUS,
-                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS };
+                               IDC_E_STATUS, IDC_W_STATUS, IDC_P_STATUS, IDC_SW_STATUS, IDC_F_STATUS, IDC_GL_STATUS, IDC_M_STATUS };
 
 bool has(HWND d, int id) { return ::GetDlgItem(d, id) != nullptr; }
+
+int fieldValue(const IntField& f)
+{
+    const wchar_t* sec = modules[f.module]->key();
+    return f.speed ? animSpeed(sec, *f.speed) : settings.getInt(sec, f.key, f.def);
+}
 
 void fillStatus(HWND d)
 {
@@ -156,9 +208,11 @@ void fill(HWND d)
     for (int i = 0; i < M_COUNT; ++i)
         if (has(d, kEnable[i])) ::CheckDlgButton(d, kEnable[i], modules[i]->isEnabled() ? BST_CHECKED : BST_UNCHECKED);
     for (const IntField& f : kInts)
-        if (has(d, f.id)) ::SetDlgItemInt(d, f.id, static_cast<UINT>(settings.getInt(modules[f.module]->key(), f.key, f.def)), FALSE);
+        if (has(d, f.id)) ::SetDlgItemInt(d, f.id, static_cast<UINT>(fieldValue(f)), FALSE);
     for (const BoolField& f : kBools)
         if (has(d, f.id)) ::CheckDlgButton(d, f.id, settings.getInt(modules[f.module]->key(), f.key, f.def) ? BST_CHECKED : BST_UNCHECKED);
+    if (has(d, IDC_FX_RESPECT))
+        ::CheckDlgButton(d, IDC_FX_RESPECT, settings.getInt(modules[M_FLASH]->key(), L"RespectSystemAnimationSetting", 1) ? BST_CHECKED : BST_UNCHECKED);
     for (const ComboField& f : kCombos)
     {
         if (!has(d, f.id)) continue;
@@ -214,10 +268,11 @@ void applyNumbers(HWND d)
     {
         if (!has(d, f.id)) continue;
         BOOL ok = FALSE;
-        UINT v = ::GetDlgItemInt(d, f.id, &ok, FALSE);
-        if (!ok || static_cast<int>(v) == settings.getInt(modules[f.module]->key(), f.key, f.def)) continue;
-        settings.setInt(modules[f.module]->key(), f.key, static_cast<int>(v));
-        if (liveOption(f.id, f.module)) modules[f.module]->loadOptions();
+        int v = static_cast<int>(::GetDlgItemInt(d, f.id, &ok, FALSE));
+        if (f.speed) v = std::clamp(v, kSpeedMin, kSpeedMax);
+        if (!ok || v == fieldValue(f)) continue;
+        settings.setInt(modules[f.module]->key(), f.key, v);
+        if (f.speed || liveOption(f.id, f.module)) modules[f.module]->loadOptions();
         else changed[f.module] = true;
     }
     if (has(d, IDC_H_FILE))
@@ -288,6 +343,17 @@ void onCommand(HWND d, int id, int code)
                 refreshPrefPages();
                 return;
             }
+        if (id == IDC_FX_RESPECT)
+        {
+            const int on = ::IsDlgButtonChecked(d, id) == BST_CHECKED ? 1 : 0;
+            for (int m : kRespectModules)
+            {
+                settings.setInt(modules[m]->key(), L"RespectSystemAnimationSetting", on);
+                modules[m]->loadOptions();
+            }
+            refreshPrefPages();
+            return;
+        }
         if (id == IDC_H_WIN) { applyHotkey(d); refreshPrefPages(); }
         if (id == IDC_H_BROWSE) { browseNoteFile(d); return; }
         if (id == IDC_J_LIST || id == IDC_K_KEYMAP)
@@ -323,48 +389,7 @@ void onCommand(HWND d, int id, int code)
     }
 }
 
-int pageIndex(HWND d)
-{
-    return has(d, IDC_E_EN) ? PAGE_EFFECTS : has(d, IDC_L_EN) ? PAGE_EDITING : has(d, IDC_S_EN) ? PAGE_TABS : has(d, IDC_K_EN) ? PAGE_HIGHLIGHT : has(d, IDC_H_EN) ? PAGE_NOTE : PAGE_WINDOWS;
-}
-
-} // namespace
-
-HWND prefPage(int i) { return (i >= 0 && i < PAGE_COUNT) ? g_pages[i] : nullptr; }
-
-int pageOfModule(int module)
-{
-    switch (module)
-    {
-    case M_LETTERS: case M_CARET: case M_KEYS: return PAGE_EDITING;
-    case M_TABS: case M_SNAP: return PAGE_TABS;
-    case M_GLASS: return PAGE_WINDOWS;
-    case M_TOKENS: return PAGE_HIGHLIGHT;
-    case M_HOTKEY: return PAGE_NOTE;
-    case M_FLASH: case M_SLIDE: case M_SPLASH: return PAGE_EFFECTS;
-    default: return PAGE_WINDOWS;
-    }
-}
-
-void refreshPrefPages()
-{
-    for (HWND d : g_pages)
-        if (d && ::IsWindow(d)) fill(d);
-}
-
-void openPreferences() { nppMsg(NPPM_MENUCOMMAND, 0, IDM_SETTING_KEX); }
-
-} // namespace kex
-
-namespace kexsuite {
-
-using namespace kex;
-
-int prefPageCount() { return PAGE_COUNT; }
-const wchar_t* prefPageTitle(int page) { return (page >= 0 && page < PAGE_COUNT) ? kPageTitle[page] : L"KEX"; }
-const wchar_t* prefPageName(int page) { return (page >= 0 && page < PAGE_COUNT) ? kPageName[page] : L"Kex"; }
-
-intptr_t prefPageProc(HWND d, UINT m, WPARAM w, LPARAM)
+INT_PTR CALLBACK pageProc(HWND d, UINT m, WPARAM w, LPARAM)
 {
     if (!modules[0]) return FALSE;
     try
@@ -372,9 +397,8 @@ intptr_t prefPageProc(HWND d, UINT m, WPARAM w, LPARAM)
         switch (m)
         {
         case WM_INITDIALOG:
-            g_pages[pageIndex(d)] = d;
             fill(d);
-            return TRUE;
+            return FALSE;
         case WM_SHOWWINDOW:
             if (w) fill(d);
             break;
@@ -386,12 +410,179 @@ intptr_t prefPageProc(HWND d, UINT m, WPARAM w, LPARAM)
             return TRUE;
         case WM_DESTROY:
             ::KillTimer(d, TIMER_APPLY);
-            if (g_pages[pageIndex(d)] == d) g_pages[pageIndex(d)] = nullptr;
             break;
         }
     }
-    catch (...) { log(L"exception on a KEX Preferences page"); }
+    catch (...) { log(L"exception on a KEX Settings page"); }
     return FALSE;
+}
+
+void showPage(int p)
+{
+    if (!g_dialog || p < 0 || p >= PAGE_COUNT || !g_pages[p]) return;
+    g_page = p;
+    ::SendDlgItemMessageW(g_dialog, IDC_KEX_PAGELIST, LB_SETCURSEL, static_cast<WPARAM>(p), 0);
+    for (int i = 0; i < PAGE_COUNT; ++i)
+        if (g_pages[i] && i != p) ::ShowWindow(g_pages[i], SW_HIDE);
+    ::ShowWindow(g_pages[p], SW_SHOW);
+}
+
+// The speed for all animations, typed at the bottom of the window: every feature takes its times again.
+void applySpeedAll(HWND d)
+{
+    BOOL ok = FALSE;
+    const int typed = static_cast<int>(::GetDlgItemInt(d, IDC_KEX_SPEED, &ok, FALSE));
+    if (!ok) return;
+    const int v = std::clamp(typed, kSpeedMin, kSpeedMax);
+    if (v != typed) ::SetDlgItemInt(d, IDC_KEX_SPEED, static_cast<UINT>(v), FALSE);
+    if (v == animSpeedAll()) return;
+    setAnimSpeedAll(v);
+    for (int m = 0; m < M_COUNT; ++m)
+        if (modules[m] && modules[m]->isEnabled()) modules[m]->loadOptions();
+}
+
+// the window closes: what is still typed in a number box counts, as it would half a second later
+void closeDialog()
+{
+    if (!g_dialog) return;
+    ::KillTimer(g_dialog, TIMER_APPLY);
+    applySpeedAll(g_dialog);
+    for (HWND p : g_pages)
+        if (p) { ::KillTimer(p, TIMER_APPLY); applyNumbers(p); }
+    nppMsg(NPPM_MODELESSDIALOG, MODELESSDIALOGREMOVE, reinterpret_cast<LPARAM>(g_dialog));
+    HWND d = g_dialog;
+    ::DestroyWindow(d);
+}
+
+INT_PTR CALLBACK dialogProc(HWND d, UINT m, WPARAM w, LPARAM)
+{
+    try
+    {
+        switch (m)
+        {
+        case WM_INITDIALOG:
+        {
+            g_dialog = d;
+            HWND list = ::GetDlgItem(d, IDC_KEX_PAGELIST);
+            for (const wchar_t* t : kPageTitle) ::SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(t));
+            // the pages go where Notepad++'s Preferences puts its own: right of the list, at the top
+            RECT at{ 115, 10, 115 + 460, 10 + 205 };
+            ::MapDialogRect(d, &at);
+            for (int p = 0; p < PAGE_COUNT; ++p)
+            {
+                g_pages[p] = ::CreateDialogParamW(hInst, MAKEINTRESOURCEW(IDD_KEX_PAGE_EDITING + p), d, pageProc, 0);
+                if (!g_pages[p]) { log(L"KEX Settings: page %d could not be made (error %lu)", p, ::GetLastError()); continue; }
+                ::SetWindowPos(g_pages[p], nullptr, at.left, at.top, at.right - at.left, at.bottom - at.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                fill(g_pages[p]);
+                nppMsg(NPPM_DARKMODESUBCLASSANDTHEME, 0x1 /* dmfSubclassParent */, reinterpret_cast<LPARAM>(g_pages[p]));
+            }
+            nppMsg(NPPM_DARKMODESUBCLASSANDTHEME, static_cast<WPARAM>(NppDarkMode::dmfInit), reinterpret_cast<LPARAM>(d));
+            nppMsg(NPPM_MODELESSDIALOG, MODELESSDIALOGADD, reinterpret_cast<LPARAM>(d));
+            // in the middle of Notepad++, as Preferences opens
+            RECT pr{}, dr{};
+            ::GetWindowRect(npp._nppHandle, &pr);
+            ::GetWindowRect(d, &dr);
+            const int w0 = dr.right - dr.left, h0 = dr.bottom - dr.top;
+            int x = pr.left + ((pr.right - pr.left) - w0) / 2, y = pr.top + ((pr.bottom - pr.top) - h0) / 2;
+            HMONITOR mon = ::MonitorFromWindow(npp._nppHandle, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi{ sizeof(mi) };
+            if (::GetMonitorInfoW(mon, &mi))
+            {
+                x = std::max<int>(mi.rcWork.left, std::min<int>(x, mi.rcWork.right - w0));
+                y = std::max<int>(mi.rcWork.top, std::min<int>(y, mi.rcWork.bottom - h0));
+            }
+            ::SetWindowPos(d, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            ::SetDlgItemInt(d, IDC_KEX_SPEED, static_cast<UINT>(animSpeedAll()), FALSE);
+            showPage(g_page);
+            return FALSE;
+        }
+        case WM_TIMER:
+            if (w == TIMER_APPLY) { ::KillTimer(d, TIMER_APPLY); applySpeedAll(d); return TRUE; }
+            break;
+        case WM_COMMAND:
+            if (LOWORD(w) == IDC_KEX_PAGELIST && HIWORD(w) == LBN_SELCHANGE)
+            {
+                const LRESULT sel = ::SendDlgItemMessageW(d, IDC_KEX_PAGELIST, LB_GETCURSEL, 0, 0);
+                if (sel >= 0) showPage(static_cast<int>(sel));
+                return TRUE;
+            }
+            if (LOWORD(w) == IDC_KEX_SPEED && HIWORD(w) == EN_CHANGE) { ::SetTimer(d, TIMER_APPLY, 500, nullptr); return TRUE; }
+            if (LOWORD(w) == IDCANCEL || LOWORD(w) == IDC_KEX_CLOSE) { closeDialog(); return TRUE; }
+            break;
+        case WM_CLOSE:
+            closeDialog();
+            return TRUE;
+        case WM_DESTROY:
+            ::KillTimer(d, TIMER_APPLY);
+            for (HWND& p : g_pages) p = nullptr;   // destroyed with it
+            g_dialog = nullptr;
+            break;
+        }
+    }
+    catch (...) { log(L"exception in the KEX Settings window"); }
+    return FALSE;
+}
+
+} // namespace
+
+HWND prefPage(int i) { return (i >= 0 && i < PAGE_COUNT) ? g_pages[i] : nullptr; }
+HWND settingsDialog() { return g_dialog; }
+
+int pageOfModule(int module)
+{
+    switch (module)
+    {
+    case M_LETTERS: case M_CARET: case M_KEYS: return PAGE_EDITING;
+    case M_TABS: case M_SNAP: case M_SWIPE: return PAGE_TABS;
+    case M_GLASS: return PAGE_WINDOWS;
+    case M_TOKENS: return PAGE_HIGHLIGHT;
+    case M_HOTKEY: return PAGE_NOTE;
+    case M_FLASH: case M_SLIDE: case M_SPLASH: case M_TABFOLD: case M_GLINT: return PAGE_EFFECTS;
+    case M_MOTION: return PAGE_MOTION;
+    default: return PAGE_WINDOWS;
+    }
+}
+
+const wchar_t* pageTitle(int page) { return (page >= 0 && page < PAGE_COUNT) ? kPageTitle[page] : L""; }
+
+void refreshPrefPages()
+{
+    for (HWND d : g_pages)
+        if (d && ::IsWindow(d)) fill(d);
+}
+
+// KEX > Settings...: the window on that page (-1: the page shown last), brought forward when it is open already
+void openSettings(int page)
+{
+    if (!modules[0]) return;
+    if (page >= 0 && page < PAGE_COUNT) g_page = page;
+    if (!g_dialog)
+    {
+        ::CreateDialogParamW(hInst, MAKEINTRESOURCEW(IDD_KEX_SETTINGS), npp._nppHandle, dialogProc, 0);
+        if (!g_dialog) { log(L"KEX Settings: the window could not be made (error %lu)", ::GetLastError()); return; }
+    }
+    else showPage(g_page);
+    ::ShowWindow(g_dialog, SW_SHOW);
+    ::SetForegroundWindow(g_dialog);
+    ::SetFocus(::GetDlgItem(g_dialog, IDC_KEX_PAGELIST));
+}
+
+void settingsThemeChanged()
+{
+    if (!g_dialog) return;
+    nppMsg(NPPM_DARKMODESUBCLASSANDTHEME, static_cast<WPARAM>(NppDarkMode::dmfHandleChange), reinterpret_cast<LPARAM>(g_dialog));
+    ::RedrawWindow(g_dialog, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+}
+
+} // namespace kex
+
+namespace kexsuite {
+
+// the core: KEX > Settings... (IDM_SETTING_KEX) and NPPM_KEX_SHOWPREFPAGE
+void showSettings(int page)
+{
+    try { kex::openSettings(page); }
+    catch (...) { kex::log(L"exception while opening the KEX Settings window"); }
 }
 
 } // namespace kexsuite
