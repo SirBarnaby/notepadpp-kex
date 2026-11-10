@@ -18,6 +18,7 @@ Each KEX build is the official Notepad++ of the same version with these features
 
 ### Changed
 
+- Built on **Notepad++ 8.9.9** (was 8.9.8.1).
 - KEX has its own menu in the menu bar, between *Plugins* and *Window*, with a submenu per settings page and a switch for every feature.
 - KEX's settings moved out of Notepad++'s *Preferences* into a *KEX Settings* window of their own (*KEX* > *Settings...*). It shows whether each feature is running.
 - Glass: the text is drawn on a layer of its own, so letters have clean edges. While you drag the window, *Acrylic* shows plain *Blur* so it keeps up on Windows 10.
