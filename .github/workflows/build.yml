@@ -3,7 +3,8 @@ name: Build
 # Daily: if Notepad++ has a release that hasn't been built here yet, patch it, build it, test it under
 # Wine and publish "Notepad++-<version>-KEX.zip" as a release. A push to main rebuilds the current
 # release (so fixes to the patch or plugin reach the installed copies). A failed build opens an issue
-# and publishes nothing, so installed copies stay on the last good version.
+# and publishes nothing, so installed copies stay on the last good version. Run by hand on any other
+# branch (e.g. staging), it only builds and tests: nothing is published and no issue is opened.
 on:
   schedule:
     - cron: '23 5 * * *'
@@ -86,7 +87,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publish the release
-        if: steps.pick.outputs.skip != '1'
+        if: steps.pick.outputs.skip != '1' && github.ref == 'refs/heads/main'
         env:
           TAG: ${{ steps.pick.outputs.tag }}
           LATEST: ${{ steps.pick.outputs.latest }}
@@ -133,7 +134,7 @@ jobs:
             while read -r n; do gh issue close "$n" -R "$GITHUB_REPOSITORY" -c "Fixed: $TAG-kex is published."; done
 
       - name: Open an issue when the build fails
-        if: failure() && steps.pick.outputs.skip != '1'
+        if: failure() && steps.pick.outputs.skip != '1' && github.ref == 'refs/heads/main'
         env:
           TAG: ${{ steps.pick.outputs.tag }}
           CODE: ${{ steps.build.outputs.code }}
